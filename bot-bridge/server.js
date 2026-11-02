@@ -298,19 +298,21 @@ const DEFAULT_FAQ = [
 ];
 
 /* --------------------------------------------------------------------------
-   SOCIOS / ADMINISTRADORES AUTORIZADOS (Anthony y Socio)
+   SOCIOS / ADMINISTRADORES AUTORIZADOS (Anthony y Sebastián)
    -------------------------------------------------------------------------- */
 const PARTNER_ACCOUNTS = [
   {
     name: 'Anthony',
     profileId: 'doom1',
     phone: '584142005801',
+    cedula: '25000000',
     jids: ['268135210995915@lid', '584142005801@s.whatsapp.net']
   },
   {
-    name: 'Socio',
+    name: 'Sebastián',
     profileId: 'doom2',
     phone: '584264181643',
+    cedula: '32030679',
     jids: ['584264181643@s.whatsapp.net']
   }
 ];
@@ -486,6 +488,7 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
   return `Eres el Asistente Ejecutivo Inteligente Privado de Doomlater.Corp exclusivo para el socio fundador: ${partnerName}.
 Tu función es responderle a los dueños por WhatsApp con información ejecutiva, precisa, rápida y clara sobre las finanzas, dinero acumulado, stock y estado del negocio.
 Usa formato limpio de WhatsApp: negritas (*palabra*), viñetas (•) y emojis para que se lea impecable en el teléfono.
+REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes una respuesta, reporte o lista a la mitad. Toda información solicitada debe ser 100% completa y terminar con punto final.
 
 === BALANCES Y DINERO ACUMULADO EN TIEMPO REAL ===
 Total acumulado en divisas: $${adminCtx.totalUsd.toFixed(2)} USD
@@ -843,10 +846,11 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
   if (!apiKey) return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
 
   const models = [
-    'gemini-3.5-flash',
-    'gemini-3.8-flash',
-    'gemini-3-flash-preview',
-    'gemini-flash-latest'
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-flash-latest',
+    'gemini-1.5-pro'
   ];
 
   for (const model of models) {
@@ -857,7 +861,7 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
           contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 500 }
+          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
         })
       });
       if (res.status === 404) continue;
@@ -901,7 +905,8 @@ ${botConfig.customAiRules}
 
   return `Eres el asistente oficial de atención al cliente de Doomlater.Corp.
 Nos especializamos en consolas de videojuegos (PlayStation, Nintendo, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
-Responde siempre en español, con tono amable, cálido, profesional y conciso (máximo 3-4 frases).
+Responde siempre en español, con tono amable, cálido, profesional y completo.
+REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final.
 No digas que eres una IA salvo que te lo pregunten directamente.
 ${customRules}
 === INFORMACIÓN Y PREGUNTAS FRECUENTES ===
@@ -964,11 +969,11 @@ async function queryAI(convId, userMessage, ctx) {
   const models = [
     ctx.botConfig.geminiModel,
     GEMINI_MODEL_ENV,
-    'gemini-3.5-flash',
-    'gemini-3.8-flash',
-    'gemini-3-flash-preview',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
     'gemini-flash-latest',
-    'gemini-4-argon'
+    'gemini-1.5-pro'
   ].filter(Boolean);
   for (const model of [...new Set(models)]) {
     try {
@@ -978,7 +983,7 @@ async function queryAI(convId, userMessage, ctx) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildSystemPrompt(ctx) }] },
           contents,
-          generationConfig: { temperature: 0.4, maxOutputTokens: 350 }
+          generationConfig: { temperature: 0.4, maxOutputTokens: 2048 }
         })
       });
       if (res.status === 404) continue;
@@ -1022,6 +1027,128 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
     return { reply: `¡Sí! Tenemos ${item.name} (${item.stock} disponible(s)) a $${Number(item.salePrice || 0).toFixed(2)}. ¿Te lo apartamos?`, isPayment: false, needsHuman: false };
   }
   return { reply: '¡Hola! Recibimos tu mensaje 🙌 Ya le avisé al equipo para darte la información exacta. Te respondemos en breve.', isPayment: false, needsHuman: true };
+}
+
+/* --------------------------------------------------------------------------
+   INTELIGENCIA ARTIFICIAL MULTIMODAL: AUDIO (VOZ A TEXTO) Y VISIÓN (OCR PAGOS)
+   -------------------------------------------------------------------------- */
+async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
+  if (!audioBuffer || !apiKey) return null;
+  const cleanMime = String(mimeType || 'audio/ogg').split(';')[0].trim();
+  const base64Audio = audioBuffer.toString('base64');
+
+  const models = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-flash-latest'
+  ];
+
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: cleanMime,
+                  data: base64Audio
+                }
+              },
+              {
+                text: 'Transcribe con máxima fidelidad lo que dice esta nota de voz en español. Devuelve ÚNICAMENTE la transcripción textual de lo que dice la persona, sin comillas, sin introducciones ni comentarios adicionales.'
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 2048
+          }
+        })
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      if (text) {
+        logger.info({ transcription: text.slice(0, 100) }, 'Nota de voz transcrita con éxito por Gemini');
+        return text;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
+  if (!imageBuffer || !apiKey) return null;
+  const cleanMime = String(mimeType || 'image/jpeg').split(';')[0].trim();
+  const base64Image = imageBuffer.toString('base64');
+
+  const models = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-flash-latest'
+  ];
+
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: cleanMime,
+                  data: base64Image
+                }
+              },
+              {
+                text: `Analiza esta imagen con precisión quirúrgica. Si es un comprobante de pago, capture de pantalla de Pago Móvil, transferencia bancaria, recibo o comprobante de Binance/USDT:
+Extrae los datos exactos del pago y responde ÚNICAMENTE con un JSON válido (sin markdown, solo el objeto JSON):
+{
+  "isPayment": true,
+  "amount": <monto numérico pagado, ej: 40 o 2500.50>,
+  "currency": "VED" si son Bolívares o "USD" si son dólares / USDT / Binance,
+  "reference": "<número de referencia, confirmación o comprobante>",
+  "targetPhoneOrId": "<número de teléfono o cédula/cuenta destino al que se envió el dinero, ej: 04142005801, 32030679, etc.>",
+  "paymentDate": "<fecha que aparece impresa en el comprobante en formato YYYY-MM-DD (ej: 2026-11-02), o null si no se distingue>",
+  "bank": "<nombre del banco emisor o receptor si figura>"
+}
+Si la imagen NO es un comprobante de pago o capture de transferencia, responde estrictamente: {"isPayment": false}`
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1024
+          }
+        })
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      const rawText = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      if (parsed && typeof parsed === 'object') {
+        logger.info({ parsed }, 'Comprobante analizado con éxito por Gemini Vision');
+        return parsed;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
 }
 
 /* --------------------------------------------------------------------------
@@ -1131,6 +1258,15 @@ async function runAiReply(convId, q) {
   if (q.ctx.isPartner) {
     const adminCtx = await loadAdminExecutiveContext();
     result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio');
+  } else if (q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment) {
+    const pa = q.ctx.paymentAnalysis;
+    const curSymbol = pa.currency === 'VED' ? 'Bs.' : '$';
+    const refStr = pa.reference ? ` (Ref: ${pa.reference})` : '';
+    result = {
+      reply: `¡Muchas gracias! 🧾 Recibimos tu comprobante de pago por ${curSymbol}${pa.amount || ''}${refStr}. Anthony y Sebastián lo están verificando y te confirmamos en breve.`,
+      isPayment: true,
+      needsHuman: true
+    };
   } else if (q.hasImage && !/[a-z]{4,}/i.test(userText)) {
     result = {
       reply: '¡Gracias! 🧾 Recibimos tu imagen/comprobante. Los socios de Doomlater.Corp lo verifican y te confirman en breve.',
@@ -1182,11 +1318,16 @@ async function runAiReply(convId, q) {
   // Alertas proactivas a los socios cuando un cliente reporta pago o solicita atención
   if (!q.ctx.isPartner && deliveryStatus === 'sent') {
     if (result.isPayment) {
+      const pa = q.ctx.paymentAnalysis;
+      const refStr = pa && pa.reference ? `\n*Referencia:* ${pa.reference}` : (conv.pendingPaymentRef ? `\n*Referencia:* ${conv.pendingPaymentRef}` : '');
+      const phoneStr = pa && pa.targetPhoneOrId ? `\n*Destino:* ${pa.targetPhoneOrId} (${q.ctx.destWalletName || 'Cuenta'})` : '';
+      const dateStr = pa && pa.paymentDate ? `\n*Fecha Comprobante:* ${pa.paymentDate}` : '';
+      const amtStr = pa && pa.amount ? `${pa.currency === 'VED' ? 'Bs.' : '$'} ${pa.amount}` : (conv.pendingPaymentAmount ? `$${Number(conv.pendingPaymentAmount).toFixed(2)}` : 'Por verificar');
+
       const alertMsg = `🔔 *DOOMLATER ALERT: Pago por Verificar* 🧾\n\n` +
         `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +
-        `Concepto: *${conv.pendingPaymentItem || 'Servicio Técnico / Venta'}*\n` +
-        `Monto reportado: *${conv.pendingPaymentAmount ? `$${Number(conv.pendingPaymentAmount).toFixed(2)}` : 'Por verificar'}*\n\n` +
-        `👉 _Entra a la web para verificarlo y sumarlo a caja._`;
+        `Monto: *${amtStr}*${refStr}${phoneStr}${dateStr}\n\n` +
+        `👉 _Entra a la Web para verificarlo y sumarlo a caja con un clic._`;
       notifyPartners(alertMsg, `pay_${convId}_${Math.floor(Date.now() / (10 * 60 * 1000))}`).catch(() => {});
     } else if (result.needsHuman) {
       const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
@@ -1205,7 +1346,20 @@ async function runAiReply(convId, q) {
         ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'
         : 'Consulta fuera del catálogo o caso especial.';
     }
-    if (result.isPayment) patch.pendingPayment = true;
+    if (result.isPayment) {
+      patch.pendingPayment = true;
+      if (q.ctx.paymentAnalysis) {
+        const pa = q.ctx.paymentAnalysis;
+        patch.pendingPaymentAmount = Number(pa.amount) || conv.pendingPaymentAmount || 0;
+        patch.pendingPaymentCurrency = pa.currency || 'USD';
+        patch.pendingPaymentRef = pa.reference || conv.pendingPaymentRef || '';
+        patch.pendingPaymentPhone = pa.targetPhoneOrId || conv.pendingPaymentPhone || '';
+        patch.pendingPaymentDate = pa.paymentDate || conv.pendingPaymentDate || null;
+        patch.pendingPaymentWalletId = q.ctx.destWalletId || conv.pendingPaymentWalletId || 'w_banco';
+        patch.pendingPaymentWalletName = q.ctx.destWalletName || conv.pendingPaymentWalletName || '';
+        patch.pendingPaymentBank = pa.bank || '';
+      }
+    }
   }
   await recordOutgoing(convId, {
     id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
@@ -1409,9 +1563,9 @@ async function handleWaMessage(msg, type) {
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
   const phone = pnJid ? pnJid.split('@')[0].split(':')[0] : '';
   const convId = `conv_wa_${phone || `lid_${jid.split('@')[0].split(':')[0]}`}`;
-  const caption = waTextOf(content);
+  let caption = waTextOf(content);
   const label = WA_LABELS[ctype] || '';
-  const text = caption ? (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption) : (label || '[Mensaje]');
+  let text = caption ? (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption) : (label || '[Mensaje]');
   const msgId = `bmsg_wa_${safeId(msg.key.id)}`;
 
   // Mensajes que Tú o tu socio escriben desde la aplicación de WhatsApp (móvil):
@@ -1457,35 +1611,93 @@ async function handleWaMessage(msg, type) {
   }
 
   let mediaKey = null;
+  let voiceTranscription = null;
+  let paymentAnalysis = null;
+  let destWalletId = 'w_banco';
+  let destWalletName = 'Pago Móvil / Banco';
+
+  const botConfig = (await fb('GET', ws('meta/botConfig'))) || {};
+  const apiKey = botConfig.geminiApiKey || GEMINI_API_KEY_ENV;
+
   if (ctype === 'imageMessage' || ctype === 'stickerMessage') {
     try {
       const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: silentLogger, reuploadRequest: waSock?.updateMediaMessage });
       mediaKey = await saveMedia(msgId, content[ctype]?.mimetype || 'image/jpeg', buffer);
+      if (buffer && apiKey && ctype === 'imageMessage') {
+        paymentAnalysis = await analyzePaymentCaptureWithGemini(buffer, content[ctype]?.mimetype || 'image/jpeg', apiKey);
+        if (paymentAnalysis && paymentAnalysis.isPayment) {
+          const targetDigits = String(paymentAnalysis.targetPhoneOrId || '').replace(/\D/g, '');
+          if (targetDigits.includes('32030679') || targetDigits.includes('4264181643') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('sebasti')) {
+            destWalletId = 'w_bs_socio';
+            destWalletName = 'Cuenta en Bs de Sebastián (@doom2)';
+          } else if (targetDigits.includes('04142005801') || targetDigits.includes('4142005801') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('anthony')) {
+            destWalletId = 'w_bs_anthony';
+            destWalletName = 'Cuenta en Bs de Anthony (@doom1)';
+          } else if (paymentAnalysis.currency === 'USD') {
+            destWalletId = 'w_efectivo';
+            destWalletName = 'Divisas Efectivo ($)';
+          }
+        }
+      }
     } catch (err) {
-      logger.warn({ err: err.message }, 'No se pudo descargar la imagen');
+      logger.warn({ err: err.message }, 'No se pudo descargar o analizar la imagen');
+    }
+  } else if (ctype === 'audioMessage') {
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: silentLogger, reuploadRequest: waSock?.updateMediaMessage });
+      mediaKey = await saveMedia(msgId, content[ctype]?.mimetype || 'audio/ogg', buffer);
+      if (buffer && apiKey) {
+        voiceTranscription = await transcribeAndProcessAudio(buffer, content[ctype]?.mimetype || 'audio/ogg', apiKey);
+      }
+    } catch (err) {
+      logger.warn({ err: err.message }, 'No se pudo descargar o transcribir la nota de voz');
     }
   }
 
   const pushName = msg.pushName || '';
+  if (voiceTranscription) {
+    caption = voiceTranscription;
+    text = `🎤 Nota de voz: "${voiceTranscription}"`;
+  } else if (caption) {
+    text = (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption);
+  } else {
+    text = (label || '[Mensaje]');
+  }
+
   logger.info({ convId, pushName, text }, 'WhatsApp entrante');
   pushHistory(convId, 'user', caption || label);
 
+  const incomingBase = {
+    platform: 'whatsapp',
+    platformAccount: 'shared',
+    customerName: pushName || (phone ? `+${phone}` : 'Cliente WhatsApp'),
+    genericName: !pushName,
+    customerPhone: phone ? `+${phone}` : '',
+    customerJid: jid
+  };
+
+  if (paymentAnalysis && paymentAnalysis.isPayment) {
+    incomingBase.pendingPayment = true;
+    incomingBase.pendingPaymentAmount = Number(paymentAnalysis.amount) || 0;
+    incomingBase.pendingPaymentCurrency = paymentAnalysis.currency || 'USD';
+    incomingBase.pendingPaymentRef = paymentAnalysis.reference || '';
+    incomingBase.pendingPaymentPhone = paymentAnalysis.targetPhoneOrId || '';
+    incomingBase.pendingPaymentDate = paymentAnalysis.paymentDate || null;
+    incomingBase.pendingPaymentWalletId = destWalletId;
+    incomingBase.pendingPaymentWalletName = destWalletName;
+    incomingBase.pendingPaymentBank = paymentAnalysis.bank || '';
+    incomingBase.needsAttention = true;
+    incomingBase.attentionReason = `Comprobante detectado: Ref ${paymentAnalysis.reference || 'S/N'} de ${paymentAnalysis.currency === 'VED' ? 'Bs.' : '$'} ${paymentAnalysis.amount} al número ${paymentAnalysis.targetPhoneOrId || 'N/A'}`;
+  }
+
   const conv = await recordIncoming({
     convId,
-    base: {
-      platform: 'whatsapp',
-      platformAccount: 'shared',
-      customerName: pushName || (phone ? `+${phone}` : 'Cliente WhatsApp'),
-      genericName: !pushName,
-      customerPhone: phone ? `+${phone}` : '',
-      customerJid: jid
-    },
-    msg: { id: msgId, text, sentBy: pushName || 'Cliente', createdAt: tsMs, platform: 'whatsapp', ...(mediaKey ? { mediaKey, mediaType: 'image' } : {}) },
+    base: incomingBase,
+    msg: { id: msgId, text, sentBy: pushName || 'Cliente', createdAt: tsMs, platform: 'whatsapp', ...(mediaKey ? { mediaKey, mediaType: ctype === 'audioMessage' ? 'audio' : 'image' } : {}) },
     label: `💬 ${pushName || phone || 'Cliente'} (WhatsApp): ${text.slice(0, 60)}`
   });
 
   const partner = isAuthorizedPartner(jid) || isAuthorizedPartner(phone) || (convId === 'conv_wa_584142005801' ? PARTNER_ACCOUNTS[0] : null);
-  const botConfig = (await fb('GET', ws('meta/botConfig'))) || {};
   if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
     if (botConfig.showTypingIndicator !== false) await waPresence('composing', jid);
     scheduleAiReply(convId, caption, {
@@ -1493,6 +1705,9 @@ async function handleWaMessage(msg, type) {
       jid,
       phone,
       hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
+      paymentAnalysis: paymentAnalysis && paymentAnalysis.isPayment ? paymentAnalysis : null,
+      destWalletId,
+      destWalletName,
       delayMs: partner ? 800 : typingDelayMs(botConfig),
       isPartner: Boolean(partner),
       partnerName: partner ? partner.name : null

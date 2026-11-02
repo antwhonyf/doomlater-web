@@ -5138,6 +5138,20 @@
         defaultType = 'servicio';
       }
 
+      // Automatically match target wallet by phone/ID (Sebastián vs Anthony)
+      let defaultWalletId = conv.pendingPaymentWalletId || '';
+      const phoneOrId = String(conv.pendingPaymentPhone || '').replace(/\D/g, '');
+      if (!defaultWalletId && phoneOrId) {
+        if (phoneOrId.includes('32030679') || phoneOrId.includes('4264181643') || String(conv.pendingPaymentPhone || '').toLowerCase().includes('sebasti')) {
+          const w = wallets.find(x => x.id === 'w_bs_socio' || x.name?.toLowerCase().includes('sebasti') || x.name?.toLowerCase().includes('socio') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom2')));
+          if (w) defaultWalletId = w.id;
+        } else if (phoneOrId.includes('04142005801') || phoneOrId.includes('4142005801') || String(conv.pendingPaymentPhone || '').toLowerCase().includes('anthony')) {
+          const w = wallets.find(x => x.id === 'w_bs_anthony' || x.name?.toLowerCase().includes('anthony') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom1')) || x.name?.toLowerCase().includes('banesco'));
+          if (w) defaultWalletId = w.id;
+        }
+      }
+      if (!defaultWalletId && wallets.length > 0) defaultWalletId = wallets[0].id;
+
       const bodyHtml = `
         <div class="modal-head">
           <div style="display:flex; align-items:center; gap:10px;">
@@ -5166,7 +5180,7 @@
               <span>${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')}</span>
             </div>
             <div class="verify-payment-row" style="font-size:15px; align-items:center;">
-              <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado / Verificado ($):</span>
+              <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado / Verificado:</span>
               <div style="display:flex; align-items:center; gap:6px;">
                 <span style="color:var(--cashew-income); font-weight:800; font-size:16px;">$</span>
                 <input type="number" id="vpay_amount" step="0.5" min="0" value="${amount.toFixed(2)}" class="cashew-input"
@@ -5176,6 +5190,39 @@
             </div>
           </div>
 
+          <!-- Transaction Date (Prefills photo date if extracted by AI) -->
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center;">
+              <span>Fecha de la Transacción:</span>
+              ${conv.pendingPaymentDate ? `<span style="color:#38bdf8; font-size:11.5px; font-weight:800;">📅 Extraída del capture: ${this.escapeHtml(conv.pendingPaymentDate)}</span>` : `<span style="color:var(--text-muted); font-size:11.5px;">Fecha actual</span>`}
+            </label>
+            <input type="date" id="vpay_date" class="cashew-input" style="width:100%; font-size:13px;"
+                   value="${conv.pendingPaymentDate || new Date().toISOString().slice(0, 10)}" required />
+          </div>
+
+          <!-- Payment Reference & Target Phone / ID -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px;">
+            <div class="form-group">
+              <label class="form-label" style="font-weight:700; font-size:12px; margin-bottom:4px; display:block;">
+                Número de Referencia:
+              </label>
+              <input type="text" id="vpay_ref" class="cashew-input" style="width:100%; font-size:13px;"
+                     placeholder="Ej: 12345678" value="${this.escapeHtml(conv.pendingPaymentRef || '')}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" style="font-weight:700; font-size:12px; margin-bottom:4px; display:block;">
+                Número / Cédula destino:
+              </label>
+              <input type="text" id="vpay_phone" class="cashew-input" style="width:100%; font-size:13px;"
+                     placeholder="Ej: 04142005801 o 32030679" value="${this.escapeHtml(conv.pendingPaymentPhone || '')}"
+                     oninput="CashewApp.onVerifyPaymentPhoneInput(this.value)" />
+            </div>
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px; display:flex; align-items:center; gap:5px;">
+            <span class="material-symbols-rounded" style="font-size:15px; color:var(--primary);">verified_user</span>
+            <span>Si es <strong>32030679</strong> es para Bs Sebastián (@doom2). Si es <strong>04142005801</strong> es para Bs Anthony (@doom1).</span>
+          </div>
+
           <!-- Destination Wallet Selector -->
           <div class="form-group" style="margin-bottom:14px;">
             <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:block;">
@@ -5183,7 +5230,9 @@
             </label>
             <select id="vpay_walletId" class="cashew-input" style="width:100%; font-size:13.5px;" required>
               ${wallets.map(w => `
-                <option value="${w.id}">${this.escapeHtml(w.name)} (${w.currency || 'USD'})</option>
+                <option value="${w.id}" ${w.id === defaultWalletId ? 'selected' : ''}>
+                  ${this.escapeHtml(w.name)} (${w.currency || 'USD'})
+                </option>
               `).join('')}
             </select>
           </div>
@@ -5488,6 +5537,25 @@
         categoryId = otherCat.id;
       }
 
+      // Read date, ref and target phone
+      const chosenDate = document.getElementById('vpay_date')?.value || conv.pendingPaymentDate || todayLocalISO();
+      const refNum = document.getElementById('vpay_ref')?.value?.trim() || conv.pendingPaymentRef || '';
+      const destNum = document.getElementById('vpay_phone')?.value?.trim() || conv.pendingPaymentPhone || '';
+
+      const descParts = [];
+      if (refNum && destNum) {
+        descParts.push(`Pago Móvil Ref: ${refNum} al número/cédula ${destNum}`);
+      } else if (refNum) {
+        descParts.push(`Pago Móvil Ref: ${refNum}`);
+      } else if (destNum) {
+        descParts.push(`Pago recibido al número ${destNum}`);
+      }
+      descParts.push(`Atendido por @${this.user || 'doom1'}`);
+      if (conv.pendingPaymentItem) descParts.push(`Concepto: ${conv.pendingPaymentItem}`);
+      if (itemName) descParts.push(`(${itemName} -$${costBasis.toFixed(2)})`);
+
+      const finalNote = descParts.join(' • ');
+
       // Register Income Transaction
       const netProfit = Math.max(0, amount - costBasis);
       ops.push({
@@ -5500,10 +5568,10 @@
           netProfit: netProfit,
           walletId: walletId,
           categoryId: categoryId,
-          date: todayLocalISO(),
+          date: chosenDate,
           time: nowHHMM(),
-          title: `Cobro verificado ${conv.customerName} (${conv.platform.toUpperCase()})`,
-          note: `Atendido por ${this.user || 'doom1'}. Concepto: ${conv.pendingPaymentItem || 'Venta / Servicio'}${itemName ? ` (${itemName} -$${costBasis.toFixed(2)})` : ''}`,
+          title: (refNum ? `Pago Ref: ${refNum} - ` : 'Cobro verificado - ') + `${conv.customerName} (${(conv.platform || 'whatsapp').toUpperCase()})`,
+          note: finalNote,
           createdBy: this.user || 'doom1',
           createdAt: now,
           updatedAt: now
@@ -5557,6 +5625,21 @@
       this.toast(`¡Pago de $${amount.toFixed(2)} verificado! Ganancias (+${netProfit.toFixed(2)}$) y stock actualizados.`, 'verified');
       this.renderMainView();
       this.scrollChatToBottom('botMessagesStream');
+    },
+
+    onVerifyPaymentPhoneInput(val) {
+      const p = String(val || '').replace(/\D/g, '');
+      const wallets = this.activeList('wallets') || [];
+      const walletSel = document.getElementById('vpay_walletId');
+      if (!walletSel) return;
+
+      if (p.includes('32030679') || p.includes('4264181643') || String(val || '').toLowerCase().includes('sebasti')) {
+        const w = wallets.find(x => x.id === 'w_bs_socio' || x.name?.toLowerCase().includes('sebasti') || x.name?.toLowerCase().includes('socio') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom2')));
+        if (w) walletSel.value = w.id;
+      } else if (p.includes('04142005801') || p.includes('4142005801') || String(val || '').toLowerCase().includes('anthony')) {
+        const w = wallets.find(x => x.id === 'w_bs_anthony' || x.name?.toLowerCase().includes('anthony') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom1')) || x.name?.toLowerCase().includes('banesco'));
+        if (w) walletSel.value = w.id;
+      }
     },
 
     /* ======================================================================

@@ -239,8 +239,16 @@ async function restoreAuthIfNewer() {
   const blob = await fb('GET', AUTH_PATH);
   if (!blob || !blob.data) return;
   const localSavedAt = fs.existsSync(syncMarker) ? Number(fs.readFileSync(syncMarker, 'utf8')) || 0 : 0;
-  const hasLocal = fs.existsSync(path.join(authFolder, 'creds.json'));
-  if (hasLocal && localSavedAt >= Number(blob.savedAt || 0)) return;
+  const credsPath = path.join(authFolder, 'creds.json');
+  const hasLocal = fs.existsSync(credsPath);
+  let localIsRegistered = false;
+  if (hasLocal) {
+    try {
+      const c = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+      localIsRegistered = Boolean(c && c.me && c.me.id);
+    } catch (e) {}
+  }
+  if (localIsRegistered && localSavedAt >= Number(blob.savedAt || 0)) return;
   let files;
   try {
     const json = decryptText(blob);
@@ -1141,7 +1149,7 @@ async function pollCommands() {
 }
 
 async function heartbeat() {
-  const st = await fb('GET', STATUS_PATH, undefined, 'shallow=true');
+  const st = await fb('GET', STATUS_PATH);
   if (isOwner) {
     if (st && st.instanceId && st.instanceId !== INSTANCE_ID) {
       isOwner = false;

@@ -327,11 +327,40 @@ async function queryAI(convId, userMessage, ctx) {
   if (!apiKey) return fallbackRuleBasedBot(userMessage, ctx);
 
   const history = (convHistory.get(convId) || []).slice(-10);
-  const contents = history.map(h => ({ role: h.role === 'bot' ? 'model' : 'user', parts: [{ text: h.text }] }));
-  if (!contents.length || contents[contents.length - 1].role !== 'user') {
-    contents.push({ role: 'user', parts: [{ text: userMessage }] });
+  
+  // Merge consecutive turns with same role so Gemini alternating turn rule is NEVER violated
+  const contents = [];
+  for (const h of history) {
+    if (!h.text || !h.text.trim()) continue;
+    const role = h.role === 'bot' ? 'model' : 'user';
+    if (contents.length > 0 && contents[contents.length - 1].role === role) {
+      contents[contents.length - 1].parts[0].text += '\n' + h.text;
+    } else {
+      contents.push({ role, parts: [{ text: h.text }] });
+    }
   }
-  const models = [ctx.botConfig.geminiModel, GEMINI_MODEL_ENV, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'].filter(Boolean);
+
+  // Ensure last turn is user with the new message
+  if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
+    contents.push({ role: 'user', parts: [{ text: userMessage || 'Hola' }] });
+  } else if (userMessage && !contents[contents.length - 1].parts[0].text.includes(userMessage)) {
+    contents[contents.length - 1].parts[0].text += '\n' + userMessage;
+  }
+
+  // Ensure first turn is from user (Gemini requirement)
+  while (contents.length > 0 && contents[0].role !== 'user') {
+    contents.shift();
+  }
+
+  const models = [
+    ctx.botConfig.geminiModel,
+    GEMINI_MODEL_ENV,
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-3-flash-preview',
+    'gemini-flash-latest',
+    'gemini-4-argon'
+  ].filter(Boolean);
   for (const model of [...new Set(models)]) {
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -345,15 +374,15 @@ async function queryAI(convId, userMessage, ctx) {
       });
       if (res.status === 404) continue;
       if (!res.ok) {
-        logger.error({ model, status: res.status, body: (await res.text()).slice(0, 300) }, 'Gemini falló');
-        break;
+        logger.error({ model, status: res.status, body: (await res.text()).slice(0, 300) }, 'Gemini falló con este modelo, intentando siguiente');
+        continue;
       }
       const data = await res.json();
       const reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
       if (reply) return parseAIResponseFlags(reply);
     } catch (err) {
       logger.error({ model, err: err.message }, 'Gemini error');
-      break;
+      continue;
     }
   }
   return fallbackRuleBasedBot(userMessage, ctx);
@@ -498,8 +527,25 @@ async function runAiReply(convId, q) {
   let deliveryError = '';
   try {
     if (q.ctx.platform === 'whatsapp') {
-      await waSend(q.ctx.jid, { text: result.reply });
-      await waPresence('paused', q.ctx.jid);
+      const candidateJids = [];
+      const cleanPhone = String(q.ctx.phone || '').replace(/\D/g, '');
+      if (cleanPhone && cleanPhone.length >= 8) candidateJids.push(`${cleanPhone}@s.whatsapp.net`);
+      if (q.ctx.jid && !candidateJids.includes(q.ctx.jid)) candidateJids.push(q.ctx.jid);
+      if (candidateJids.length === 0) candidateJids.push(q.ctx.jid);
+
+      let sentOk = false;
+      let lastErr = null;
+      for (const targetJid of candidateJids) {
+        try {
+          await waSend(targetJid, { text: result.reply });
+          await waPresence('paused', targetJid);
+          sentOk = true;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!sentOk && lastErr) throw lastErr;
     } else {
       await graphSend(q.ctx.platform, q.ctx.recipientId, { text: result.reply });
     }
@@ -745,7 +791,13 @@ async function handleWaMessage(msg, type) {
   const botConfig = (await fb('GET', ws('meta/botConfig'))) || {};
   if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
     if (botConfig.showTypingIndicator !== false) await waPresence('composing', jid);
-    scheduleAiReply(convId, caption, { platform: 'whatsapp', jid, hasImage: Boolean(mediaKey) || ctype === 'imageMessage', delayMs: typingDelayMs(botConfig) });
+    scheduleAiReply(convId, caption, {
+      platform: 'whatsapp',
+      jid,
+      phone,
+      hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
+      delayMs: typingDelayMs(botConfig)
+    });
   }
 }
 
@@ -950,6 +1002,32 @@ function dataUrlToBuffer(dataUrl) {
   return m ? { mime: m[1], buffer: Buffer.from(m[2], 'base64') } : null;
 }
 
+function resolveWaJids(item) {
+  const jids = [];
+  const rawPhone = item.phone || item.customerPhone || (item.to && !item.to.includes('@') ? item.to : '') || '';
+  let phoneDigits = String(rawPhone || '').replace(/\D/g, '');
+  if (!phoneDigits && item.convId && item.convId.startsWith('conv_wa_')) {
+    const extracted = item.convId.replace('conv_wa_', '');
+    if (/^\d{8,16}$/.test(extracted)) phoneDigits = extracted;
+  }
+  // 1. Phone JID is the most universal and reliable destination for WhatsApp users
+  if (phoneDigits && phoneDigits.length >= 8) {
+    jids.push(`${phoneDigits}@s.whatsapp.net`);
+  }
+  // 2. Explicit JID if provided (e.g. LID or group)
+  if (item.jid && item.jid.includes('@') && !jids.includes(item.jid)) {
+    jids.push(item.jid);
+  }
+  if (item.to && item.to.includes('@') && !jids.includes(item.to)) {
+    jids.push(item.to);
+  }
+  if (jids.length === 0 && item.to) {
+    const d = String(item.to).replace(/\D/g, '');
+    if (d) jids.push(`${d}@s.whatsapp.net`);
+  }
+  return jids;
+}
+
 async function processOutbox() {
   if (!isOwner) return;
   const items = await fb('GET', OUTBOX_PATH);
@@ -964,16 +1042,29 @@ async function processOutbox() {
     let deliveryError = '';
     try {
       if (item.platform === 'whatsapp') {
-        const jid = item.to && item.to.includes('@') ? item.to : `${String(item.to || '').replace(/\D/g, '')}@s.whatsapp.net`;
+        const candidateJids = resolveWaJids(item);
+        if (candidateJids.length === 0) throw new Error('Destinatario de WhatsApp inválido (sin número ni JID).');
         const media = dataUrlToBuffer(item.mediaUrl);
-        if (media) {
-          const kind = media.mime.startsWith('video') ? 'video' : 'image';
-          await waSend(jid, { [kind]: media.buffer, caption: item.text || undefined, mimetype: media.mime });
-        } else if (item.mediaUrl && /^https?:/.test(item.mediaUrl)) {
-          await waSend(jid, { image: { url: item.mediaUrl }, caption: item.text || undefined });
-        } else {
-          await waSend(jid, { text: item.text || '' });
+        let sentOk = false;
+        let lastErr = null;
+        for (const targetJid of candidateJids) {
+          try {
+            if (media) {
+              const kind = media.mime.startsWith('video') ? 'video' : 'image';
+              await waSend(targetJid, { [kind]: media.buffer, caption: item.text || undefined, mimetype: media.mime });
+            } else if (item.mediaUrl && /^https?:/.test(item.mediaUrl)) {
+              await waSend(targetJid, { image: { url: item.mediaUrl }, caption: item.text || undefined });
+            } else {
+              await waSend(targetJid, { text: item.text || '' });
+            }
+            sentOk = true;
+            break;
+          } catch (err) {
+            lastErr = err;
+            logger.warn({ targetJid, err: err.message }, 'Fallo al enviar a JID candidato, probando siguiente');
+          }
         }
+        if (!sentOk && lastErr) throw lastErr;
       } else if (item.platform === 'instagram' || item.platform === 'messenger') {
         if (item.text) await graphSend(item.platform, item.to, { text: item.text });
         if (item.mediaUrl && /^https?:/.test(item.mediaUrl)) await graphSend(item.platform, item.to, { imageUrl: item.mediaUrl });

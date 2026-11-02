@@ -4535,11 +4535,11 @@
           <div class="bot-chat-header-actions">
             <!-- Bot Toggle switch -->
             <button class="btn-cashew ${botActive ? 'btn-surface' : 'btn-primary'}"
-                    style="font-size:12px; padding:6px 12px;"
-                    title="Alternar entre Asistente IA automático y Modo Operador manual"
+                    style="font-size:12px; padding:6px 12px; ${!botActive ? 'border-color:#d49b4b; color:#d49b4b; background:rgba(212,155,75,0.12);' : ''}"
+                    title="${botActive ? 'El Bot IA responde automáticamente. Clic para pausarlo en este chat.' : 'Modo Manual activo (IA pausada). Clic para reactivar el Bot IA.'}"
                     onclick="CashewApp.toggleBotAutoReply('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:17px;">${botActive ? 'smart_toy' : 'person'}</span>
-              <span>${botActive ? 'Bot IA: ON' : 'Modo Manual'}</span>
+              <span class="material-symbols-rounded" style="font-size:17px; ${!botActive ? 'color:#d49b4b;' : ''}">${botActive ? 'smart_toy' : 'pause_circle'}</span>
+              <span>${botActive ? 'Bot IA: Activo' : 'Modo Manual (IA Pausada)'}</span>
             </button>
 
             ${conv.pendingPayment ? `
@@ -4623,6 +4623,18 @@
           </div>
         ` : ''}
 
+        ${!botActive ? `
+          <div style="background:rgba(212,155,75,0.1); border:1px solid rgba(212,155,75,0.3); border-radius:8px; padding:7px 12px; margin:0 16px 8px 16px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#f0f4f8;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="material-symbols-rounded" style="color:#d49b4b; font-size:18px;">pause_circle</span>
+              <span><strong>Modo Manual Activo:</strong> El Bot IA está pausado en esta conversación para atención personal.</span>
+            </div>
+            <button class="btn-cashew btn-primary" style="font-size:11px; padding:3px 10px;" onclick="CashewApp.toggleBotAutoReply('${conv.id}')">
+              <span class="material-symbols-rounded" style="font-size:14px;">play_arrow</span> Reactivar Bot IA
+            </button>
+          </div>
+        ` : ''}
+
         <!-- Composer Bar -->
         <div class="bot-composer-bar">
           <label class="bot-icon-btn" title="Adjuntar foto o video">
@@ -4656,6 +4668,17 @@
         ? (msg.sentBy === 'bot' ? '🤖 Doom Bot IA' : `👤 @${msg.sentBy || 'Operador'}`)
         : (conv.customerName || 'Cliente');
 
+      let statusIcon = '';
+      if (isOutgoing) {
+        if (msg.deliveryStatus === 'error') {
+          statusIcon = `<span class="material-symbols-rounded" style="color:#ef4444; font-size:15px; margin-left:4px; vertical-align:middle; cursor:help;" title="No entregado: ${this.escapeHtml(msg.deliveryError || 'Error de red')}">error</span>`;
+        } else if (msg.deliveryStatus === 'sent') {
+          statusIcon = `<span style="color:#38bdf8; font-size:12px; margin-left:4px; font-weight:700;" title="Entregado con éxito">✓✓</span>`;
+        } else {
+          statusIcon = `<span class="material-symbols-rounded" style="color:var(--text-muted); font-size:13px; margin-left:4px; vertical-align:middle;" title="Enviando...">schedule</span>`;
+        }
+      }
+
       return `
         <div class="bot-msg-row ${isOutgoing ? 'outgoing' : 'incoming'}">
           <span class="bot-msg-sender-name">${authorLabel}</span>
@@ -4672,7 +4695,7 @@
             <div>${this.escapeHtml(msg.text || '').replace(/\n/g, '<br/>')}</div>
             <div class="bot-bubble-meta">
               <span>${timeStr}</span>
-              ${isOutgoing ? `<span style="color:#25d366; font-size:12px; margin-left:2px;">✓✓</span>` : ''}
+              ${statusIcon}
             </div>
           </div>
         </div>
@@ -4743,6 +4766,8 @@
           convId: conv.id,
           platform: conv.platform,
           to: conv.customerPhone || conv.customerJid || conv.customerPlatformId || '',
+          phone: conv.customerPhone || '',
+          jid: conv.customerJid || '',
           text: text,
           mediaUrl: newMsg.mediaUrl,
           createdAt: now

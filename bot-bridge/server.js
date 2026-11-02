@@ -297,6 +297,329 @@ const DEFAULT_FAQ = [
   { id: 'faq_4', question: '¿Dónde están ubicados y cuál es el horario de atención?', answer: 'Estamos ubicados en nuestro local comercial. Atendemos de Lunes a Sábado de 9:00 AM a 6:00 PM.' }
 ];
 
+/* --------------------------------------------------------------------------
+   SOCIOS / ADMINISTRADORES AUTORIZADOS (Anthony y Socio)
+   -------------------------------------------------------------------------- */
+const PARTNER_ACCOUNTS = [
+  {
+    name: 'Anthony',
+    phone: '584142005801',
+    jids: ['268135210995915@lid', '584142005801@s.whatsapp.net']
+  },
+  {
+    name: 'Socio',
+    phone: '584264181643',
+    jids: ['584264181643@s.whatsapp.net']
+  }
+];
+
+const partnerAlertCooldown = new Map();
+
+function isAuthorizedPartner(phoneOrJid) {
+  if (!phoneOrJid) return null;
+  const raw = String(phoneOrJid).toLowerCase();
+  const digits = raw.replace(/\D/g, '');
+  for (const p of PARTNER_ACCOUNTS) {
+    if (p.jids && p.jids.some(j => raw.includes(j.toLowerCase()))) return p;
+    if (digits && (digits.endsWith(p.phone) || p.phone.endsWith(digits) && digits.length >= 10)) return p;
+    if (raw.includes(p.phone)) return p;
+  }
+  return null;
+}
+
+async function notifyPartners(text, alertKey = null) {
+  if (!waSock || waState !== 'connected') return;
+  if (alertKey) {
+    const last = partnerAlertCooldown.get(alertKey) || 0;
+    if (Date.now() - last < 15 * 60 * 1000) return; // Cooldown de 15 min para evitar alertas repetidas
+    partnerAlertCooldown.set(alertKey, Date.now());
+  }
+
+  for (const p of PARTNER_ACCOUNTS) {
+    for (const jid of p.jids) {
+      try {
+        await waSend(jid, { text });
+        break; // Enviado con éxito a este socio
+      } catch (err) {
+        logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar alerta por este JID, probando alternativo');
+      }
+    }
+  }
+}
+
+async function checkLowStockAndAlert() {
+  if (!isOwner || waState !== 'connected') return;
+  try {
+    const stockRaw = await fb('GET', ws('stockItems'));
+    if (!stockRaw) return;
+    const items = Object.values(stockRaw).filter(i => i && !i.deleted);
+    for (const it of items) {
+      const stockNum = Number(it.stock) || 0;
+      const minStock = Number(it.minStock) || 2;
+      if (stockNum <= minStock) {
+        const key = `stock_low_${it.id}_${stockNum}`;
+        const last = partnerAlertCooldown.get(key) || 0;
+        if (Date.now() - last < 8 * 60 * 60 * 1000) continue; // máximo 1 alerta cada 8 horas por nivel de stock
+        partnerAlertCooldown.set(key, Date.now());
+
+        const alertMsg = stockNum <= 0
+          ? `🚨 *DOOMLATER ALERT: Producto AGOTADO* 📦\n\nEl producto/insumo *${it.name}* se quedó sin stock (0 unidades).\n👉 _Atento para reposición._`
+          : `⚠️ *DOOMLATER ALERT: Stock Crítico* 📦\n\nEl producto/insumo *${it.name}* tiene solo *${stockNum} unidad(es)* disponibles.\n👉 _Atento para reposición._`;
+
+        await notifyPartners(alertMsg, key);
+      }
+    }
+  } catch (e) {
+    logger.warn({ err: e.message }, 'Error en chequeo de stock bajo');
+  }
+}
+
+async function loadAdminExecutiveContext() {
+  const [walletsRaw, stockRaw, txsRaw, convsRaw] = await Promise.all([
+    fb('GET', ws('wallets')),
+    fb('GET', ws('stockItems')),
+    fb('GET', ws('transactions')),
+    fb('GET', ws('botConversations'))
+  ]);
+
+  const wallets = walletsRaw ? Object.values(walletsRaw).filter(w => w && !w.deleted) : [];
+  const stock = stockRaw ? Object.values(stockRaw).filter(i => i && !i.deleted) : [];
+  const txs = txsRaw ? Object.values(txsRaw).filter(t => t && !t.deleted) : [];
+  const convs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
+
+  const walletBalances = wallets.map(w => {
+    let bal = Number(w.startingBalance) || 0;
+    for (const t of txs) {
+      if (t.paid === false) continue;
+      const amt = Number(t.amount) || 0;
+      if (t.walletId === w.id) {
+        if (t.type === 'income') bal += amt;
+        else if (t.type === 'expense') bal -= amt;
+        else if (t.type === 'transfer') bal -= amt;
+      }
+      if (t.destinationWalletId === w.id && t.type === 'transfer') {
+        bal += Number(t.destinationAmount || amt);
+      }
+    }
+    return {
+      id: w.id,
+      name: w.name,
+      currency: w.currency || 'USD',
+      symbol: w.symbol || '$',
+      balance: bal
+    };
+  });
+
+  let totalUsd = 0;
+  for (const wb of walletBalances) {
+    if (wb.currency === 'USDT' || wb.currency === 'USD' || wb.name.toLowerCase().includes('usd') || wb.name.toLowerCase().includes('binance') || wb.name.toLowerCase().includes('efectivo')) {
+      totalUsd += wb.balance;
+    }
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayTxs = txs.filter(t => (t.date === todayStr || (t.createdAt && new Date(t.createdAt).toISOString().slice(0, 10) === todayStr)) && t.paid !== false);
+  const todayIncome = todayTxs.filter(t => t.type === 'income').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const todayProfit = todayTxs.filter(t => t.type === 'income').reduce((s, t) => s + (Number(t.netProfit || t.amount) || 0), 0);
+
+  const sellables = stock.filter(i => i.kind === 'para_vender');
+  const insumos = stock.filter(i => i.kind === 'insumo');
+  const lowStock = stock.filter(i => (Number(i.stock) || 0) <= (Number(i.minStock) || 2));
+  const zeroStock = stock.filter(i => (Number(i.stock) || 0) <= 0);
+  const pendingPayments = convs.filter(c => c.pendingPayment);
+
+  return {
+    walletBalances,
+    totalUsd,
+    todayIncome,
+    todayProfit,
+    stock,
+    sellables,
+    insumos,
+    lowStock,
+    zeroStock,
+    pendingPayments
+  };
+}
+
+function buildAdminSystemPrompt(adminCtx, partnerName) {
+  const walletsSummary = adminCtx.walletBalances.map(w => {
+    const isBs = w.currency === 'VES' || w.name.toLowerCase().includes('cuenta');
+    const val = isBs ? `Bs. ${w.balance.toFixed(2)}` : `$${w.balance.toFixed(2)} ${w.currency}`;
+    return `- ${w.name}: ${val}`;
+  }).join('\n');
+
+  const stockSummary = adminCtx.stock.map(i => {
+    const kind = i.kind === 'insumo' ? 'Insumo Taller' : 'Venta Producto';
+    return `- ${i.name} (${kind} | ${i.category || 'General'}): stock ${i.stock} unidades | precio $${Number(i.salePrice || 0).toFixed(2)} | costo compra $${Number(i.purchaseCost || 0).toFixed(2)}`;
+  }).join('\n');
+
+  const lowStockSummary = adminCtx.lowStock.length > 0
+    ? adminCtx.lowStock.map(i => `- ${i.name}: ${i.stock <= 0 ? 'AGOTADO (0 uds)' : `solo ${i.stock} unidad(es)`}`).join('\n')
+    : 'Todo el stock en niveles óptimos';
+
+  const pendingSummary = adminCtx.pendingPayments.length > 0
+    ? adminCtx.pendingPayments.map(c => `- ${c.customerName || 'Cliente'} (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por ${c.pendingPaymentItem || 'Servicio/Venta'}`).join('\n')
+    : 'No hay pagos pendientes de verificar';
+
+  return `Eres el Asistente Ejecutivo Inteligente Privado de Doomlater.Corp exclusivo para el socio fundador: ${partnerName}.
+Tu función es responderle a los dueños por WhatsApp con información ejecutiva, precisa, rápida y clara sobre las finanzas, dinero acumulado, stock y estado del negocio.
+Usa formato limpio de WhatsApp: negritas (*palabra*), viñetas (•) y emojis para que se lea impecable en el teléfono.
+
+=== BALANCES Y DINERO ACUMULADO EN TIEMPO REAL ===
+Total acumulado en divisas: $${adminCtx.totalUsd.toFixed(2)} USD
+Cuentas y Billeteras:
+${walletsSummary}
+
+Ingresos registrados hoy: +$${adminCtx.todayIncome.toFixed(2)} USD
+Ganancia neta registrada hoy: +$${adminCtx.todayProfit.toFixed(2)} USD
+
+=== INVENTARIO Y STOCK EN VIVO ===
+${stockSummary || '(No hay productos registrados en stock)'}
+
+=== PRODUCTOS O INSUMOS POR AGOTARSE (STOCK CRÍTICO) ===
+${lowStockSummary}
+
+=== PAGOS PENDIENTES DE VERIFICACIÓN ===
+${pendingSummary}
+
+Instrucciones:
+1. Si pregunta cuánto dinero tenemos o acumulado o saldo o balance o caja: Indícale el Total Acumulado en divisas y el desglose de cada billetera/cuenta.
+2. Si pregunta por un producto específico (ej: "¿cuántos cargadores de 3ds quedan?"): Busca en la lista y dile exactamente cuántas unidades quedan, su precio de venta y su costo de compra.
+3. Si pregunta qué queda en stock: da un resumen categorizado de los productos para la venta e insumos.
+4. Si pregunta qué falta o qué está por acabarse: lista los que tienen stock bajo o agotado.
+5. Si pregunta por pagos pendientes: dile si hay clientes con comprobante en espera de verificación.
+6. Habla con confianza, tono de socio colaborador, ágil y directo.`;
+}
+
+function fallbackAdminRuleBased(userText, ctx, partnerName) {
+  const q = String(userText || '').toLowerCase().trim();
+
+  // 1. Dinero / Saldo / Balance / Caja / Acumulado
+  if (/(dinero|plata|cuanto|cuánto|saldo|balance|caja|acumulado|cuentas|billetera)/i.test(q)) {
+    const lines = [
+      `💼 *Resumen Financiero Doomlater.Corp* (${partnerName})`,
+      `💵 *Total Acumulado en Divisas:* $${ctx.totalUsd.toFixed(2)} USD`,
+      ``,
+      `*Desglose por Cuentas:*`
+    ];
+    for (const wb of ctx.walletBalances) {
+      const isBs = wb.currency === 'VES' || wb.name.toLowerCase().includes('cuenta');
+      const valStr = isBs ? `Bs. ${wb.balance.toFixed(2)}` : `$${wb.balance.toFixed(2)} ${wb.currency}`;
+      lines.push(`• *${wb.name}:* ${valStr}`);
+    }
+    if (ctx.todayIncome > 0) {
+      lines.push(``, `📈 *Ingresos hoy:* +$${ctx.todayIncome.toFixed(2)} (Ganancia neta: +$${ctx.todayProfit.toFixed(2)})`);
+    }
+    return lines.join('\n');
+  }
+
+  // 2. Faltantes / Por agotarse / Stock bajo
+  if (/(falta|por acabarse|agotad|bajo|terminar|reponer)/i.test(q)) {
+    if (ctx.lowStock.length === 0) {
+      return `✅ *Todo el stock en orden!*\nNo hay productos ni insumos con stock crítico en este momento.`;
+    }
+    const lines = [`⚠️ *Productos e Insumos por Agotarse:*`, ``];
+    for (const it of ctx.lowStock) {
+      const tag = (Number(it.stock) || 0) <= 0 ? '🚨 AGOTADO (0 uds)' : `⚠️ Solo ${it.stock} ud(s)`;
+      lines.push(`• *${it.name}* (${it.category || (it.kind === 'insumo' ? 'Insumo' : 'Producto')}): ${tag} | PVP: $${Number(it.salePrice || 0).toFixed(2)} | Costo: $${Number(it.purchaseCost || 0).toFixed(2)}`);
+    }
+    return lines.join('\n');
+  }
+
+  // 3. Stock general / Qué queda en stock / Inventario
+  if (/(que queda|qué queda|todo el stock|inventario|lista de stock|cat[aá]logo)/i.test(q)) {
+    const lines = [`📦 *Inventario Actual Doomlater.Corp:*`, ``];
+    if (ctx.sellables.length > 0) {
+      lines.push(`*🛍️ Para la Venta:*`);
+      for (const it of ctx.sellables) {
+        lines.push(`• *${it.name}:* ${it.stock} uds (PVP: $${Number(it.salePrice || 0).toFixed(2)} | Costo: $${Number(it.purchaseCost || 0).toFixed(2)})`);
+      }
+    }
+    if (ctx.insumos.length > 0) {
+      lines.push(``, `*🔧 Insumos de Taller:*`);
+      for (const it of ctx.insumos) {
+        lines.push(`• *${it.name}:* ${it.stock} uds (Costo: $${Number(it.purchaseCost || 0).toFixed(2)})`);
+      }
+    }
+    if (ctx.stock.length === 0) {
+      lines.push(`(No hay artículos registrados en stock aún)`);
+    }
+    return lines.join('\n');
+  }
+
+  // 4. Pagos pendientes / Verificaciones
+  if (/(pago|pendiente|por verificar|comprobante)/i.test(q)) {
+    if (ctx.pendingPayments.length === 0) {
+      return `✅ *Al día!* No hay pagos pendientes por verificar en la bandeja.`;
+    }
+    const lines = [`🧾 *Pagos Pendientes por Verificar (${ctx.pendingPayments.length}):*`, ``];
+    for (const c of ctx.pendingPayments) {
+      lines.push(`• *${c.customerName || 'Cliente'}* (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por ${c.pendingPaymentItem || 'Servicio/Venta'}`);
+    }
+    lines.push(``, `👉 _Puedes verificarlos desde la web para sumarlos a caja._`);
+    return lines.join('\n');
+  }
+
+  // 5. Búsqueda específica de un producto (ej. "3ds", "cargador", etc.)
+  const words = q.replace(/cuantos|cuántos|quedan|queda|de|hay|en|stock|\?|¿/gi, '').trim().split(/\s+/).filter(w => w.length >= 2);
+  if (words.length > 0) {
+    const matches = ctx.stock.filter(it => {
+      const name = String(it.name || '').toLowerCase();
+      const cat = String(it.category || '').toLowerCase();
+      const extra = String(it.extraDetail || it.notes || '').toLowerCase();
+      return words.some(w => name.includes(w) || cat.includes(w) || extra.includes(w));
+    });
+
+    if (matches.length > 0) {
+      const lines = [`📦 *Resultado de búsqueda en Stock:*`, ``];
+      for (const it of matches) {
+        const estado = (Number(it.stock) || 0) <= 0 ? '🚨 AGOTADO' : `✅ Quedan *${it.stock} unidad(es)*`;
+        lines.push(`• *${it.name}* (${it.category || 'Stock'}):\n  ${estado}\n  💰 Precio de venta: *$${Number(it.salePrice || 0).toFixed(2)}*\n  🏷️ Costo de compra: $${Number(it.purchaseCost || 0).toFixed(2)}`);
+      }
+      return lines.join('\n\n');
+    }
+  }
+
+  // 6. Saludo / Ayuda por defecto
+  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes preguntarme por WhatsApp:\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
+}
+
+async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
+  const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
+  if (!apiKey) return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
+
+  const models = [
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-3-flash-preview',
+    'gemini-flash-latest'
+  ];
+
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 500 }
+        })
+      });
+      if (res.status === 404) continue;
+      if (!res.ok) continue;
+      const data = await res.json();
+      const reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      if (reply) return { reply, isPayment: false, needsHuman: false };
+    } catch (e) {
+      continue;
+    }
+  }
+
+  return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
+}
+
 async function loadAiContext() {
   const [botConfig, stockRaw] = await Promise.all([fb('GET', ws('meta/botConfig')), fb('GET', ws('stockItems'))]);
   const cfg = botConfig || {};
@@ -337,7 +660,8 @@ Instrucciones de respuesta:
 3. Si el cliente indica que ya pagó o envía un comprobante/capture: Agradece, indícale que el equipo lo está verificando y finaliza tu mensaje con [FLAG_PAGO_REPORTADO].
 4. Preguntas sobre productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, indícale amablemente qué servicios o modelos manejamos en Doomlater.Corp, ofrécele consultar la disponibilidad exacta con el equipo y finaliza con [FLAG_REQUIERE_HUMANO].
 5. Si preguntan sobre servicio técnico, envíos, garantía o ubicación: Responde con la información de Preguntas Frecuentes.
-6. Nunca inventes precios específicos que no conozcas.`;
+6. Nunca inventes precios específicos que no conozcas.
+7. Información interna, financiera o administrativa: Si un cliente pregunta cuánto dinero tiene la empresa, saldos bancarios, ganancias o costos internos, indícale amablemente que esa información es estrictamente confidencial de la administración y que con gusto le brindas información sobre precios de venta, disponibilidad de consolas o servicio técnico.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -416,6 +740,13 @@ async function queryAI(convId, userMessage, ctx) {
 
 function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [] }) {
   const msg = String(userMessage || '').toLowerCase();
+  if (/(dinero|saldo|balance|cuánto tienen|cuanto tienen|cuanto dinero|cuánto dinero|ganancia)/i.test(msg)) {
+    return {
+      reply: 'Esa es información interna y confidencial de la administración de Doomlater.Corp. Si tienes dudas sobre nuestras consolas, productos o servicios técnicos con gusto te ayudamos. ✨',
+      isPayment: false,
+      needsHuman: false
+    };
+  }
   if (/(ya pagu|ya pagué|transfer|comprobante|capture|pago realizado)/.test(msg)) {
     return { reply: '¡Muchas gracias! 🧾 Recibimos tu comprobante. Los socios de Doomlater.Corp lo están verificando y te confirman en breve.', isPayment: true, needsHuman: true };
   }
@@ -538,7 +869,10 @@ async function runAiReply(convId, q) {
 
   const userText = q.texts.join('\n').trim();
   let result;
-  if (q.hasImage && !/[a-z]{4,}/i.test(userText)) {
+  if (q.ctx.isPartner) {
+    const adminCtx = await loadAdminExecutiveContext();
+    result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio');
+  } else if (q.hasImage && !/[a-z]{4,}/i.test(userText)) {
     result = {
       reply: '¡Gracias! 🧾 Recibimos tu imagen/comprobante. Los socios de Doomlater.Corp lo verifican y te confirman en breve.',
       isPayment: true,
@@ -586,14 +920,34 @@ async function runAiReply(convId, q) {
   }
   pushHistory(convId, 'bot', result.reply);
 
-  const patch = {};
-  if (result.isPayment || result.needsHuman) {
-    patch.needsAttention = true;
-    patch.attentionReason = result.isPayment
-      ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'
-      : 'Consulta fuera del catálogo o caso especial.';
+  // Alertas proactivas a los socios cuando un cliente reporta pago o solicita atención
+  if (!q.ctx.isPartner && deliveryStatus === 'sent') {
+    if (result.isPayment) {
+      const alertMsg = `🔔 *DOOMLATER ALERT: Pago por Verificar* 🧾\n\n` +
+        `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +
+        `Concepto: *${conv.pendingPaymentItem || 'Servicio Técnico / Venta'}*\n` +
+        `Monto reportado: *${conv.pendingPaymentAmount ? `$${Number(conv.pendingPaymentAmount).toFixed(2)}` : 'Por verificar'}*\n\n` +
+        `👉 _Entra a la web para verificarlo y sumarlo a caja._`;
+      notifyPartners(alertMsg, `pay_${convId}_${Math.floor(Date.now() / (10 * 60 * 1000))}`).catch(() => {});
+    } else if (result.needsHuman) {
+      const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
+        `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +
+        `Mensaje: "${userText.slice(0, 100)}"\n\n` +
+        `👉 _Se requiere la intervención de un socio en el chat._`;
+      notifyPartners(alertMsg, `human_${convId}_${Math.floor(Date.now() / (10 * 60 * 1000))}`).catch(() => {});
+    }
   }
-  if (result.isPayment) patch.pendingPayment = true;
+
+  const patch = {};
+  if (!q.ctx.isPartner) {
+    if (result.isPayment || result.needsHuman) {
+      patch.needsAttention = true;
+      patch.attentionReason = result.isPayment
+        ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'
+        : 'Consulta fuera del catálogo o caso especial.';
+    }
+    if (result.isPayment) patch.pendingPayment = true;
+  }
   await recordOutgoing(convId, {
     id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
     text: result.reply,
@@ -836,6 +1190,7 @@ async function handleWaMessage(msg, type) {
     label: `💬 ${pushName || phone || 'Cliente'} (WhatsApp): ${text.slice(0, 60)}`
   });
 
+  const partner = isAuthorizedPartner(jid) || isAuthorizedPartner(phone) || (convId === 'conv_wa_584142005801' ? PARTNER_ACCOUNTS[0] : null);
   const botConfig = (await fb('GET', ws('meta/botConfig'))) || {};
   if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
     if (botConfig.showTypingIndicator !== false) await waPresence('composing', jid);
@@ -844,7 +1199,9 @@ async function handleWaMessage(msg, type) {
       jid,
       phone,
       hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
-      delayMs: typingDelayMs(botConfig)
+      delayMs: partner ? 800 : typingDelayMs(botConfig),
+      isPartner: Boolean(partner),
+      partnerName: partner ? partner.name : null
     });
   }
 }
@@ -1292,6 +1649,7 @@ app.listen(PORT, async () => {
   setInterval(() => pollCommands().catch(() => {}), 3000);
   setInterval(() => processOutbox().catch(() => {}), 3000);
   setInterval(() => backupAuthNow().catch(() => {}), 30000);
+  setInterval(() => checkLowStockAndAlert().catch(() => {}), 5 * 60 * 1000);
 
   // Render (plan gratis) se duerme tras 15 min sin tráfico: nos auto-visitamos cada 10 min.
   if (RENDER_URL) {

@@ -4878,11 +4878,16 @@
       if (!conv) return;
 
       const wallets = this.activeList('wallets') || [];
-      const insumos = (this.activeList('stockItems') || []).filter(i => i.kind === 'insumo');
-      const sellables = (this.activeList('stockItems') || []).filter(i => i.kind === 'para_vender');
+      const insumos = (this.activeList('stockItems') || []).filter(i => !i.deleted && i.kind === 'insumo');
+      const sellables = (this.activeList('stockItems') || []).filter(i => !i.deleted && i.kind === 'para_vender');
 
       const amount = Number(conv.pendingPaymentAmount) || 40.00;
-      const defaultInsumo = insumos[0] || null;
+      // Detect default type based on description
+      const detail = String(conv.pendingPaymentItem || conv.lastMessage || '').toLowerCase();
+      let defaultType = 'venta';
+      if (detail.includes('servicio') || detail.includes('cambio') || detail.includes('pantalla') || detail.includes('mantenimiento') || detail.includes('reparaci')) {
+        defaultType = 'servicio';
+      }
 
       const bodyHtml = `
         <div class="modal-head">
@@ -4892,7 +4897,7 @@
             </div>
             <div>
               <h2 class="modal-title" style="font-size:18px; margin:0;">Verificar y Registrar Pago</h2>
-              <div style="font-size:12px; color:var(--text-muted);">Acredita el ingreso a caja y descuenta insumos de taller</div>
+              <div style="font-size:12px; color:var(--text-muted);">Acredita a tu billetera y descuenta de stock si aplica</div>
             </div>
           </div>
           <button class="icon-btn" onclick="CashewApp.closeModal()">
@@ -4908,7 +4913,7 @@
               <strong>${this.escapeHtml(conv.customerName)} (${(conv.platform || 'whatsapp').toUpperCase()})</strong>
             </div>
             <div class="verify-payment-row">
-              <span style="color:var(--text-muted);">Concepto / Detalle:</span>
+              <span style="color:var(--text-muted);">Concepto reportado:</span>
               <span>${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')}</span>
             </div>
             <div class="verify-payment-row" style="font-size:15px;">
@@ -4929,18 +4934,43 @@
             </select>
           </div>
 
-          <!-- Service vs Direct Sale Toggle -->
+          <!-- Operation Type Selector (Venta vs Servicio vs Ninguno) -->
           <div class="form-group" style="margin-bottom:14px;">
-            <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="vpay_isService" checked onchange="CashewApp.onVerifyServiceToggleChange(this.checked)" />
-              <span>Es un Servicio Técnico (Requiere descontar repuesto / insumo)</span>
+            <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:6px; display:block;">
+              ¿Qué tipo de cobro es?
             </label>
+            <select id="vpay_operationType" class="cashew-input" style="width:100%; font-size:13.5px; font-weight:600;" onchange="CashewApp.onVerifyOperationTypeChange(this.value, ${amount})">
+              <option value="venta" ${defaultType === 'venta' ? 'selected' : ''}>🛍️ Venta de Producto (Descuenta producto en vitrina / stock)</option>
+              <option value="servicio" ${defaultType === 'servicio' ? 'selected' : ''}>🔧 Servicio Técnico (Descuenta repuesto o insumo de taller)</option>
+              <option value="ninguno" ${defaultType === 'ninguno' ? 'selected' : ''}>💰 Ingreso Libre / Sin Stock (Mano de obra, abono o ganancia neta pura)</option>
+            </select>
           </div>
 
-          <!-- Insumo Selection section -->
-          <div id="vpay_insumoSection" style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
+          <!-- VENTA: Product Selection section -->
+          <div id="vpay_productSection" style="display:${defaultType === 'venta' ? 'block' : 'none'}; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
             <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
-              Insumo de stock consumido en el taller:
+              Producto vendido (se descontará del stock):
+            </label>
+            <select id="vpay_productId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
+              ${sellables.length === 0 ? `
+                <option value="">(No hay productos para vender registrados - se registrará sin descuento)</option>
+              ` : sellables.map(p => `
+                <option value="${p.id}" data-cost="${Number(p.purchaseCost) || 0}" data-stock="${Number(p.stock) || 0}" data-price="${Number(p.salePrice) || 0}">
+                  ${this.escapeHtml(p.name)} (Stock: ${p.stock} un. • Costo: $${Number(p.purchaseCost || 0).toFixed(2)} • PVP: $${Number(p.salePrice || 0).toFixed(2)})
+                </option>
+              `).join('')}
+            </select>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
+              <span style="font-size:12px; color:var(--text-muted);">Cantidad vendida:</span>
+              <input type="number" id="vpay_productQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
+            </div>
+          </div>
+
+          <!-- SERVICIO: Insumo Selection section -->
+          <div id="vpay_insumoSection" style="display:${defaultType === 'servicio' ? 'block' : 'none'}; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
+            <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
+              Insumo de taller consumido (se descontará del stock):
             </label>
             <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
               ${insumos.length === 0 ? `
@@ -4954,15 +4984,15 @@
 
             <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
               <span style="font-size:12px; color:var(--text-muted);">Cantidad consumida:</span>
-              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
+              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
             </div>
+          </div>
 
-            <!-- Financial Net Profit Breakdown -->
-            <div id="vpay_breakdownBox" style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-subtle); font-size:12.5px;">
-              <div class="verify-profit-pill">
-                <span>Ganancia Neta Estimada:</span>
-                <strong id="vpay_netProfitVal">+$${defaultInsumo ? Math.max(0, amount - (Number(defaultInsumo.purchaseCost) || 0)).toFixed(2) : amount.toFixed(2)}</strong>
-              </div>
+          <!-- Financial Net Profit Breakdown -->
+          <div id="vpay_breakdownBox" style="margin-bottom:14px; font-size:12.5px;">
+            <div class="verify-profit-pill">
+              <span>Ganancia Neta Estimada:</span>
+              <strong id="vpay_netProfitVal">+$${amount.toFixed(2)}</strong>
             </div>
           </div>
 
@@ -4980,25 +5010,54 @@
       `;
 
       this.openModalHTML(bodyHtml, false);
+      setTimeout(() => this.updateVerifyPaymentBreakdown(amount), 30);
     },
 
-    onVerifyServiceToggleChange(isChecked) {
-      const sec = document.getElementById('vpay_insumoSection');
-      if (sec) sec.style.display = isChecked ? 'block' : 'none';
+    onVerifyOperationTypeChange(type, totalCharged) {
+      const prodSec = document.getElementById('vpay_productSection');
+      const insumoSec = document.getElementById('vpay_insumoSection');
+      if (prodSec) prodSec.style.display = type === 'venta' ? 'block' : 'none';
+      if (insumoSec) insumoSec.style.display = type === 'servicio' ? 'block' : 'none';
+      this.updateVerifyPaymentBreakdown(totalCharged);
     },
 
     updateVerifyPaymentBreakdown(totalCharged) {
-      const sel = document.getElementById('vpay_insumoId');
-      const qtyInput = document.getElementById('vpay_insumoQty');
+      const typeSel = document.getElementById('vpay_operationType');
+      const type = typeSel ? typeSel.value : 'venta';
       const profitEl = document.getElementById('vpay_netProfitVal');
-      if (!sel || !qtyInput || !profitEl) return;
+      if (!profitEl) return;
 
-      const opt = sel.options[sel.selectedIndex];
-      const cost = opt ? (Number(opt.dataset.cost) || 0) : 0;
-      const qty = Number(qtyInput.value) || 1;
-      const totalCost = cost * qty;
-      const net = Math.max(0, totalCharged - totalCost);
-      profitEl.textContent = `+$${net.toFixed(2)} (Costo Insumo: -$${totalCost.toFixed(2)})`;
+      let costBasis = 0;
+      let label = '';
+
+      if (type === 'venta') {
+        const prodSel = document.getElementById('vpay_productId');
+        const qtyInp = document.getElementById('vpay_productQty');
+        if (prodSel && prodSel.selectedIndex >= 0) {
+          const opt = prodSel.options[prodSel.selectedIndex];
+          const cost = opt ? (Number(opt.dataset.cost) || 0) : 0;
+          const qty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
+          costBasis = cost * qty;
+          label = `Costo Producto: -$${costBasis.toFixed(2)}`;
+        }
+      } else if (type === 'servicio') {
+        const insumoSel = document.getElementById('vpay_insumoId');
+        const qtyInp = document.getElementById('vpay_insumoQty');
+        if (insumoSel && insumoSel.selectedIndex >= 0) {
+          const opt = insumoSel.options[insumoSel.selectedIndex];
+          const cost = opt ? (Number(opt.dataset.cost) || 0) : 0;
+          const qty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
+          costBasis = cost * qty;
+          label = `Costo Insumo: -$${costBasis.toFixed(2)}`;
+        }
+      }
+
+      const netProfit = Math.max(0, totalCharged - costBasis);
+      if (costBasis > 0) {
+        profitEl.textContent = `+$${netProfit.toFixed(2)} (${label})`;
+      } else {
+        profitEl.textContent = `+$${netProfit.toFixed(2)} (100% Ganancia Neta)`;
+      }
     },
 
     executeVerifyPayment(convId) {
@@ -5006,55 +5065,103 @@
       if (!conv) return;
 
       const walletId = document.getElementById('vpay_walletId').value;
-      const isService = document.getElementById('vpay_isService').checked;
-      const insumoId = document.getElementById('vpay_insumoId') ? document.getElementById('vpay_insumoId').value : null;
-      const insumoQty = document.getElementById('vpay_insumoQty') ? (Number(document.getElementById('vpay_insumoQty').value) || 1) : 1;
-
+      const operationType = document.getElementById('vpay_operationType') ? document.getElementById('vpay_operationType').value : 'venta';
       const amount = Number(conv.pendingPaymentAmount) || 40.00;
       const now = Date.now();
       const ops = [];
 
       let costBasis = 0;
-      let insumoName = '';
+      let itemName = '';
+      let categoryId = 'c_ventas';
 
-      // 1. If service and insumo selected: deduct from stock and record Kardex movement
-      if (isService && insumoId) {
-        const insumo = (this.activeList('stockItems') || []).find(i => i.id === insumoId);
-        if (insumo) {
-          costBasis = (Number(insumo.purchaseCost) || 0) * insumoQty;
-          insumoName = insumo.name;
-          const updatedStock = Math.max(0, (Number(insumo.stock) || 0) - insumoQty);
-          ops.push({
-            collection: 'stockItems',
-            item: {
-              ...insumo,
-              stock: updatedStock,
-              updatedAt: now,
-              updatedBy: this.user || 'doom1'
-            }
-          });
+      if (operationType === 'venta') {
+        const prodId = document.getElementById('vpay_productId') ? document.getElementById('vpay_productId').value : null;
+        const prodQty = document.getElementById('vpay_productQty') ? (Number(document.getElementById('vpay_productQty').value) || 1) : 1;
+        const sellCat = (this.activeList('categories') || []).find(c => c.id === 'c_ventas' || c.name?.toLowerCase().includes('venta') || c.type === 'income') || { id: 'c_ventas' };
+        categoryId = sellCat.id;
 
-          // Stock movement
-          ops.push({
-            collection: 'stockMovements',
-            item: {
-              id: 'sm_vpay_' + now.toString(36),
-              stockItemId: insumo.id,
-              stockItemName: insumo.name,
-              kind: 'out',
-              qty: insumoQty,
-              reason: 'service_insumo',
-              costBasis: costBasis,
-              note: `Insumo usado en servicio técnico para ${conv.customerName} (${conv.platform})`,
-              createdBy: this.user || 'doom1',
-              createdAt: now
-            }
-          });
+        if (prodId) {
+          const prod = (this.activeList('stockItems') || []).find(i => i.id === prodId);
+          if (prod) {
+            costBasis = (Number(prod.purchaseCost) || 0) * prodQty;
+            itemName = prod.name;
+            const updatedStock = Math.max(0, (Number(prod.stock) || 0) - prodQty);
+            ops.push({
+              collection: 'stockItems',
+              item: {
+                ...prod,
+                stock: updatedStock,
+                updatedAt: now,
+                updatedBy: this.user || 'doom1'
+              }
+            });
+
+            // Kardex movement for sale
+            ops.push({
+              collection: 'stockMovements',
+              item: {
+                id: 'sm_vpay_' + now.toString(36),
+                stockItemId: prod.id,
+                stockItemName: prod.name,
+                kind: 'out',
+                qty: prodQty,
+                reason: 'sale',
+                costBasis: costBasis,
+                note: `Venta a ${conv.customerName} (${conv.platform})`,
+                createdBy: this.user || 'doom1',
+                createdAt: now
+              }
+            });
+          }
         }
+      } else if (operationType === 'servicio') {
+        const insumoId = document.getElementById('vpay_insumoId') ? document.getElementById('vpay_insumoId').value : null;
+        const insumoQty = document.getElementById('vpay_insumoQty') ? (Number(document.getElementById('vpay_insumoQty').value) || 1) : 1;
+        const servCat = (this.activeList('categories') || []).find(c => c.id === 'c_servicio' || c.name?.toLowerCase().includes('servicio') || c.type === 'income') || { id: 'c_servicio' };
+        categoryId = servCat.id;
+
+        if (insumoId) {
+          const insumo = (this.activeList('stockItems') || []).find(i => i.id === insumoId);
+          if (insumo) {
+            costBasis = (Number(insumo.purchaseCost) || 0) * insumoQty;
+            itemName = insumo.name;
+            const updatedStock = Math.max(0, (Number(insumo.stock) || 0) - insumoQty);
+            ops.push({
+              collection: 'stockItems',
+              item: {
+                ...insumo,
+                stock: updatedStock,
+                updatedAt: now,
+                updatedBy: this.user || 'doom1'
+              }
+            });
+
+            // Kardex movement for workshop service
+            ops.push({
+              collection: 'stockMovements',
+              item: {
+                id: 'sm_vpay_' + now.toString(36),
+                stockItemId: insumo.id,
+                stockItemName: insumo.name,
+                kind: 'out',
+                qty: insumoQty,
+                reason: 'service_insumo',
+                costBasis: costBasis,
+                note: `Insumo usado en servicio técnico para ${conv.customerName} (${conv.platform})`,
+                createdBy: this.user || 'doom1',
+                createdAt: now
+              }
+            });
+          }
+        }
+      } else {
+        // Ingreso Libre / Sin Stock
+        const otherCat = (this.activeList('categories') || []).find(c => c.id === 'c_otros_ing' || c.type === 'income') || { id: 'c_otros_ing' };
+        categoryId = otherCat.id;
       }
 
-      // 2. Register Income Transaction
-      const serviceCat = (this.activeList('categories') || []).find(c => c.id === 'c_servicio' || c.type === 'income') || { id: 'c_servicio' };
+      // Register Income Transaction
+      const netProfit = Math.max(0, amount - costBasis);
       ops.push({
         collection: 'transactions',
         item: {
@@ -5062,32 +5169,33 @@
           type: 'income',
           amount: amount,
           costBasis: costBasis,
-          netProfit: Math.max(0, amount - costBasis),
+          netProfit: netProfit,
           walletId: walletId,
-          categoryId: serviceCat.id,
+          categoryId: categoryId,
           date: todayLocalISO(),
           time: nowHHMM(),
           title: `Cobro verificado ${conv.customerName} (${conv.platform.toUpperCase()})`,
-          note: `Atendido por ${this.user || 'doom1'}. Servicio: ${conv.pendingPaymentItem || 'Servicio Técnico'}${insumoName ? ` (Insumo: ${insumoName} -$${costBasis.toFixed(2)})` : ''}`,
+          note: `Atendido por ${this.user || 'doom1'}. Concepto: ${conv.pendingPaymentItem || 'Venta / Servicio'}${itemName ? ` (${itemName} -$${costBasis.toFixed(2)})` : ''}`,
           createdBy: this.user || 'doom1',
           createdAt: now,
           updatedAt: now
         }
       });
 
-      // 3. Update Conversation: remove mustard highlight & pending payment
+      // Update Conversation: remove mustard highlight & pending payment
       const updatedConv = {
         ...conv,
+        deleted: false,
         needsAttention: false,
         pendingPayment: false,
         paymentVerified: true,
         attentionReason: '',
-        lastMessage: `✅ Pago verificado por @${this.user}`,
+        lastMessage: `✅ Pago verificado ($${amount.toFixed(2)}) por @${this.user}`,
         lastMessageAt: now
       };
       ops.push({ collection: 'botConversations', item: updatedConv });
 
-      // 4. Send Confirmation Message to customer
+      // Confirmation Message to customer
       const confMsg = {
         id: 'bmsg_vpay_conf_' + now.toString(36),
         convId: conv.id,
@@ -5118,7 +5226,7 @@
       }
 
       this.closeModal();
-      this.toast(`¡Pago de $${amount.toFixed(2)} verificado! Ganancias e insumos actualizados.`, 'verified');
+      this.toast(`¡Pago de $${amount.toFixed(2)} verificado! Ganancias (+${netProfit.toFixed(2)}$) y stock actualizados.`, 'verified');
       this.renderMainView();
       this.scrollChatToBottom('botMessagesStream');
     },

@@ -847,6 +847,15 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
 
   const recentTxsSummary = adminCtx.recentTxs.slice(0, 20).join('\n') || '(Sin transacciones recientes)';
 
+  const servicesSummary = (adminCtx.botConfig?.serviceInsumosMap || [])
+    .map(s => {
+      const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
+        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
+        : (s.defaultInsumoName || 'Insumo taller');
+      return `- ${s.serviceName}: $${Number(s.defaultLaborPrice || 0).toFixed(2)} USD (Insumos requeridos: ${insList})`;
+    })
+    .join('\n');
+
   const customRules = adminCtx.botConfig?.customAiRules ? `
 === REGLAS DE NEGOCIO DEFINIDAS EN LA WEB ===
 ${adminCtx.botConfig.customAiRules}
@@ -936,6 +945,9 @@ ${alertsSummary}
 
 === VENTAS REGISTRADAS POR WHATSAPP PENDIENTES DE VERIFICACIÓN EN WEB ===
 ${partnerSalesSummary}
+
+=== CATÁLOGO DE SERVICIOS TÉCNICOS Y TARIFAS VINCULADAS ===
+${servicesSummary || '(No hay servicios técnicos configurados)'}
 
 === ÚLTIMAS TRANSACCIONES EN EL SISTEMA ===
 ${recentTxsSummary}
@@ -2391,6 +2403,15 @@ function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botCo
   const faq = knowledgeBaseFaq.map(f => `P: ${f.question}\nR: ${f.answer}`).join('\n\n');
   const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
 
+  const services = (botConfig.serviceInsumosMap || [])
+    .map(s => {
+      const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
+        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
+        : (s.defaultInsumoName || 'Insumos de taller');
+      return `- ${s.serviceName}: Presupuesto $${Number(s.defaultLaborPrice || 0).toFixed(2)} USD (Incluye / Requiere: ${insList})`;
+    })
+    .join('\n');
+
   const customRules = botConfig.customAiRules ? `
 === REGLAS Y FILTROS ESTRICTOS DEFINIDOS POR LOS DUEÑOS EN LA WEB ===
 ${botConfig.customAiRules}
@@ -2408,6 +2429,9 @@ ${faq}
 === MÉTODOS DE PAGO ===
 ${pm}
 
+=== SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES ===
+${services || '(Consulta de presupuestos técnicos con Anthony y Sebastián)'}
+
 === STOCK DISPONIBLE ACTUAL ===
 ${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
 
@@ -2415,10 +2439,11 @@ Instrucciones de respuesta:
 1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater.Corp (consolas, videojuegos, accesorios y servicio técnico).
 2. Preguntas sobre métodos de pago o cómo pagar: Brinda los métodos de pago disponibles y solicita el comprobante de pago por este chat.
 3. Si el cliente indica que ya pagó o envía un comprobante/capture: Agradece, indícale que el equipo lo está verificando y finaliza tu mensaje con [FLAG_PAGO_REPORTADO].
-4. Preguntas sobre productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, indícale amablemente qué servicios o modelos manejamos en Doomlater.Corp, ofrécele consultar la disponibilidad exacta con el equipo y finaliza con [FLAG_REQUIERE_HUMANO].
-5. Si preguntan sobre servicio técnico, envíos, garantía o ubicación: Responde con la información de Preguntas Frecuentes.
-6. Nunca inventes precios específicos que no conozcas.
-7. Información interna, financiera o administrativa: Si un cliente pregunta cuánto dinero tiene la empresa, saldos bancarios, ganancias o costos internos, indícale amablemente que esa información es estrictamente confidencial de la administración y que con gusto le brindas información sobre precios de venta, disponibilidad de consolas o servicio técnico.`;
+4. Presupuestos de Servicio Técnico: Cuando un cliente pregunte por precios o presupuestos de instalación de magia, chips (HwFly), memorias micro SD, mantenimiento o limpieza de Nintendo Switch (OLED, Lite, V1/V2) o consolas, cotiza con los precios y detalles EXACTOS de la sección "SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES". Explícales amablemente el precio, qué incluye el servicio (chip instalado, memoria con configuración y limpieza profunda según el paquete) e invítalos a agendar cita o traer su consola al local comercial.
+5. Preguntas sobre productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, indícale amablemente qué servicios o modelos manejamos en Doomlater.Corp, ofrécele consultar la disponibilidad exacta con el equipo y finaliza con [FLAG_REQUIERE_HUMANO].
+6. Si preguntan sobre envíos, garantía o ubicación: Responde con la información de Preguntas Frecuentes.
+7. Nunca inventes precios específicos que no conozcas.
+8. Información interna, financiera o administrativa: Si un cliente pregunta cuánto dinero tiene la empresa, saldos bancarios, ganancias o costos internos, indícale amablemente que esa información es estrictamente confidencial de la administración y que con gusto le brindas información sobre precios de venta, disponibilidad de consolas o servicio técnico.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -2514,7 +2539,7 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
   return fallbackRuleBasedBot(userMessage, ctx);
 }
 
-function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [] }) {
+function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [], botConfig = {} }) {
   const msg = String(userMessage || '').toLowerCase();
   if (/(dinero|saldo|balance|cuánto tienen|cuanto tienen|cuanto dinero|cuánto dinero|ganancia)/i.test(msg)) {
     return {
@@ -2529,6 +2554,22 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
   if (/(m[eé]todo|c[oó]mo pag|datos de pago|pago m[oó]vil|binance|zelle|cuenta)/.test(msg)) {
     const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
     return { reply: `¡Claro! Nuestros métodos de pago son:\n\n${pm || '• Pago Móvil\n• Binance Pay\n• Efectivo'}\n\nCuando pagues, envíanos el comprobante por aquí.`, isPayment: false, needsHuman: false };
+  }
+  const servicesMap = botConfig.serviceInsumosMap || [];
+  for (const s of servicesMap) {
+    const sName = String(s.serviceName || '').toLowerCase();
+    const cleanSName = sName.replace(/[^a-z0-9]/g, ' ');
+    const sWords = cleanSName.split(/\s+/).filter(w => w.length >= 4);
+    if (sWords.length > 0 && sWords.filter(w => msg.includes(w)).length >= 2) {
+      const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
+        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
+        : (s.defaultInsumoName || 'Insumos de taller');
+      return {
+        reply: `¡Hola! El presupuesto para *${s.serviceName}* es de *$${Number(s.defaultLaborPrice || 0).toFixed(2)} USD* (Incluye: ${insList}). ¿Te gustaría agendar cita o traer tu consola a nuestro local comercial? ✨`,
+        isPayment: false,
+        needsHuman: false
+      };
+    }
   }
   for (const f of knowledgeBaseFaq) {
     const words = String(f.question || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);

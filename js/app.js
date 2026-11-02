@@ -4020,7 +4020,7 @@
       const badge = document.getElementById('navBotBadge');
       if (!badge) return;
       const convs = this.getVisibleBotConversations();
-      const attentionCount = convs.filter(c => c.needsAttention).length;
+      const attentionCount = convs.filter(c => c.needsAttention || c.pendingPayment).length;
       const unreadCount = convs.reduce((acc, c) => acc + (Number(c.unreadCount) || 0), 0);
       const pendingRegs = (this.activeList('partnerPendingRegistrations') || []).filter(r => !r.deleted && r.status === 'pending');
       const total = attentionCount + unreadCount + pendingRegs.length;
@@ -4271,7 +4271,7 @@
         if (this.botChannelFilter === 'whatsapp' && c.platform !== 'whatsapp') return false;
         if (this.botChannelFilter === 'instagram' && c.platform !== 'instagram') return false;
         if (this.botChannelFilter === 'messenger' && c.platform !== 'messenger') return false;
-        if (this.botChannelFilter === 'attention' && !c.needsAttention) return false;
+        if (this.botChannelFilter === 'attention' && !c.needsAttention && !c.pendingPayment) return false;
 
         if (this.botSearchQuery && this.botSearchQuery.trim()) {
           const q = this.botSearchQuery.toLowerCase().trim();
@@ -4312,7 +4312,7 @@
           ...(conv.customerPhone ? [{ label: 'Teléfono', value: conv.customerPhone }] : []),
           { label: 'Total Mensajes', value: `${allMsgs.length} mensaje(s) en historial` },
           { label: 'Último Mensaje', value: conv.lastMessage || 'Sin mensajes' },
-          ...(conv.needsAttention ? [{ label: 'Estado', value: '⚠️ Alerta Activa', color: '#ef4444' }] : []),
+          ...(conv.needsAttention ? [{ label: 'Estado', value: '⚠️ Alerta Activa', color: '#d49b4b' }] : []),
           ...(conv.pendingPayment ? [{ label: 'Pago Pendiente', value: `$${Number(conv.pendingPaymentAmount || 0).toFixed(2)}`, color: '#d49b4b' }] : [])
         ],
         onConfirm: () => {
@@ -4401,7 +4401,7 @@
       this.ensureSeedBotConversations();
 
       const convs = this.getVisibleBotConversations();
-      const attentionCount = convs.filter(c => c.needsAttention).length;
+      const attentionCount = convs.filter(c => c.needsAttention || c.pendingPayment).length;
       const cfg = this.getBotConfig();
       const globalActive = cfg.globalBotEnabled !== false;
 
@@ -4658,7 +4658,7 @@
       const waCount = allConvs.filter(c => c.platform === 'whatsapp').length;
       const igCount = allConvs.filter(c => c.platform === 'instagram').length;
       const fbCount = allConvs.filter(c => c.platform === 'messenger').length;
-      const attnCount = allConvs.filter(c => c.needsAttention).length;
+      const attnCount = allConvs.filter(c => c.needsAttention || c.pendingPayment).length;
 
       return `
         ${this.renderPartnerPendingRegistrationsBannerHTML()}
@@ -4731,9 +4731,10 @@
       const isActive = c.id === this.botActiveConvId;
       const initials = (c.customerName || 'U').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
       const timeStr = c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+      const hasAlert = Boolean(c.needsAttention || c.pendingPayment);
 
       return `
-        <div class="bot-conv-item ${isActive ? 'active' : ''} ${c.needsAttention ? 'needs-attention' : ''}"
+        <div class="bot-conv-item ${isActive ? 'active' : ''} ${hasAlert ? 'needs-attention' : ''}"
              onclick="CashewApp.selectBotConversation('${c.id}')">
           <!-- Avatar with pinned social badge -->
           <div class="bot-avatar-wrap">
@@ -4750,18 +4751,18 @@
             <div class="bot-conv-top-row">
               <span class="bot-conv-name">${this.escapeHtml(c.customerName || 'Cliente')}</span>
               <div style="display:flex; align-items:center; gap:5px;">
-                ${c.needsAttention ? `<span style="background:rgba(239,68,68,0.18); color:#ef4444; border:1px solid rgba(239,68,68,0.4); font-size:10px; font-weight:800; padding:1px 6px; border-radius:6px; flex-shrink:0;">⚠️ Alerta</span>` : ''}
-                ${c.pendingPayment ? `<span style="background:rgba(212,155,75,0.2); color:#d49b4b; border:1px solid rgba(212,155,75,0.4); font-size:10px; font-weight:800; padding:1px 6px; border-radius:6px; flex-shrink:0;">💰 Pago</span>` : ''}
+                ${c.needsAttention ? `<span class="bot-badge-alert-mustard">⚠️ Alerta</span>` : ''}
+                ${c.pendingPayment ? `<span class="bot-badge-payment-mustard">💰 Pago</span>` : ''}
                 <span class="bot-conv-time">${timeStr}</span>
               </div>
             </div>
             <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
               <span class="bot-conv-preview">
-                ${c.needsAttention ? `<strong style="color:#d49b4b;">⚠️ Atención: </strong>` : ''}
+                ${hasAlert ? `<strong style="color:#d49b4b;">⚠️ Atención: </strong>` : ''}
                 ${c.lastMessage || 'Sin mensajes'}
               </span>
               ${c.unreadCount > 0 ? `<span class="bot-conv-unread">${c.unreadCount}</span>` : ''}
-              ${c.needsAttention && !c.unreadCount ? `<span class="bot-attention-pulse-badge">⚠️</span>` : ''}
+              ${hasAlert && !c.unreadCount ? `<span class="bot-attention-pulse-badge">⚠️</span>` : ''}
             </div>
           </div>
         </div>
@@ -4813,10 +4814,10 @@
 
             <!-- Manual Alerta Button -->
             <button class="btn-cashew"
-                    style="font-size:12px; padding:6px 12px; font-weight:700; ${conv.needsAttention ? 'background:rgba(239,68,68,0.18); border:1px solid #ef4444; color:#ef4444;' : 'background:var(--bg-elevated); border:1px solid var(--border-subtle); color:var(--text-muted);'}"
+                    style="font-size:12px; padding:6px 12px; font-weight:700; ${conv.needsAttention ? 'background:rgba(212,155,75,0.22); border:1.5px solid #d49b4b; color:#d49b4b;' : 'background:var(--bg-elevated); border:1px solid var(--border-subtle); color:var(--text-muted);'}"
                     title="${conv.needsAttention ? 'Quitar etiqueta de alerta de este chat' : 'Marcar este chat con etiqueta Alerta para recordar responder o verificar'}"
                     onclick="CashewApp.toggleBotChatAlert('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:17px; color:${conv.needsAttention ? '#ef4444' : 'inherit'};">warning</span>
+              <span class="material-symbols-rounded" style="font-size:17px; color:${conv.needsAttention ? '#d49b4b' : 'inherit'};">warning</span>
               <span>${conv.needsAttention ? '⚠️ Alerta Activa' : 'Poner Alerta'}</span>
             </button>
 
@@ -5685,17 +5686,35 @@
       const refNum = document.getElementById('vpay_ref')?.value?.trim() || conv.pendingPaymentRef || '';
       const destNum = document.getElementById('vpay_phone')?.value?.trim() || conv.pendingPaymentPhone || '';
 
+      const payTime = nowHHMM();
+      let dayName = '';
+      let datePretty = chosenDate;
+      try {
+        const parts = chosenDate.split('-');
+        if (parts.length === 3) {
+          const dObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          const rawDay = dObj.toLocaleDateString('es-ES', { weekday: 'long' });
+          dayName = rawDay.charAt(0).toUpperCase() + rawDay.slice(1);
+          datePretty = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+      } catch (e) {}
+
+      let tipoCobroText = 'Venta de Producto';
+      if (operationType === 'servicio') tipoCobroText = 'Servicio Técnico';
+      else if (operationType === 'ninguno') tipoCobroText = 'Ingreso Libre / Sin Stock';
+
+      const conceptoPrincipal = conv.pendingPaymentItem || itemName || (operationType === 'servicio' ? 'Servicio Técnico' : 'Venta de Producto');
+
       const descParts = [];
-      if (refNum && destNum) {
-        descParts.push(`Pago Móvil Ref: ${refNum} al número/cédula ${destNum}`);
-      } else if (refNum) {
-        descParts.push(`Pago Móvil Ref: ${refNum}`);
-      } else if (destNum) {
-        descParts.push(`Pago recibido al número ${destNum}`);
-      }
-      descParts.push(`Atendido por @${this.user || 'doom1'}`);
-      if (conv.pendingPaymentItem) descParts.push(`Concepto: ${conv.pendingPaymentItem}`);
-      if (itemName) descParts.push(`(${itemName} -$${costBasis.toFixed(2)})`);
+      descParts.push(`Ref: ${refNum || 'Sin Referencia'}`);
+      if (dayName) descParts.push(`Día: ${dayName}`);
+      descParts.push(`Fecha: ${datePretty}`);
+      descParts.push(`Hora: ${payTime}`);
+      descParts.push(`Tipo: ${tipoCobroText} (${conceptoPrincipal})`);
+      if (destNum) descParts.push(`Destino: ${destNum}`);
+      if (itemName && operationType === 'servicio') descParts.push(`Insumos consumidos: ${itemName} (Costo: -$${costBasis.toFixed(2)})`);
+      descParts.push(`Cliente: ${conv.customerName} (${(conv.platform || 'whatsapp').toUpperCase()})`);
+      descParts.push(`Verificado por: @${this.user || 'doom1'}`);
 
       const finalNote = descParts.join(' • ');
 
@@ -5712,7 +5731,7 @@
           walletId: walletId,
           categoryId: categoryId,
           date: chosenDate,
-          time: nowHHMM(),
+          time: payTime,
           title: (refNum ? `Pago Ref: ${refNum} - ` : 'Cobro verificado - ') + `${conv.customerName} (${(conv.platform || 'whatsapp').toUpperCase()})`,
           note: finalNote,
           createdBy: this.user || 'doom1',

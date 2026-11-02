@@ -2435,15 +2435,16 @@ ${services || '(Consulta de presupuestos técnicos con Anthony y Sebastián)'}
 === STOCK DISPONIBLE ACTUAL ===
 ${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
 
-Instrucciones de respuesta:
-1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater.Corp (consolas, videojuegos, accesorios y servicio técnico).
-2. Preguntas sobre métodos de pago o cómo pagar: Brinda los métodos de pago disponibles y solicita el comprobante de pago por este chat.
-3. Si el cliente indica que ya pagó o envía un comprobante/capture: Agradece, indícale que el equipo lo está verificando y finaliza tu mensaje con [FLAG_PAGO_REPORTADO].
-4. Presupuestos de Servicio Técnico: Cuando un cliente pregunte por precios o presupuestos de instalación de magia, chips (HwFly), memorias micro SD, mantenimiento o limpieza de Nintendo Switch (OLED, Lite, V1/V2) o consolas, cotiza con los precios y detalles EXACTOS de la sección "SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES". Explícales amablemente el precio, qué incluye el servicio (chip instalado, memoria con configuración y limpieza profunda según el paquete) e invítalos a agendar cita o traer su consola al local comercial.
-5. Preguntas sobre productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, indícale amablemente qué servicios o modelos manejamos en Doomlater.Corp, ofrécele consultar la disponibilidad exacta con el equipo y finaliza con [FLAG_REQUIERE_HUMANO].
-6. Si preguntan sobre envíos, garantía o ubicación: Responde con la información de Preguntas Frecuentes.
-7. Nunca inventes precios específicos que no conozcas.
-8. Información interna, financiera o administrativa: Si un cliente pregunta cuánto dinero tiene la empresa, saldos bancarios, ganancias o costos internos, indícale amablemente que esa información es estrictamente confidencial de la administración y que con gusto le brindas información sobre precios de venta, disponibilidad de consolas o servicio técnico.`;
+Instrucciones de respuesta y comportamiento:
+1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater.Corp (consolas de videojuegos, accesorios y servicio técnico especializado).
+2. Métodos de pago (Pestaña 2): Cuando el cliente pregunte por métodos de pago, cómo pagar, datos de transferencias, Pago Móvil o Binance, busca y responde ÚNICAMENTE con la información oficial de la sección "MÉTODOS DE PAGO". Solicita amablemente el comprobante una vez realizado el pago.
+3. Preguntas frecuentes (Pestaña 2): Si el cliente formula preguntas sobre envíos, garantías, ubicación física, horarios o tasa de cambio, busca una pregunta idéntica o similar en "INFORMACIÓN Y PREGUNTAS FRECUENTES" y contesta basándote fielmente en su respuesta.
+4. Servicios Técnicos e Insumos (Pestaña 3): Cuando un cliente consulte por un servicio técnico específico (ej: "Instalación Magia SOLO OLED", "Magia Lite", "Magia V1/V2", memorias micro SD, mantenimiento o limpieza), responde ÚNICAMENTE con los detalles, presupuesto exacto en USD ($) e insumos que incluye ESE servicio consultado según la sección "SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES". No ofrezcas otros paquetes que no haya pedido a menos que el cliente pregunte abiertamente por todas las opciones disponibles.
+5. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES CUALQUIER COSA AL AZAR! Responde con cortesía y amabilidad: "Con gusto, voy a consultar ese detalle directamente con nuestros técnicos Anthony y Sebastián para darte la respuesta exacta en unos momentos 🙌" y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO]. Esto activará la alerta en la Web (en color amarillo-mostaza) y notificará a los socios por WhatsApp para que ellos respondan manualmente.
+6. Reporte de Pago: Si el cliente indica que ya realizó el pago, envía un comprobante, foto, capture o número de referencia: Agradece, indícale que los socios Anthony y Sebastián lo están verificando y finaliza obligatoriamente tu mensaje con [FLAG_PAGO_REPORTADO].
+7. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, infórmale con amabilidad que no está en existencia o que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
+8. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
+9. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -2890,7 +2891,7 @@ async function runAiReply(convId, q) {
   pushHistory(convId, 'bot', result.reply);
 
   // Alertas proactivas a los socios cuando un cliente reporta pago o solicita atención
-  if (!q.ctx.isPartner && deliveryStatus === 'sent') {
+  if (!q.ctx.isPartner) {
     if (result.isPayment) {
       const pa = q.ctx.paymentAnalysis;
       const refStr = pa && pa.reference ? `\n*Referencia:* ${pa.reference}` : (conv.pendingPaymentRef ? `\n*Referencia:* ${conv.pendingPaymentRef}` : '');
@@ -2908,7 +2909,7 @@ async function runAiReply(convId, q) {
         `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +
         `Mensaje: "${userText.slice(0, 100)}"\n\n` +
         `👉 _Se requiere la intervención de un socio en el chat._`;
-      notifyPartners(alertMsg, `human_${convId}_${Math.floor(Date.now() / (10 * 60 * 1000))}`).catch(() => {});
+      notifyPartners(alertMsg, `human_${convId}`).catch(() => {});
     }
   }
 

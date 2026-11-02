@@ -2844,13 +2844,47 @@ button {
 
 /* Yellow / Mustard Highlight for Chats Requiring Human Attention */
 .bot-conv-item.needs-attention {
-  background: rgba(212, 155, 75, 0.14) !important;
+  background: rgba(212, 155, 75, 0.16) !important;
   border: 1.5px solid #d49b4b !important;
   box-shadow: 0 0 14px rgba(212, 155, 75, 0.28) !important;
 }
 
 .bot-conv-item.needs-attention:hover {
-  background: rgba(212, 155, 75, 0.22) !important;
+  background: rgba(212, 155, 75, 0.24) !important;
+}
+
+.bot-conv-item.active.needs-attention {
+  background: rgba(212, 155, 75, 0.26) !important;
+  border-color: #d49b4b !important;
+  box-shadow: 0 0 16px rgba(212, 155, 75, 0.45) !important;
+}
+
+.bot-badge-alert-mustard {
+  background: rgba(212, 155, 75, 0.22);
+  color: #e5a93c;
+  border: 1.5px solid #d49b4b;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.bot-badge-payment-mustard {
+  background: rgba(212, 155, 75, 0.28);
+  color: #f59e0b;
+  border: 1.5px solid #f59e0b;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .bot-attention-pulse-badge {

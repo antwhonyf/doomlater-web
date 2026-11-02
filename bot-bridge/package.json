@@ -1,0 +1,32 @@
+{
+  "name": "doomlater-bot-bridge",
+  "version": "1.0.0",
+  "description": "24/7 Cloud Bot Bridge for WhatsApp (Baileys QR), Instagram DM & Facebook Messenger with Gemini AI & Firebase Sync",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "instagram",
+    "messenger",
+    "bot",
+    "firebase",
+    "gemini"
+  ],
+  "author": "Doomlater.Corp",
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

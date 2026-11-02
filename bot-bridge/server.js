@@ -362,22 +362,247 @@ async function notifyPartners(text, alertKey = null) {
 }
 
 async function notifySinglePartner(target, text) {
-  if (!waSock || waState !== 'connected') return;
-  const targetLower = String(target || '').toLowerCase();
-  const p = PARTNER_ACCOUNTS.find(acc =>
-    acc.name.toLowerCase() === targetLower ||
-    acc.profileId === targetLower ||
-    acc.phone.includes(targetLower)
-  );
-  if (!p) return;
-  for (const jid of p.jids) {
+  return sendPartnerDirectMessage('Doom Bot', target, text);
+}
+
+/**
+ * Envío directo e inmediato de mensajes o documentos PDF a uno de los socios.
+ */
+async function sendPartnerDirectMessage(fromPartnerName, toTarget, text, pdfAttachment = null) {
+  if (!waSock || waState !== 'connected') {
+    return { success: false, error: 'WhatsApp no está conectado' };
+  }
+  const targetLower = String(toTarget || '').toLowerCase();
+  let toPartner = null;
+  if (targetLower.includes('seba') || targetLower.includes('socio') || targetLower.includes('doom2') || fromPartnerName === 'Anthony') {
+    toPartner = PARTNER_ACCOUNTS[1]; // Sebastián (+584264181643)
+  } else {
+    toPartner = PARTNER_ACCOUNTS[0]; // Anthony (+584142005801)
+  }
+
+  let sent = false;
+  let lastErr = null;
+  for (const jid of toPartner.jids) {
     try {
-      await waSend(jid, { text });
+      if (pdfAttachment && pdfAttachment.buffer) {
+        await waSend(jid, {
+          document: pdfAttachment.buffer,
+          mimetype: 'application/pdf',
+          fileName: pdfAttachment.fileName || 'Reporte_Doomlater.pdf',
+          caption: text
+        });
+      } else {
+        await waSend(jid, { text });
+      }
+      sent = true;
       break;
     } catch (err) {
-      logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar mensaje directo al socio');
+      lastErr = err;
+      logger.warn({ target: toPartner.name, jid, err: err.message }, 'No se pudo enviar mensaje directo al socio');
     }
   }
+  return { success: sent, targetName: toPartner.name, targetPhone: toPartner.phone, error: lastErr?.message };
+}
+
+/**
+ * Generador nativo de documentos PDF multi-página estándar (%PDF-1.4) en puro JavaScript.
+ * Sin dependencias externas ni binarios nativos, 100% compatible con Render y WhatsApp.
+ */
+function buildMultiPagePdf({ title, subtitle, sections }) {
+  const sanitize = (str) => {
+    if (!str) return '';
+    return String(str)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, ' ')
+      .replace(/\\/g, '\\\\')
+      .replace(/\(/g, '\\(')
+      .replace(/\)/g, '\\)');
+  };
+
+  const pagesStreams = [];
+  let currentStream = '';
+  let y = 770;
+
+  const startNewPage = () => {
+    if (currentStream) {
+      currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlater.Corp - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
+      pagesStreams.push(currentStream);
+    }
+    currentStream = '';
+    y = 770;
+
+    currentStream += 'BT\n/F2 18 Tf\n36 ' + y + ' Td\n(' + sanitize(title) + ') Tj\nET\n';
+    y -= 22;
+    if (subtitle) {
+      currentStream += 'BT\n/F1 10 Tf\n36 ' + y + ' Td\n(' + sanitize(subtitle) + ') Tj\nET\n';
+      y -= 18;
+    }
+    currentStream += '36 ' + y + ' m 560 ' + y + ' l S\n';
+    y -= 25;
+  };
+
+  startNewPage();
+
+  for (const sec of sections || []) {
+    if (y < 100) startNewPage();
+    if (sec.header) {
+      currentStream += 'BT\n/F2 12 Tf\n36 ' + y + ' Td\n(' + sanitize(sec.header) + ') Tj\nET\n';
+      y -= 18;
+    }
+    currentStream += '/F1 10 Tf\n';
+    for (const line of sec.lines || []) {
+      if (y < 60) startNewPage();
+      currentStream += 'BT\n36 ' + y + ' Td\n(' + sanitize(line) + ') Tj\nET\n';
+      y -= 14;
+    }
+    y -= 10;
+  }
+
+  currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlater.Corp - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
+  pagesStreams.push(currentStream);
+
+  const numPages = pagesStreams.length;
+  const pageObjIds = [];
+  for (let i = 0; i < numPages; i++) pageObjIds.push(5 + i * 2);
+
+  const objects = [];
+  objects[1] = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  objects[2] = '2 0 obj\n<< /Type /Pages /Kids [' + pageObjIds.map(id => id + ' 0 R').join(' ') + '] /Count ' + numPages + ' >>\nendobj\n';
+  objects[3] = '3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n';
+  objects[4] = '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n';
+
+  for (let i = 0; i < numPages; i++) {
+    const pageId = 5 + i * 2;
+    const streamId = 6 + i * 2;
+    const st = pagesStreams[i];
+    const len = Buffer.byteLength(st, 'utf8');
+    objects[pageId] = pageId + ' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' + streamId + ' 0 R >>\nendobj\n';
+    objects[streamId] = streamId + ' 0 obj\n<< /Length ' + len + ' >>\nstream\n' + st + 'endstream\nendobj\n';
+  }
+
+  const totalObjs = 4 + numPages * 2;
+  let offset = 9;
+  const xref = ['xref\n0 ' + (totalObjs + 1) + '\n0000000000 65535 f \n'];
+  let pdfStr = '%PDF-1.4\n';
+
+  for (let i = 1; i <= totalObjs; i++) {
+    const obj = objects[i];
+    xref.push(String(offset).padStart(10, '0') + ' 00000 n \n');
+    pdfStr += obj;
+    offset += Buffer.byteLength(obj, 'utf8');
+  }
+
+  const startxref = offset;
+  pdfStr += xref.join('');
+  pdfStr += 'trailer\n<< /Size ' + (totalObjs + 1) + ' /Root 1 0 R >>\nstartxref\n' + startxref + '\n%%EOF\n';
+
+  return Buffer.from(pdfStr, 'utf8');
+}
+
+/**
+ * Generador temático de reportes PDF oficiales para Doomlater.Corp
+ */
+function generateDoomPdf(type, adminCtx, requesterName = 'Socio') {
+  const isStock = /(stock|inventario|articulos|productos|insumos)/i.test(String(type || ''));
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+
+  if (isStock) {
+    const linesSellables = (adminCtx.sellables || []).map(i =>
+      `* ${i.name} (${i.category || 'Venta'}): Stock ${i.stock} uds | PVP: $${Number(i.salePrice || 0).toFixed(2)} | Costo: $${Number(i.purchaseCost || 0).toFixed(2)}`
+    );
+    const linesInsumos = (adminCtx.insumos || []).map(i =>
+      `* ${i.name} (Insumo Taller): Stock ${i.stock} uds | Costo: $${Number(i.purchaseCost || 0).toFixed(2)}`
+    );
+
+    const sections = [
+      {
+        header: '1. Resumen General del Inventario',
+        lines: [
+          `Total articulos para la venta: ${adminCtx.sellables.length} producto(s)`,
+          `Total insumos para taller y reparaciones: ${adminCtx.insumos.length} insumo(s)`,
+          `Articulos en stock critico o agotados: ${adminCtx.lowStock.length} articulo(s)`
+        ]
+      },
+      {
+        header: '2. Catalogo de Productos para la Venta',
+        lines: linesSellables.length > 0 ? linesSellables : ['(No hay productos de venta registrados)']
+      },
+      {
+        header: '3. Insumos de Taller y Servicio Tecnico',
+        lines: linesInsumos.length > 0 ? linesInsumos : ['(No hay insumos de taller registrados)']
+      }
+    ];
+
+    const buffer = buildMultiPagePdf({
+      title: 'Doomlater.Corp - Inventario Oficial de Stock',
+      subtitle: `Fecha: ${dateStr} - ${timeStr} | Solicitado por: @${requesterName}`,
+      sections
+    });
+
+    return {
+      buffer,
+      fileName: `Inventario_Doomlater_${now.toISOString().slice(0, 10)}.pdf`,
+      title: 'Inventario Oficial de Stock'
+    };
+  }
+
+  // Por defecto: Estado de Cuenta Financiero
+  const walletsLines = (adminCtx.walletBalances || []).map(w => {
+    if (w.isBs) {
+      const eq = adminCtx.exchangeRate > 0 ? (w.balance / adminCtx.exchangeRate).toFixed(2) : '0.00';
+      return `* ${w.name}: Bs. ${w.balance.toFixed(2)} (~$${eq} USDT a tasa ${adminCtx.exchangeRate} Bs/$)`;
+    } else {
+      return `* ${w.name}: $${w.balance.toFixed(2)} ${w.currency}`;
+    }
+  });
+
+  const recentLines = (adminCtx.recentTxs || []).slice(0, 15).map(t =>
+    typeof t === 'string' ? t.replace(/^[•*-]\s*/, '') : JSON.stringify(t)
+  );
+
+  const sections = [
+    {
+      header: '1. Resumen Patrimonial Consolidado',
+      lines: [
+        `GRAN TOTAL CONSOLIDADO: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT`,
+        `Fondos Directos en Divisas (Binance + Efectivo): $${adminCtx.totalUsdDirect.toFixed(2)} USDT`,
+        `Fondos en Bolivares (Bancos): Bs. ${adminCtx.totalBs.toFixed(2)} (~$${adminCtx.bsConvertedToUsdt.toFixed(2)} USDT)`,
+        `Tasa de cambio de referencia: ${adminCtx.exchangeRate} Bs/USD`
+      ]
+    },
+    {
+      header: '2. Desglose Detallado por Cuentas y Billeteras',
+      lines: walletsLines
+    },
+    {
+      header: '3. Movimientos Registrados Hoy',
+      lines: [
+        `Ingresos en divisas: +$${adminCtx.todayIncomeUsd.toFixed(2)} USD`,
+        `Ingresos en bolivares: +Bs. ${adminCtx.todayIncomeBs.toFixed(2)}`,
+        `Ingreso total equivalente hoy: +$${adminCtx.todayTotalIncomeEquivUsdt.toFixed(2)} USDT`,
+        `Ganancia neta estimada hoy: +$${adminCtx.todayTotalProfitEquivUsdt.toFixed(2)} USDT`
+      ]
+    },
+    {
+      header: '4. Ultimas Transacciones Registradas en el Sistema',
+      lines: recentLines.length > 0 ? recentLines : ['(Sin transacciones recientes registradas)']
+    }
+  ];
+
+  const buffer = buildMultiPagePdf({
+    title: 'Doomlater.Corp - Estado de Cuenta Financiero',
+    subtitle: `Fecha: ${dateStr} - ${timeStr} | Solicitado por: @${requesterName}`,
+    sections
+  });
+
+  return {
+    buffer,
+    fileName: `Estado_De_Cuenta_Doomlater_${now.toISOString().slice(0, 10)}.pdf`,
+    title: 'Estado de Cuenta Financiero'
+  };
 }
 
 async function checkLowStockAndAlert() {
@@ -618,6 +843,21 @@ REGLAS DE FORMATO Y ESTILO:
 - Escribe en español latino, formato impecable de WhatsApp: negritas (*palabra*), viñetas (•) y emojis pertinentes.
 - REGLA DE CONCLUSIÓN: NUNCA dejes una respuesta, reporte o lista a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final.
 - Tono: Colega ejecutivo, proactivo, rápido, gamer, de absoluta confianza.
+
+CAPACIDAD REAL PARA DISPARAR MENSAJES Y ENVIAR REPORTES PDF A LOS SOCIOS:
+¡TÚ SÍ TIENES LA CAPACIDAD DE ENVIAR MENSAJES DIRECTOS Y REPORTES PDF POR WHATSAPP AL OTRO SOCIO! NUNCA digas que no puedes enviar mensajes o que no puedes disparar mensajes a otros chats.
+
+Cuando ${partnerName} te pida en lenguaje natural que le envíes algo a su socio (@Sebastián o @Anthony):
+1. Si te pide avisarle, recordarle o enviarle un mensaje al socio (ej: "avísale a sebastián que...", "envíale un mensaje a mi socio que revise tal cosa"):
+   Inserta en tu respuesta la orden:
+   [ACCION_ENVIAR: sebastian | texto exacto que quieres que reciba el socio]
+2. Si te pide enviarle un estado de cuenta, balance o inventario en PDF al socio:
+   [ACCION_PDF_SOCIO: sebastian | estado_cuenta | Nota o resumen para acompañar el PDF]
+3. Si el propio ${partnerName} te pide un PDF para él mismo:
+   [ACCION_PDF_LOCAL: estado_cuenta | Nota de entrega]
+(Usa "stock" si piden inventario o catálogo, o "estado_cuenta" si piden finanzas o balance).
+
+El servidor interceptará estas órdenes automáticamente, generará el PDF y/o enviará el mensaje al WhatsApp del socio (+584264181643 para Sebastián o +584142005801 para Anthony), y le confirmará a ${partnerName}.
 
 === ESTADO FINANCIERO Y BALANCES EN VIVO ===
 • Gran Total Consolidado en USDT: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT
@@ -879,7 +1119,83 @@ async function handlePartnerCommands(userText, adminCtx, partnerName) {
       `⏳ *Pendiente de verificación:* Tu socio @${targetReviewer} debe entrar a la Web para verificar y asentar la transacción en caja y stock.`;
   }
 
-  // 2. PROGRAMAR RECORDATORIO A SOCIO
+  // 2. GENERAR Y ENVIAR PDF LOCAL AL SOCIO QUE LO SOLICITA
+  if (/(?:generar|env[ií]ame|p[aá]same|m[aá]ndame|crear|descargar|dame)?\s*(?:un)?\s*(?:archivo\s*)?pdf\b/i.test(lower) && !/(?:a\s*(?:mi\s*socio|sebastian|sebastián|anthony|doom1|doom2)|al\s*socio)/i.test(lower)) {
+    const type = /(stock|inventario|articulos|insumos)/i.test(lower) ? 'stock' : 'estado_cuenta';
+    const pdfAttachment = generateDoomPdf(type, adminCtx, partnerName);
+    return {
+      reply: `📄 *¡Aquí tienes tu archivo PDF listo!* 🧾\n\nAdjunto el documento oficial de *${pdfAttachment.title}* generado en vivo con los datos actuales de Doomlater.Corp.`,
+      pdfAttachment
+    };
+  }
+
+  // 3. ENVIAR MENSAJE, AVISO O REPORTE DIRECTO AL OTRO SOCIO
+  const mentionsPartner = /(?:a\s*(?:mi\s*socio|sebastian|sebastián|anthony|doom1|doom2)|al\s*socio)/i.test(lower);
+  const isSendAction = /(?:env[ií](?:ale|ar)?|m[aá]nda(?:le|r)?|p[aá]sa(?:le|r)?|escr[ií]be(?:le|r)?|dile|av[ií]sa(?:le|r)?|notifica(?:r|le)?)/i.test(lower);
+
+  if (mentionsPartner && isSendAction) {
+    const targetPartnerName = partnerName === 'Anthony' ? 'Sebastián' : 'Anthony';
+    const targetPhone = partnerName === 'Anthony' ? '584264181643' : '584142005801';
+    const wantsPdf = lower.includes('pdf');
+
+    // Subcaso A: Enviar estado de cuenta / balance / finanzas
+    if (/(?:estado(?:s)?\s*de\s*cuenta|balance|saldo|cuanto hay|finanzas|dinero)/i.test(lower)) {
+      const walletsSummary = (adminCtx.walletBalances || []).map(w => {
+        if (w.isBs) {
+          const equiv = adminCtx.exchangeRate > 0 ? (w.balance / adminCtx.exchangeRate).toFixed(2) : '0.00';
+          return `• *${w.name}:* Bs. ${w.balance.toFixed(2)} (~$${equiv} USDT)`;
+        } else {
+          return `• *${w.name}:* $${w.balance.toFixed(2)} ${w.currency}`;
+        }
+      }).join('\n');
+
+      const partnerMsg = `💼 *ESTADO DE CUENTA - DOOMLATER.CORP*\n` +
+        `_Enviado en directo por tu socio @${partnerName}_\n\n` +
+        `💰 *GRAN TOTAL CONSOLIDADO:* *$${adminCtx.grandTotalUsdt.toFixed(2)} USDT*\n` +
+        `💵 *Divisas Directas:* $${adminCtx.totalUsdDirect.toFixed(2)} USDT\n` +
+        `🇻🇪 *Bolívares en Bancos:* Bs. ${adminCtx.totalBs.toFixed(2)} (~$${adminCtx.bsConvertedToUsdt.toFixed(2)} USDT)\n` +
+        `📈 *Tasa de cambio:* ${adminCtx.exchangeRate} Bs/USD\n\n` +
+        `*Desglose por Cuentas:*\n${walletsSummary}\n\n` +
+        `📈 *Ingresos hoy:* +$${adminCtx.todayTotalIncomeEquivUsdt.toFixed(2)} USDT equiv.\n\n` +
+        `_Enviado automáticamente vía Doom Bot IA._`;
+
+      const pdfAttachment = wantsPdf ? generateDoomPdf('estado_cuenta', adminCtx, partnerName) : null;
+      await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg, pdfAttachment);
+
+      return `✅ *¡Listo ${partnerName}!* Ya le envié el estado de cuenta ${wantsPdf ? 'y el documento PDF ' : ''}por WhatsApp a tu socio @${targetPartnerName} (+${targetPhone}).`;
+    }
+
+    // Subcaso B: Enviar inventario / stock
+    if (/(?:stock|inventario|catalogo)/i.test(lower)) {
+      const stockMsg = `📦 *INVENTARIO GENERAL - DOOMLATER.CORP*\n` +
+        `_Enviado en directo por tu socio @${partnerName}_\n\n` +
+        `• Productos para la venta: *${adminCtx.sellables.length}*\n` +
+        `• Insumos de taller: *${adminCtx.insumos.length}*\n` +
+        `• Stock crítico / agotados: *${adminCtx.lowStock.length}*\n\n` +
+        `_Enviado automáticamente vía Doom Bot IA._`;
+
+      const pdfAttachment = wantsPdf ? generateDoomPdf('stock', adminCtx, partnerName) : null;
+      await sendPartnerDirectMessage(partnerName, targetPartnerName, stockMsg, pdfAttachment);
+
+      return `✅ *¡Listo ${partnerName}!* Ya le envié el inventario ${wantsPdf ? 'y el archivo PDF ' : ''}por WhatsApp a tu socio @${targetPartnerName} (+${targetPhone}).`;
+    }
+
+    // Subcaso C: Mensaje directo o recordatorio
+    const hasScheduledTime = /(?:a\s*las\s*\d+|en\s*\d+\s*(?:horas?|minutos?)|mañana)/i.test(lower);
+    if (!hasScheduledTime) {
+      let directText = text
+        .replace(/(?:env[ií](?:ale|ar)?|m[aá]nda(?:le|r)?|p[aá]sa(?:le|r)?|escr[ií]be(?:le|r)?|dile|av[ií]sa(?:le|r)?)\s*(?:un)?\s*(?:mensaje|aviso|recordatorio)?\s*(?:a|al)\s*(?:mi\s*socio|sebastian|sebastián|anthony|doom1|doom2)?(?:\s*que|\s*diciendo(?:\s*que)?)?/gi, '')
+        .trim();
+      if (!directText) directText = 'Atento a los pendientes de Doomlater.Corp';
+
+      const partnerMsg = `🔔 *MENSAJE DE TU SOCIO @${partnerName}:*\n\n"${directText}"\n\n_Enviado en directo vía Doom Bot IA._`;
+      await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg);
+
+      return `✅ *Mensaje enviado con éxito a tu socio @${targetPartnerName} (+${targetPhone}):*\n\n👉 "${directText}"`;
+    }
+  }
+
+  // 4. PROGRAMAR RECORDATORIO A SOCIO
   if (/(recu[eé]rdale|recuerda a mi socio|av[ií]sale|dile a mi socio|recordatorio)/i.test(lower)) {
     const targetPartner = partnerName === 'Anthony' ? 'Socio' : 'Anthony';
     const targetPhone = partnerName === 'Anthony' ? '584264181643' : '584142005801';
@@ -978,17 +1294,24 @@ async function checkPartnerReminders() {
   }
 }
 
-async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
-  // Primero revisa si es un comando ejecutable directo (venta o recordatorio)
+async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAttachment = null) {
+  // Primero revisa si es un comando ejecutable directo (venta, recordatorio, pdf local o mensaje a socio)
   try {
     const commandReply = await handlePartnerCommands(userMessage, adminCtx, partnerName);
-    if (commandReply) return { reply: commandReply, isPayment: false, needsHuman: false };
+    if (commandReply) {
+      if (typeof commandReply === 'object' && commandReply.reply) {
+        return { reply: commandReply.reply, pdfAttachment: commandReply.pdfAttachment || null, isPayment: false, needsHuman: false };
+      }
+      return { reply: commandReply, isPayment: false, needsHuman: false };
+    }
   } catch (cmdErr) {
     logger.error({ err: cmdErr.message }, 'Error procesando comando de socio');
   }
 
   const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
-  if (!apiKey) return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
+  if (!apiKey) {
+    return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
+  }
 
   // Construir historial multi-turno para mantener contexto completo de la conversación
   const history = (convHistory.get(convId) || []).slice(-10);
@@ -1003,11 +1326,34 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
     }
   }
 
+  // Construir turno de usuario actual, adjuntando imagen si fue enviada (Visión Multimodal)
+  const currentTurnParts = [];
+  if (mediaAttachment && mediaAttachment.buffer) {
+    currentTurnParts.push({
+      inlineData: {
+        mimeType: mediaAttachment.mimeType || 'image/jpeg',
+        data: mediaAttachment.buffer.toString('base64')
+      }
+    });
+  }
+  currentTurnParts.push({ text: userMessage || (mediaAttachment ? '¿Qué opinas de esta imagen?' : 'Hola') });
+
   // Asegurar que el último turno sea del usuario con el mensaje actual
   if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
-    contents.push({ role: 'user', parts: [{ text: userMessage || 'Hola' }] });
-  } else if (userMessage && !contents[contents.length - 1].parts[0].text.includes(userMessage)) {
-    contents[contents.length - 1].parts[0].text += '\n' + userMessage;
+    contents.push({ role: 'user', parts: currentTurnParts });
+  } else {
+    // Si ya había turno de usuario, reemplazar o concatenar
+    if (mediaAttachment && mediaAttachment.buffer) {
+      contents[contents.length - 1].parts.unshift({
+        inlineData: {
+          mimeType: mediaAttachment.mimeType || 'image/jpeg',
+          data: mediaAttachment.buffer.toString('base64')
+        }
+      });
+    }
+    if (userMessage && !contents[contents.length - 1].parts.some(p => p.text && p.text.includes(userMessage))) {
+      contents[contents.length - 1].parts.push({ text: userMessage });
+    }
   }
 
   // Gemini exige que el primer turno sea de usuario
@@ -1035,8 +1381,43 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
       if (res.status === 404 || res.status === 429) continue;
       if (!res.ok) continue;
       const data = await res.json();
-      const reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-      if (reply) return { reply, isPayment: false, needsHuman: false };
+      let reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      if (!reply) continue;
+
+      let localPdf = null;
+
+      // Interceptar etiquetas de acción ejecutables generadas por la IA
+      // 1. Enviar mensaje directo a socio
+      const sendMatch = reply.match(/\[ACCION_ENVIAR:\s*([^\|\]]+)\|\s*([^\]]+)\]/i);
+      if (sendMatch) {
+        const target = sendMatch[1].trim();
+        const textToSend = sendMatch[2].trim();
+        const partnerMsg = `🔔 *MENSAJE DE TU SOCIO @${partnerName}:*\n\n"${textToSend}"\n\n_Enviado en directo vía Doom Bot IA._`;
+        sendPartnerDirectMessage(partnerName, target, partnerMsg).catch(e => logger.warn({ err: e.message }, 'Error enviando accion directa'));
+        reply = reply.replace(sendMatch[0], '').trim();
+      }
+
+      // 2. Generar y enviar PDF al socio
+      const pdfSocioMatch = reply.match(/\[ACCION_PDF_SOCIO:\s*([^\|\]]+)\|\s*([^\|\]]+)(?:\|\s*([^\]]*))?\]/i);
+      if (pdfSocioMatch) {
+        const target = pdfSocioMatch[1].trim();
+        const pdfType = pdfSocioMatch[2].trim();
+        const note = (pdfSocioMatch[3] || '').trim();
+        const pdfAttachment = generateDoomPdf(pdfType, adminCtx, partnerName);
+        const caption = note ? `🔔 *REPORTE DE TU SOCIO @${partnerName}:*\n\n${note}` : `🔔 *REPORTE OFICIAL DOOMLATER.CORP*\nEnviado por tu socio @${partnerName}`;
+        sendPartnerDirectMessage(partnerName, target, caption, pdfAttachment).catch(e => logger.warn({ err: e.message }, 'Error enviando PDF a socio'));
+        reply = reply.replace(pdfSocioMatch[0], '').trim();
+      }
+
+      // 3. Generar PDF para el socio que lo solicitó directamente en este chat
+      const pdfLocalMatch = reply.match(/\[ACCION_PDF_LOCAL:\s*([^\|\]]+)(?:\|\s*([^\]]*))?\]/i);
+      if (pdfLocalMatch) {
+        const pdfType = pdfLocalMatch[1].trim();
+        localPdf = generateDoomPdf(pdfType, adminCtx, partnerName);
+        reply = reply.replace(pdfLocalMatch[0], '').trim();
+      }
+
+      return { reply, pdfAttachment: localPdf, isPayment: false, needsHuman: false };
     } catch (e) {
       continue;
     }
@@ -1104,7 +1485,7 @@ function parseAIResponseFlags(text) {
   return { reply: clean, isPayment, needsHuman };
 }
 
-async function queryAI(convId, userMessage, ctx) {
+async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
   const apiKey = ctx.botConfig.geminiApiKey || GEMINI_API_KEY_ENV;
   if (!apiKey) return fallbackRuleBasedBot(userMessage, ctx);
 
@@ -1122,11 +1503,33 @@ async function queryAI(convId, userMessage, ctx) {
     }
   }
 
+  // Construct current turn parts (including image vision if attached)
+  const currentTurnParts = [];
+  if (mediaAttachment && mediaAttachment.buffer) {
+    currentTurnParts.push({
+      inlineData: {
+        mimeType: mediaAttachment.mimeType || 'image/jpeg',
+        data: mediaAttachment.buffer.toString('base64')
+      }
+    });
+  }
+  currentTurnParts.push({ text: userMessage || (mediaAttachment ? '¿Qué producto, servicio o presupuesto aplica para esto?' : 'Hola') });
+
   // Ensure last turn is user with the new message
   if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
-    contents.push({ role: 'user', parts: [{ text: userMessage || 'Hola' }] });
-  } else if (userMessage && !contents[contents.length - 1].parts[0].text.includes(userMessage)) {
-    contents[contents.length - 1].parts[0].text += '\n' + userMessage;
+    contents.push({ role: 'user', parts: currentTurnParts });
+  } else {
+    if (mediaAttachment && mediaAttachment.buffer) {
+      contents[contents.length - 1].parts.unshift({
+        inlineData: {
+          mimeType: mediaAttachment.mimeType || 'image/jpeg',
+          data: mediaAttachment.buffer.toString('base64')
+        }
+      });
+    }
+    if (userMessage && !contents[contents.length - 1].parts.some(p => p.text && p.text.includes(userMessage))) {
+      contents[contents.length - 1].parts.push({ text: userMessage });
+    }
   }
 
   // Ensure first turn is from user (Gemini requirement)
@@ -1408,10 +1811,12 @@ async function runAiReply(convId, q) {
   }
 
   const userText = q.texts.join('\n').trim();
+  const mediaAttachment = q.ctx.imageBuffer ? { buffer: q.ctx.imageBuffer, mimeType: q.ctx.imageMime } : null;
+
   let result;
   if (q.ctx.isPartner) {
     const adminCtx = await loadAdminExecutiveContext();
-    result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio');
+    result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio', mediaAttachment);
   } else if (q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment) {
     const pa = q.ctx.paymentAnalysis;
     const curSymbol = pa.currency === 'VED' ? 'Bs.' : '$';
@@ -1421,14 +1826,14 @@ async function runAiReply(convId, q) {
       isPayment: true,
       needsHuman: true
     };
-  } else if (q.hasImage && !/[a-z]{4,}/i.test(userText)) {
+  } else if (q.hasImage && !/[a-z]{4,}/i.test(userText) && (!mediaAttachment || !mediaAttachment.buffer)) {
     result = {
       reply: '¡Gracias! 🧾 Recibimos tu imagen/comprobante. Los socios de Doomlater.Corp lo verifican y te confirman en breve.',
       isPayment: true,
       needsHuman: true
     };
   } else {
-    result = await queryAI(convId, userText || '(el cliente envió un archivo)', aiCtx);
+    result = await queryAI(convId, userText || '(el cliente envió una imagen o archivo)', aiCtx, mediaAttachment);
     if (q.hasImage) { result.isPayment = true; result.needsHuman = true; }
   }
 
@@ -1450,7 +1855,16 @@ async function runAiReply(convId, q) {
       for (const targetJid of candidateJids) {
         try {
           await waPresence('composing', targetJid);
-          await waSend(targetJid, { text: result.reply });
+          if (result.pdfAttachment && result.pdfAttachment.buffer) {
+            await waSend(targetJid, {
+              document: result.pdfAttachment.buffer,
+              mimetype: 'application/pdf',
+              fileName: result.pdfAttachment.fileName || 'Reporte_Doomlater.pdf',
+              caption: result.reply
+            });
+          } else {
+            await waSend(targetJid, { text: result.reply });
+          }
           await waPresence('paused', targetJid);
           sentOk = true;
           break;
@@ -1767,6 +2181,8 @@ async function handleWaMessage(msg, type) {
   let mediaKey = null;
   let voiceTranscription = null;
   let paymentAnalysis = null;
+  let downloadedImageBuffer = null;
+  let downloadedImageMime = 'image/jpeg';
   let destWalletId = 'w_banco';
   let destWalletName = 'Pago Móvil / Banco';
 
@@ -1777,19 +2193,23 @@ async function handleWaMessage(msg, type) {
     try {
       const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: silentLogger, reuploadRequest: waSock?.updateMediaMessage });
       mediaKey = await saveMedia(msgId, content[ctype]?.mimetype || 'image/jpeg', buffer);
-      if (buffer && apiKey && ctype === 'imageMessage') {
-        paymentAnalysis = await analyzePaymentCaptureWithGemini(buffer, content[ctype]?.mimetype || 'image/jpeg', apiKey);
-        if (paymentAnalysis && paymentAnalysis.isPayment) {
-          const targetDigits = String(paymentAnalysis.targetPhoneOrId || '').replace(/\D/g, '');
-          if (targetDigits.includes('32030679') || targetDigits.includes('4264181643') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('sebasti')) {
-            destWalletId = 'w_bs_socio';
-            destWalletName = 'Cuenta en Bs de Sebastián (@doom2)';
-          } else if (targetDigits.includes('04142005801') || targetDigits.includes('4142005801') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('anthony')) {
-            destWalletId = 'w_bs_anthony';
-            destWalletName = 'Cuenta en Bs de Anthony (@doom1)';
-          } else if (paymentAnalysis.currency === 'USD') {
-            destWalletId = 'w_efectivo';
-            destWalletName = 'Divisas Efectivo ($)';
+      if (buffer && ctype === 'imageMessage') {
+        downloadedImageBuffer = buffer;
+        downloadedImageMime = content[ctype]?.mimetype || 'image/jpeg';
+        if (apiKey) {
+          paymentAnalysis = await analyzePaymentCaptureWithGemini(buffer, downloadedImageMime, apiKey);
+          if (paymentAnalysis && paymentAnalysis.isPayment) {
+            const targetDigits = String(paymentAnalysis.targetPhoneOrId || '').replace(/\D/g, '');
+            if (targetDigits.includes('32030679') || targetDigits.includes('4264181643') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('sebasti')) {
+              destWalletId = 'w_bs_socio';
+              destWalletName = 'Cuenta en Bs de Sebastián (@doom2)';
+            } else if (targetDigits.includes('04142005801') || targetDigits.includes('4142005801') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('anthony')) {
+              destWalletId = 'w_bs_anthony';
+              destWalletName = 'Cuenta en Bs de Anthony (@doom1)';
+            } else if (paymentAnalysis.currency === 'USD') {
+              destWalletId = 'w_efectivo';
+              destWalletName = 'Divisas Efectivo ($)';
+            }
           }
         }
       }
@@ -1859,6 +2279,8 @@ async function handleWaMessage(msg, type) {
       jid,
       phone,
       hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
+      imageBuffer: downloadedImageBuffer,
+      imageMime: downloadedImageMime,
       paymentAnalysis: paymentAnalysis && paymentAnalysis.isPayment ? paymentAnalysis : null,
       destWalletId,
       destWalletName,

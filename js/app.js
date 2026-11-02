@@ -3982,19 +3982,39 @@
           { id: 'faq_2', question: '¿Los productos y servicios tienen garantía?', answer: 'Sí, todos los productos nuevos cuentan con garantía de 30 días y los servicios técnicos son probados detalladamente antes de la entrega.' },
           { id: 'faq_3', question: '¿Dónde están ubicados y cuál es el horario?', answer: 'Estamos ubicados en nuestro local comercial. Atendemos de Lunes a Sábado de 9:00 AM a 6:00 PM.' }
         ],
-        serviceInsumosMap: Array.isArray(cfg.serviceInsumosMap) ? cfg.serviceInsumosMap : [
-          { id: 'srv_1', serviceName: 'Servicio Técnico / Cambio de Pantalla', defaultInsumoName: 'Pantalla Repuesto', defaultLaborPrice: 40 }
+        serviceInsumosMap: (Array.isArray(cfg.serviceInsumosMap) && cfg.serviceInsumosMap.length > 0 && cfg.serviceInsumosMap[0].id !== 'srv_1') ? cfg.serviceInsumosMap : [
+          { id: 'srv_oled_solo', serviceName: 'Instalacion Magia – SOLO (OLED)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 50 },
+          { id: 'srv_v1v2_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (V1/V2)', insumos: [{ name: 'Memoria 128Gb ADATA', qty: 1 }, { name: 'HwFly', qty: 1 }], defaultInsumoName: 'Memoria 128Gb ADATA + HwFly', defaultLaborPrice: 35 },
+          { id: 'srv_v1v2_solo', serviceName: 'Instalacion Magia – SOLO (V1/V2)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 25 },
+          { id: 'srv_lite_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (Lite)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 45 },
+          { id: 'srv_lite_solo', serviceName: 'Instalacion Magia – SOLO (Lite)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 40 },
+          { id: 'srv_oled_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (OLED)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 50 }
         ]
       };
     },
 
     getVisibleBotConversations() {
       const all = this.activeList('botConversations') || [];
+      const allMsgs = this.activeList('botMessages') || [];
       const user = this.user || 'doom1';
       const myProfileId = this.profileId || 'profile_1';
 
       return all.filter(c => {
-        if (!c || c.deleted) return false;
+        if (!c) return false;
+        if (c.deleted) {
+          // Si el cliente o el socio escribió un mensaje nuevo tras el borrado, resucita en el inbox
+          const convMsgs = allMsgs.filter(m => m.convId === c.id && !m.deleted);
+          const lastMsg = convMsgs.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0];
+          if (lastMsg && (Number(lastMsg.createdAt) || 0) > (Number(c.deletedAt) || 0)) {
+            c.deleted = false;
+            c.deletedAt = null;
+            setTimeout(() => {
+              window.cashewSync.upsertEntity('botConversations', { ...c, deleted: false, deletedAt: null }, 'Conversación reactivada por nuevo mensaje');
+            }, 60);
+            return true;
+          }
+          return false;
+        }
         // WhatsApp and Instagram: shared between doom1 and doom2
         if (c.platform === 'whatsapp' || c.platform === 'instagram') return true;
         // Messenger: strictly PRIVATE per profile!
@@ -4403,14 +4423,22 @@
       const convs = this.getVisibleBotConversations();
       const cfg = this.getBotConfig();
       const isConnected = Boolean(cfg.whatsappConnected);
+      const isAiActive = cfg.globalBotEnabled !== false;
 
       return `
         <header class="cashew-greeting-header">
           <div>
-            <div class="greeting-small">Atención y Mensajería en Tiempo Real</div>
-            <h1 class="greeting-username">WhatsApp Bot & Inbox</h1>
+            <div class="greeting-small">Atención 24/7 • WhatsApp en tiempo real</div>
+            <h1 class="greeting-username">Bot & Inbox Multicanal</h1>
           </div>
           <div class="header-actions-bar">
+            <button class="btn-cashew ${isAiActive ? 'btn-success' : 'btn-danger'}"
+                    style="font-size:12px; font-weight:800; padding:6px 14px;"
+                    onclick="CashewApp.toggleGlobalBot()"
+                    title="Alternar activación general de la IA">
+              <span class="material-symbols-rounded" style="font-size:18px;">${isAiActive ? 'smart_toy' : 'pause_circle'}</span>
+              ${isAiActive ? 'IA Global: ACTIVA' : 'IA Global: PAUSADA'}
+            </button>
             <button class="btn-cashew btn-surface" onclick="CashewApp.onManualSyncClick()">
               <span class="material-symbols-rounded" style="font-size:19px;">sync</span> Sincronizar
             </button>
@@ -4421,11 +4449,19 @@
           </div>
         </header>
 
-        <!-- Sub-tabs navigation bar: Inbox & Conexión de WhatsApp -->
+        <!-- Sub-tabs navigation bar -->
         <div class="bot-subtabs-nav">
-          <button class="bot-subtab-btn ${this.botSubTab !== 'connect' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('inbox')">
+          <button class="bot-subtab-btn ${(!this.botSubTab || this.botSubTab === 'inbox') ? 'active' : ''}" onclick="CashewApp.setBotSubTab('inbox')">
             <span class="material-symbols-rounded" style="font-size:18px;">chat</span>
-            Inbox (Chat en Vivo)
+            Inbox Multicanal
+          </button>
+          <button class="bot-subtab-btn ${this.botSubTab === 'knowledge' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('knowledge')">
+            <span class="material-symbols-rounded" style="font-size:18px;">auto_stories</span>
+            Servicios, Pagos & FAQ
+          </button>
+          <button class="bot-subtab-btn ${this.botSubTab === 'rules' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('rules')">
+            <span class="material-symbols-rounded" style="font-size:18px;">gavel</span>
+            Reglas de Negocio & IA
           </button>
           <button class="bot-subtab-btn ${this.botSubTab === 'connect' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('connect')">
             <span class="material-symbols-rounded" style="font-size:18px;">qr_code_2</span>
@@ -4441,6 +4477,12 @@
     renderBotCurrentSubTabHTML() {
       if (this.botSubTab === 'connect') {
         return this.buildBotConnectHTML();
+      }
+      if (this.botSubTab === 'knowledge') {
+        return this.buildBotKnowledgeHTML();
+      }
+      if (this.botSubTab === 'rules') {
+        return this.buildBotRulesHTML();
       }
       return this.buildBotInboxHTML();
     },
@@ -4626,6 +4668,7 @@
 
       const activeConv = filtered.find(c => c.id === this.botActiveConvId) || allConvs.find(c => c.id === this.botActiveConvId) || filtered[0] || null;
       const waCount = allConvs.filter(c => c.platform === 'whatsapp').length;
+      const attentionCount = allConvs.filter(c => c.needsAttention || c.pendingPayment).length;
 
       return `
         <div class="bot-inbox-grid">
@@ -4634,7 +4677,7 @@
             <div class="bot-sidebar-header">
               <div class="bot-search-bar">
                 <span class="material-symbols-rounded" style="font-size:18px; color:var(--text-muted);">search</span>
-                <input type="text" id="botSearchInput" placeholder="Buscar chat o mensaje..."
+                <input type="text" id="botSearchInput" placeholder="Buscar cliente o mensaje..."
                        value="${this.escapeHtml(this.botSearchQuery || '')}"
                        oninput="CashewApp.setBotSearchQuery(this.value)" />
                 <button id="botSearchClearBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer; display:${this.botSearchQuery ? 'inline-flex' : 'none'}; align-items:center;" onclick="CashewApp.setBotSearchQuery(''); const inp = document.getElementById('botSearchInput'); if (inp) { inp.value = ''; inp.focus(); }">
@@ -4646,6 +4689,9 @@
               <div class="bot-channel-pills">
                 <button class="bot-channel-pill ${this.botChannelFilter === 'all' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('all')">
                   Todos (${allConvs.length})
+                </button>
+                <button class="bot-channel-pill ${this.botChannelFilter === 'attention' ? 'active-amber' : ''}" onclick="CashewApp.setBotChannelFilter('attention')">
+                  ⚠️ Atención (${attentionCount})
                 </button>
                 <button class="bot-channel-pill ${this.botChannelFilter === 'whatsapp' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('whatsapp')">
                   WhatsApp (${waCount})
@@ -4757,7 +4803,16 @@
             </div>
           </div>
 
-          <div class="bot-chat-header-actions">
+          <div class="bot-chat-header-actions" style="display:flex; align-items:center; gap:8px;">
+            <!-- Toggle Alert Button -->
+            <button class="btn-cashew ${conv.needsAttention ? 'btn-tonal' : 'btn-surface'}"
+                    style="${conv.needsAttention ? 'color:#d49b4b; border-color:#d49b4b; background:rgba(212,155,75,0.18);' : 'color:var(--text-muted);'} font-size:12px; padding:6px 11px; font-weight:800;"
+                    title="${conv.needsAttention ? 'Quitar marca de alerta' : 'Marcar este chat en alerta (color mostaza)'}"
+                    onclick="CashewApp.toggleBotConversationAttention('${conv.id}')">
+              <span class="material-symbols-rounded" style="font-size:17px; color:#d49b4b;">warning</span>
+              <span>${conv.needsAttention ? 'Alerta Activa' : 'Poner Alerta'}</span>
+            </button>
+
             <!-- Delete Conversation Button -->
             <button class="btn-cashew btn-surface"
                     style="font-size:12px; padding:6px 10px; color:#ef4444; border-color:rgba(239,68,68,0.25);"
@@ -4768,6 +4823,9 @@
             </button>
           </div>
         </div>
+
+        <!-- Verification of Pending Payment Banner (if present) -->
+        ${conv.pendingPayment ? this.renderPaymentVerificationCardHTML(conv) : ''}
 
         <!-- Messages Stream (Oldest at top, newest at bottom) -->
         <div id="botMessagesStream" class="bot-messages-stream">
@@ -4981,6 +5039,8 @@
 
       const updatedConv = {
         ...conv,
+        deleted: false,
+        deletedAt: null,
         lastMessage: text || (this.botSelectedMedia ? `[${this.botSelectedMedia.type.toUpperCase()}]` : 'Mensaje'),
         lastMessageAt: now,
         unreadCount: 0
@@ -5013,6 +5073,70 @@
       this.scrollChatToBottom('botMessagesStream');
       const refreshedInput = document.getElementById('botMessageInput');
       if (refreshedInput) refreshedInput.focus();
+    },
+
+    renderPaymentVerificationCardHTML(conv) {
+      const cur = conv.pendingPaymentCurrency === 'VED' ? 'Bs. ' : '$';
+      const amtStr = `${cur}${Number(conv.pendingPaymentAmount || 0).toFixed(2)}`;
+
+      return `
+        <div class="bot-payment-verify-card" style="margin: 10px 16px; padding: 12px 16px; background: rgba(212, 155, 75, 0.12); border: 1.5px solid #d49b4b; border-radius: 14px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="material-symbols-rounded" style="color: #d49b4b; font-size: 22px;">verified</span>
+              <span style="font-weight: 800; font-size: 14px; color: #f8fafc;">
+                Comprobante de Pago por Verificar
+              </span>
+            </div>
+            <span style="font-size: 11.5px; color: #fbbf24; font-weight: 700;">
+              ${conv.pendingPaymentDate ? `Fecha: ${this.escapeHtml(conv.pendingPaymentDate)}` : 'Pago Reciente'}
+            </span>
+          </div>
+
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-main); margin: 2px 0;">
+            <span>Monto: <strong style="color: #22c55e; font-size: 14px;">${amtStr}</strong></span>
+            ${conv.pendingPaymentRef ? `<span>Referencia: <strong style="color: #38bdf8;">${this.escapeHtml(conv.pendingPaymentRef)}</strong></span>` : ''}
+            ${conv.pendingPaymentBank ? `<span>Banco: <strong>${this.escapeHtml(conv.pendingPaymentBank)}</strong></span>` : ''}
+            ${conv.pendingPaymentWalletName ? `<span>Destino sugerido: <strong>${this.escapeHtml(conv.pendingPaymentWalletName)}</strong></span>` : ''}
+          </div>
+
+          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; flex-wrap: wrap;">
+            <button type="button" class="btn-cashew btn-success btn-sm" onclick="CashewApp.openVerifyPaymentModal('${conv.id}')" style="font-weight: 800; padding: 5px 14px; font-size: 12px;">
+              <span class="material-symbols-rounded" style="font-size: 16px;">check_circle</span>
+              Verificar y Registrar Pago
+            </button>
+            <button type="button" class="btn-cashew btn-surface btn-sm" onclick="CashewApp.dismissPendingPayment('${conv.id}')" style="color: var(--text-muted); font-size: 12px; padding: 5px 10px;">
+              Descartar
+            </button>
+          </div>
+        </div>
+      `;
+    },
+
+    dismissPendingPayment(convId) {
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (!conv) return;
+      window.cashewSync.upsertEntity('botConversations', {
+        ...conv,
+        pendingPayment: false,
+        needsAttention: false,
+        attentionReason: ''
+      }, `Descartó aviso de pago de ${conv.customerName}`);
+      this.toast('Aviso de pago descartado', 'info');
+      this.renderMainView();
+    },
+
+    toggleBotConversationAttention(convId) {
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (!conv) return;
+      const newState = !conv.needsAttention;
+      window.cashewSync.upsertEntity('botConversations', {
+        ...conv,
+        needsAttention: newState,
+        attentionReason: newState ? 'Alerta manual activada por el operador' : ''
+      }, newState ? `Puso alerta en chat con ${conv.customerName}` : `Quitó alerta en chat con ${conv.customerName}`);
+      this.toast(newState ? 'Chat marcado en alerta (amarillo mostaza)' : 'Alerta desactivada', newState ? 'warning' : 'info');
+      this.renderMainView();
     },
 
     sendBotPresetReply(type) {
@@ -5667,16 +5791,78 @@
     },
 
     /* ======================================================================
-       SUB-TAB 2: MÉTODOS DE PAGO & FAQ (BASE DE CONOCIMIENTO)
+       SUB-TAB 2: INFORMACIÓN DEL NEGOCIO (SERVICIOS, PAGOS & FAQ)
        ====================================================================== */
-    buildBotFaqHTML() {
+    buildBotKnowledgeHTML() {
       const cfg = this.getBotConfig();
+      const maps = cfg.serviceInsumosMap || [];
       const pms = cfg.paymentMethods || [];
       const faqs = cfg.knowledgeBaseFaq || [];
 
       return `
         <div style="display:flex; flex-direction:column; gap:20px; max-width:960px;">
-          <!-- Payment Methods Section -->
+          <!-- Banner Oficial: Única Fuente Autorizada para la IA -->
+          <div style="padding:14px 18px; background:rgba(56,189,248,0.08); border:1.5px solid rgba(56,189,248,0.3); border-radius:16px; display:flex; align-items:center; gap:12px;">
+            <span class="material-symbols-rounded" style="color:#38bdf8; font-size:26px;">verified_user</span>
+            <div>
+              <div style="font-weight:800; font-size:14px; color:#f8fafc;">Información Oficial y Base de Conocimiento de Doomlater.Corp</div>
+              <div style="font-size:12.5px; color:#cbd5e1; margin-top:2px;">
+                Esta es la <strong>ÚNICA información de la empresa</strong> que el Asistente IA tiene autorizada para contestar a los clientes sobre servicios, presupuestos de mano de obra, insumos de taller, métodos de pago y preguntas frecuentes.
+              </div>
+            </div>
+          </div>
+
+          <!-- SECCIÓN 1: Servicios Técnicos Vinculados a Insumos -->
+          <div class="bot-card-setting">
+            <div class="bot-card-header">
+              <div class="bot-card-title">
+                <span class="material-symbols-rounded" style="color:var(--primary);">build</span>
+                Servicios Técnicos Vinculados a Insumos
+              </div>
+              <button class="btn-cashew btn-primary" style="font-size:12px; padding:6px 14px;" onclick="CashewApp.openAddServiceMappingModal()">
+                <span class="material-symbols-rounded" style="font-size:18px;">add</span>
+                Vincular Servicio
+              </button>
+            </div>
+            <p style="font-size:13px; color:var(--text-muted); margin:0;">
+              Cuando un cliente paga por uno de estos servicios, el bot sugiere automáticamente descontar el o los insumos de taller vinculados para calcular la ganancia neta.
+            </p>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              ${maps.length === 0 ? `
+                <div style="text-align:center; padding:30px; color:var(--text-muted); font-size:13px;">
+                  No hay servicios vinculados todavía. Haz clic en "Vincular Servicio" para asociar uno o más insumos a una tarifa de mano de obra.
+                </div>
+              ` : maps.map(s => {
+                const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
+                  ? s.insumos
+                  : [{ name: s.defaultInsumoName || 'Insumo de taller', qty: 1 }];
+                return `
+                  <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-elevated); padding:14px 16px; border-radius:14px; border:1px solid var(--border-subtle); gap:12px;">
+                    <div>
+                      <div style="font-weight:800; font-size:14.5px; color:var(--text-main);">${this.escapeHtml(s.serviceName)}</div>
+                      <div style="font-size:12.5px; color:var(--text-muted); margin-top:5px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <span style="color:var(--text-muted); font-weight:700;">Insumos requeridos:</span>
+                        ${insumoItems.map(i => `
+                          <span style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:6px; padding:2px 8px; font-weight:700; color:var(--text-main); font-size:12px;">
+                            ${i.qty}x ${this.escapeHtml(i.name)}
+                          </span>
+                        `).join('')}
+                        <span style="margin-left:6px;">• Mano de obra sugerida: <strong style="color:var(--cashew-income);">$${Number(s.defaultLaborPrice || 0).toFixed(2)}</strong></span>
+                      </div>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                      <button class="bot-icon-btn" style="color:var(--cashew-expense);" onclick="CashewApp.deleteServiceMapping('${s.id}')" title="Eliminar servicio">
+                        <span class="material-symbols-rounded" style="font-size:18px;">delete</span>
+                      </button>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- SECCIÓN 2: Métodos de Pago Oficiales -->
           <div class="bot-card-setting">
             <div class="bot-card-header">
               <div class="bot-card-title">
@@ -5689,15 +5875,15 @@
               </button>
             </div>
             <p style="font-size:13px; color:var(--text-muted); margin:0;">
-              Estos métodos de pago son entregados por el bot automáticamente a los clientes en WhatsApp e Instagram cuando preguntan cómo pagar.
+              Estos métodos de pago son entregados por el bot automáticamente a los clientes en WhatsApp cuando preguntan cómo pagar o transferir.
             </p>
 
             <div style="display:flex; flex-direction:column; gap:8px;">
               ${pms.map(p => `
                 <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-elevated); padding:12px 16px; border-radius:14px; border:1px solid var(--border-subtle); gap:12px;">
                   <div>
-                    <div style="font-weight:800; font-size:14px; color:var(--text-main);">${p.name}</div>
-                    <div style="font-size:12.5px; color:var(--text-muted); margin-top:2px;">${p.details}</div>
+                    <div style="font-weight:800; font-size:14px; color:var(--text-main);">${this.escapeHtml(p.name)}</div>
+                    <div style="font-size:12.5px; color:var(--text-muted); margin-top:2px;">${this.escapeHtml(p.details)}</div>
                   </div>
                   <div style="display:flex; gap:6px;">
                     <button class="bot-icon-btn" title="Editar" onclick="CashewApp.openEditPaymentMethodModal('${p.id}')">
@@ -5712,7 +5898,7 @@
             </div>
           </div>
 
-          <!-- Knowledge Base FAQ Section -->
+          <!-- SECCIÓN 3: Preguntas Frecuentes (FAQ) -->
           <div class="bot-card-setting">
             <div class="bot-card-header">
               <div class="bot-card-title">
@@ -5725,15 +5911,15 @@
               </button>
             </div>
             <p style="font-size:13px; color:var(--text-muted); margin:0;">
-              El asistente de IA consulta estas preguntas y respuestas además del stock para responder dudas comunes de forma autónoma.
+              El asistente de IA consulta estas preguntas y respuestas para atender dudas sobre horarios, envíos y garantías de forma autónoma.
             </p>
 
             <div style="display:flex; flex-direction:column; gap:10px;">
               ${faqs.map(f => `
                 <div style="background:var(--bg-elevated); padding:14px 16px; border-radius:14px; border:1px solid var(--border-subtle); display:flex; justify-content:space-between; gap:12px;">
                   <div style="flex:1;">
-                    <div style="font-weight:800; font-size:14px; color:var(--primary);">${f.question}</div>
-                    <div style="font-size:13px; color:var(--text-main); margin-top:4px; line-height:1.45;">${f.answer}</div>
+                    <div style="font-weight:800; font-size:14px; color:var(--primary);">${this.escapeHtml(f.question)}</div>
+                    <div style="font-size:13px; color:var(--text-main); margin-top:4px; line-height:1.45;">${this.escapeHtml(f.answer)}</div>
                   </div>
                   <div style="display:flex; gap:6px; align-self:flex-start;">
                     <button class="bot-icon-btn" title="Editar" onclick="CashewApp.openEditFaqModal('${f.id}')">
@@ -5749,6 +5935,10 @@
           </div>
         </div>
       `;
+    },
+
+    buildBotFaqHTML() {
+      return this.buildBotKnowledgeHTML();
     },
 
     openEditPaymentMethodModal(pmId) {
@@ -6161,13 +6351,30 @@
     },
 
     /* ======================================================================
-       SUB-TAB 4: CONFIGURACIÓN & IA
+       SUB-TAB 3: REGLAS DE NEGOCIO & IA (PESTAÑA DEDICADA)
        ====================================================================== */
-    buildBotConfigHTML() {
+    buildBotRulesHTML() {
       const cfg = this.getBotConfig();
 
       return `
         <div style="display:flex; flex-direction:column; gap:20px; max-width:960px;">
+          <!-- Banner Principal de Reglas -->
+          <div style="padding:16px 20px; background:rgba(212,155,75,0.08); border:1.5px solid #d49b4b; border-radius:16px; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span class="material-symbols-rounded" style="color:#d49b4b; font-size:28px;">gavel</span>
+              <div>
+                <div style="font-weight:800; font-size:15px; color:#f8fafc;">Reglas de Negocio & Comportamiento de la IA</div>
+                <div style="font-size:12.5px; color:#cbd5e1; margin-top:2px;">
+                  Políticas comerciales prioritarias que la IA obedece estrictamente antes de formular cada respuesta a clientes.
+                </div>
+              </div>
+            </div>
+            <button type="button" class="btn-cashew ${cfg.globalBotEnabled !== false ? 'btn-success' : 'btn-danger'}" onclick="CashewApp.toggleGlobalBot()">
+              <span class="material-symbols-rounded" style="font-size:18px;">${cfg.globalBotEnabled !== false ? 'check_circle' : 'pause_circle'}</span>
+              ${cfg.globalBotEnabled !== false ? 'IA Global: ACTIVA' : 'IA Global: PAUSADA'}
+            </button>
+          </div>
+
           <form onsubmit="event.preventDefault(); CashewApp.saveBotConfigFromForm();">
             <div class="bot-card-setting">
               <div class="bot-card-title">
@@ -6349,6 +6556,10 @@
       }
     },
 
+    deleteSingleCustomRule(idx) {
+      return this.deleteCustomRule(idx);
+    },
+
     restoreDefaultRules() {
       if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlater.Corp?')) return;
       window.cashewSync.saveBotConfig({ customAiRules: this.DEFAULT_CUSTOM_RULES_TEXT }, 'Reglas IA restauradas');
@@ -6361,6 +6572,10 @@
       window.cashewSync.saveBotConfig({ customAiRules: val }, 'Reglas IA actualizadas');
       this.toast('Reglas del Asistente IA guardadas correctamente', 'verified');
       this.renderMainView();
+    },
+
+    buildBotConfigHTML() {
+      return this.buildBotRulesHTML();
     },
 
     /* ======================================================================

@@ -327,6 +327,15 @@ const DEFAULT_FAQ = [
   { id: 'faq_4', question: '¿Dónde están ubicados y cuál es el horario de atención?', answer: 'Estamos ubicados en nuestro local comercial. Atendemos de Lunes a Sábado de 9:00 AM a 6:00 PM.' }
 ];
 
+const DEFAULT_SERVICE_INSUMOS_MAP = [
+  { id: 'srv_oled_solo', serviceName: 'Instalacion Magia – SOLO (OLED)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 50 },
+  { id: 'srv_v1v2_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (V1/V2)', insumos: [{ name: 'Memoria 128Gb ADATA', qty: 1 }, { name: 'HwFly', qty: 1 }], defaultInsumoName: 'Memoria 128Gb ADATA + HwFly', defaultLaborPrice: 35 },
+  { id: 'srv_v1v2_solo', serviceName: 'Instalacion Magia – SOLO (V1/V2)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 25 },
+  { id: 'srv_lite_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (Lite)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 45 },
+  { id: 'srv_lite_solo', serviceName: 'Instalacion Magia – SOLO (Lite)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 40 },
+  { id: 'srv_oled_combo', serviceName: 'Instalacion Magia + Memoria 128GB + Configuración + Limpieza (OLED)', insumos: [{ name: 'HwFly', qty: 1 }], defaultInsumoName: 'HwFly', defaultLaborPrice: 50 }
+];
+
 /* --------------------------------------------------------------------------
    SOCIOS / ADMINISTRADORES AUTORIZADOS (Anthony y Sebastián)
    -------------------------------------------------------------------------- */
@@ -2387,8 +2396,9 @@ async function loadAiContext() {
   const cfg = botConfig || {};
   const pms = Array.isArray(cfg.paymentMethods) && cfg.paymentMethods.length > 0 ? cfg.paymentMethods : DEFAULT_PAYMENT_METHODS;
   const faqs = Array.isArray(cfg.knowledgeBaseFaq) && cfg.knowledgeBaseFaq.length > 0 ? cfg.knowledgeBaseFaq : DEFAULT_FAQ;
+  const srvs = Array.isArray(cfg.serviceInsumosMap) && cfg.serviceInsumosMap.length > 0 ? cfg.serviceInsumosMap : DEFAULT_SERVICE_INSUMOS_MAP;
   return {
-    botConfig: cfg,
+    botConfig: { ...cfg, serviceInsumosMap: srvs },
     stockItems: stockRaw ? Object.values(stockRaw).filter(Boolean) : [],
     paymentMethods: pms,
     knowledgeBaseFaq: faqs
@@ -2729,6 +2739,7 @@ async function recordIncoming({ convId, base, msg, label }) {
     lastMessageAt: msg.createdAt,
     unreadCount: (Number(existing?.unreadCount) || 0) + 1,
     deleted: false,
+    deletedAt: null,
     updatedAt: stampAfter(existing),
     updatedBy: 'bot'
   };
@@ -2766,6 +2777,8 @@ async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus
   if (existing) {
     updates[`botConversations/${convId}`] = {
       ...existing,
+      deleted: false,
+      deletedAt: null,
       lastMessage: text,
       lastMessageAt: msgTime,
       ...convPatch,
@@ -3157,11 +3170,11 @@ async function handleWaMessage(msg, type) {
       } catch (err) {}
     }
 
-    // Resolver conversación correspondiente existente
+    // Resolver conversación correspondiente existente (incluso si fue borrada previamente)
     let targetConvId = convId;
     const existingConvs = (await fb('GET', ws('botConversations'))) || {};
     for (const [cId, c] of Object.entries(existingConvs)) {
-      if (c && !c.deleted) {
+      if (c) {
         if (c.customerJid === jid || (phone && String(c.customerPhone || '').replace(/\D/g, '').endsWith(phone))) {
           targetConvId = cId;
           break;
@@ -3181,9 +3194,15 @@ async function handleWaMessage(msg, type) {
         botActive: false, // El operador humano respondió desde el teléfono
         needsAttention: false,
         unreadCount: 0,
+        deleted: false,
+        deletedAt: null,
         createdAt: tsMs || Date.now()
       };
       await fb('PUT', ws(`botConversations/${targetConvId}`), existing);
+    } else if (existing.deleted) {
+      existing.deleted = false;
+      existing.deletedAt = null;
+      await fb('PATCH', ws(`botConversations/${targetConvId}`), { deleted: false, deletedAt: null });
     }
 
     await recordOutgoing(targetConvId, {

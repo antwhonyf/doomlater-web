@@ -297,10 +297,26 @@
             const rTs = Number(rItem.updatedAt) || 0;
             // Tombstones are sticky: once an item is deleted/resolved on any device,
             // a stale (non-deleted) copy from another device can never resurrect it.
+            // EXCEPCIÓN: Para conversaciones de bot (botConversations), si llega un mensaje nuevo
+            // o el cliente vuelve a escribir, la conversación resucita de inmediato en el inbox.
             let takeRemote;
-            if (rItem.deleted && !lItem.deleted) takeRemote = true;
-            else if (lItem.deleted && !rItem.deleted) takeRemote = false;
-            else takeRemote = rTs >= lTs;
+            if (col === 'botConversations') {
+              if (!rItem.deleted && lItem.deleted) {
+                const rMsgTime = Number(rItem.lastMessageAt || rItem.updatedAt) || 0;
+                const lDelTime = Number(lItem.deletedAt || lItem.updatedAt) || 0;
+                takeRemote = rMsgTime >= lDelTime || rTs >= lTs;
+              } else if (rItem.deleted && !lItem.deleted) {
+                const lMsgTime = Number(lItem.lastMessageAt || lItem.updatedAt) || 0;
+                const rDelTime = Number(rItem.deletedAt || rItem.updatedAt) || 0;
+                takeRemote = !(lMsgTime >= rDelTime || lTs >= rTs);
+              } else {
+                takeRemote = rTs >= lTs;
+              }
+            } else {
+              if (rItem.deleted && !lItem.deleted) takeRemote = true;
+              else if (lItem.deleted && !rItem.deleted) takeRemote = false;
+              else takeRemote = rTs >= lTs;
+            }
 
             if (takeRemote) {
               map.set(rItem.id, rItem);

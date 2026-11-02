@@ -3156,6 +3156,37 @@ button {
   border-bottom-right-radius: 4px;
 }
 
+.bot-msg-row.outgoing.from-phone .bot-bubble {
+  background: #005c4b !important;
+  color: #e9edef !important;
+}
+
+.bot-msg-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+.bot-msg-badge.bot {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+.bot-msg-badge.phone {
+  background: rgba(34, 197, 94, 0.16);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+.bot-msg-badge.web {
+  background: rgba(168, 85, 247, 0.16);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+
 .bot-bubble-meta {
   display: flex;
   align-items: center;

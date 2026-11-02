@@ -2748,17 +2748,18 @@ async function recordIncoming({ convId, base, msg, label }) {
   return conv;
 }
 
-async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus = 'sent', deliveryError = '', mediaKey = null }, convPatch = {}) {
+async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus = 'sent', deliveryError = '', mediaKey = null, createdAt = null }, convPatch = {}) {
   const now = Date.now();
+  const msgTime = createdAt || now;
   const existing = await fb('GET', ws(`botConversations/${convId}`));
   const updates = {
     [`botMessages/${id}`]: {
-      id, convId, direction: 'out', text, sentBy, createdAt: now, updatedAt: now,
+      id, convId, direction: 'out', text, sentBy, createdAt: msgTime, updatedAt: now,
       deliveryStatus, ...(deliveryError ? { deliveryError } : {}), ...(mediaKey ? { mediaKey, mediaType: 'image' } : {})
     },
     'meta/updatedAt': now,
     'meta/rev': now,
-    'meta/lastLabel': `🤖 Respuesta enviada`,
+    'meta/lastLabel': sentBy === 'WhatsApp (Móvil)' ? '📱 Mensaje desde WhatsApp' : '🤖 Respuesta enviada',
     'meta/lastClientId': 'bot_bridge',
     'meta/updatedBy': 'bot'
   };
@@ -2766,7 +2767,7 @@ async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus
     updates[`botConversations/${convId}`] = {
       ...existing,
       lastMessage: text,
-      lastMessageAt: now,
+      lastMessageAt: msgTime,
       ...convPatch,
       updatedAt: stampAfter(existing),
       updatedBy: 'bot'
@@ -3144,7 +3145,7 @@ async function handleWaMessage(msg, type) {
   const msgId = `bmsg_wa_${safeId(msg.key.id)}`;
 
   // Mensajes que Tú o tu socio escriben desde la aplicación de WhatsApp (móvil):
-  // Se reflejan de inmediato en la Web y en Firebase
+  // Se reflejan de inmediato en la Web y en Firebase en el mismo chat
   if (msg.key.fromMe) {
     if (botSentIds.has(msg.key.id)) return;
 
@@ -3156,29 +3157,42 @@ async function handleWaMessage(msg, type) {
       } catch (err) {}
     }
 
-    let existing = await fb('GET', ws(`botConversations/${convId}`));
+    // Resolver conversación correspondiente existente
+    let targetConvId = convId;
+    const existingConvs = (await fb('GET', ws('botConversations'))) || {};
+    for (const [cId, c] of Object.entries(existingConvs)) {
+      if (c && !c.deleted) {
+        if (c.customerJid === jid || (phone && String(c.customerPhone || '').replace(/\D/g, '').endsWith(phone))) {
+          targetConvId = cId;
+          break;
+        }
+      }
+    }
+
+    let existing = existingConvs[targetConvId];
     if (!existing) {
       existing = {
-        id: convId,
+        id: targetConvId,
         platform: 'whatsapp',
         platformAccount: 'shared',
         customerName: phone ? `+${phone}` : 'Cliente WhatsApp',
         customerPhone: phone ? `+${phone}` : '',
         customerJid: jid,
-        botActive: false, // El operador humano tomó el control desde el teléfono
+        botActive: false, // El operador humano respondió desde el teléfono
         needsAttention: false,
         unreadCount: 0,
         createdAt: tsMs || Date.now()
       };
-      await fb('PUT', ws(`botConversations/${convId}`), existing);
+      await fb('PUT', ws(`botConversations/${targetConvId}`), existing);
     }
 
-    await recordOutgoing(convId, {
+    await recordOutgoing(targetConvId, {
       id: msgId,
       text,
       sentBy: 'WhatsApp (Móvil)',
       deliveryStatus: 'sent',
-      mediaKey
+      mediaKey,
+      createdAt: tsMs || Date.now()
     }, {
       botActive: false
     });

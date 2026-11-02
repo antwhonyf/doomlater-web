@@ -4401,56 +4401,36 @@
       this.ensureSeedBotConversations();
 
       const convs = this.getVisibleBotConversations();
-      const attentionCount = convs.filter(c => c.needsAttention || c.pendingPayment).length;
       const cfg = this.getBotConfig();
-      const globalActive = cfg.globalBotEnabled !== false;
+      const isConnected = Boolean(cfg.whatsappConnected);
 
       return `
         <header class="cashew-greeting-header">
           <div>
-            <div class="greeting-small">Atención 24/7 • WhatsApp, Instagram y Messenger en tiempo real</div>
-            <h1 class="greeting-username">Bot & Inbox Multicanal</h1>
+            <div class="greeting-small">Atención y Mensajería en Tiempo Real</div>
+            <h1 class="greeting-username">WhatsApp Bot & Inbox</h1>
           </div>
           <div class="header-actions-bar">
-            <!-- Global AI Toggle -->
-            <button class="btn-cashew ${globalActive ? 'btn-tonal' : 'btn-danger'}"
-                    style="font-size:12px; font-weight:800; padding:6px 14px;"
-                    title="Activar o pausar la respuesta automática de la IA en todas las plataformas a la vez"
-                    onclick="CashewApp.toggleGlobalBot()">
-              <span class="material-symbols-rounded" style="font-size:18px;">${globalActive ? 'smart_toy' : 'pause_circle'}</span>
-              ${globalActive ? 'IA Global: ACTIVA' : 'IA Global: PAUSADA (Solo Humano)'}
-            </button>
             <button class="btn-cashew btn-surface" onclick="CashewApp.onManualSyncClick()">
               <span class="material-symbols-rounded" style="font-size:19px;">sync</span> Sincronizar
             </button>
-            <button class="btn-cashew btn-primary" onclick="CashewApp.setBotSubTab('connect')">
-              <span class="material-symbols-rounded" style="font-size:20px;">qr_code_scanner</span> Conectar Redes
+            <button class="btn-cashew ${this.botSubTab === 'connect' ? 'btn-tonal' : 'btn-primary'}" onclick="CashewApp.setBotSubTab('connect')">
+              <span class="material-symbols-rounded" style="font-size:20px;">qr_code_scanner</span>
+              ${isConnected ? 'WhatsApp: Conectado' : 'Conectar WhatsApp'}
             </button>
           </div>
         </header>
 
-        <!-- Sub-tabs navigation bar -->
+        <!-- Sub-tabs navigation bar: Inbox & Conexión de WhatsApp -->
         <div class="bot-subtabs-nav">
-          <button class="bot-subtab-btn ${this.botSubTab === 'inbox' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('inbox')">
-            <span class="material-symbols-rounded" style="font-size:18px;">inbox</span>
-            Inbox Multicanal
-            ${attentionCount > 0 ? `<span class="bot-attention-pulse-badge">⚠️ ${attentionCount}</span>` : ''}
-          </button>
-          <button class="bot-subtab-btn ${this.botSubTab === 'faq' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('faq')">
-            <span class="material-symbols-rounded" style="font-size:18px;">payments</span>
-            Métodos de Pago & FAQ
-          </button>
-          <button class="bot-subtab-btn ${this.botSubTab === 'services' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('services')">
-            <span class="material-symbols-rounded" style="font-size:18px;">build</span>
-            Servicios e Insumos
-          </button>
-          <button class="bot-subtab-btn ${this.botSubTab === 'config' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('config')">
-            <span class="material-symbols-rounded" style="font-size:18px;">tune</span>
-            Configuración & IA
+          <button class="bot-subtab-btn ${this.botSubTab !== 'connect' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('inbox')">
+            <span class="material-symbols-rounded" style="font-size:18px;">chat</span>
+            Inbox (Chat en Vivo)
           </button>
           <button class="bot-subtab-btn ${this.botSubTab === 'connect' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('connect')">
-            <span class="material-symbols-rounded" style="font-size:18px;">share</span>
-            Conectar Canales
+            <span class="material-symbols-rounded" style="font-size:18px;">qr_code_2</span>
+            Conexión de WhatsApp
+            ${isConnected ? '<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#22c55e; margin-left:6px;"></span>' : ''}
           </button>
         </div>
 
@@ -4459,19 +4439,10 @@
     },
 
     renderBotCurrentSubTabHTML() {
-      switch (this.botSubTab) {
-        case 'faq':
-          return this.buildBotFaqHTML();
-        case 'services':
-          return this.buildBotServicesHTML();
-        case 'config':
-          return this.buildBotConfigHTML();
-        case 'connect':
-          return this.buildBotConnectHTML();
-        case 'inbox':
-        default:
-          return this.buildBotInboxHTML();
+      if (this.botSubTab === 'connect') {
+        return this.buildBotConnectHTML();
       }
+      return this.buildBotInboxHTML();
     },
 
     /* ======================================================================
@@ -4654,22 +4625,16 @@
       }
 
       const activeConv = filtered.find(c => c.id === this.botActiveConvId) || allConvs.find(c => c.id === this.botActiveConvId) || filtered[0] || null;
-
       const waCount = allConvs.filter(c => c.platform === 'whatsapp').length;
-      const igCount = allConvs.filter(c => c.platform === 'instagram').length;
-      const fbCount = allConvs.filter(c => c.platform === 'messenger').length;
-      const attnCount = allConvs.filter(c => c.needsAttention || c.pendingPayment).length;
 
       return `
-        ${this.renderPartnerPendingRegistrationsBannerHTML()}
-
         <div class="bot-inbox-grid">
-          <!-- Left Column: Search, Channels & Chat List -->
+          <!-- Left Column: Search & Chat List -->
           <div class="bot-inbox-sidebar ${activeConv ? 'hidden-mobile' : ''}">
             <div class="bot-sidebar-header">
               <div class="bot-search-bar">
                 <span class="material-symbols-rounded" style="font-size:18px; color:var(--text-muted);">search</span>
-                <input type="text" id="botSearchInput" placeholder="Buscar cliente o mensaje..."
+                <input type="text" id="botSearchInput" placeholder="Buscar chat o mensaje..."
                        value="${this.escapeHtml(this.botSearchQuery || '')}"
                        oninput="CashewApp.setBotSearchQuery(this.value)" />
                 <button id="botSearchClearBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer; display:${this.botSearchQuery ? 'inline-flex' : 'none'}; align-items:center;" onclick="CashewApp.setBotSearchQuery(''); const inp = document.getElementById('botSearchInput'); if (inp) { inp.value = ''; inp.focus(); }">
@@ -4682,17 +4647,8 @@
                 <button class="bot-channel-pill ${this.botChannelFilter === 'all' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('all')">
                   Todos (${allConvs.length})
                 </button>
-                <button class="bot-channel-pill ${this.botChannelFilter === 'attention' ? 'active-amber' : ''}" onclick="CashewApp.setBotChannelFilter('attention')">
-                  ⚠️ Atención (${attnCount})
-                </button>
                 <button class="bot-channel-pill ${this.botChannelFilter === 'whatsapp' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('whatsapp')">
                   WhatsApp (${waCount})
-                </button>
-                <button class="bot-channel-pill ${this.botChannelFilter === 'instagram' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('instagram')">
-                  Instagram (${igCount})
-                </button>
-                <button class="bot-channel-pill ${this.botChannelFilter === 'messenger' ? 'active' : ''}" onclick="CashewApp.setBotChannelFilter('messenger')">
-                  Messenger (${fbCount})
                 </button>
               </div>
             </div>
@@ -4707,9 +4663,9 @@
           <div class="bot-chat-container ${!activeConv ? 'hidden-mobile' : ''}">
             ${activeConv ? this.renderBotActiveChatHTML(activeConv) : `
               <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--text-muted); padding:30px; text-align:center;">
-                <span class="material-symbols-rounded" style="font-size:48px; opacity:0.4; margin-bottom:12px;">forum</span>
-                <h3 style="font-size:17px; font-weight:700; color:var(--text-main); margin-bottom:4px;">Bandeja Omnicanal</h3>
-                <p style="font-size:13px; max-width:320px;">Selecciona una conversación de la izquierda para responder en tiempo real por WhatsApp, Instagram o Messenger.</p>
+                <span class="material-symbols-rounded" style="font-size:48px; opacity:0.4; margin-bottom:12px;">chat</span>
+                <h3 style="font-size:17px; font-weight:700; color:var(--text-main); margin-bottom:4px;">Inbox WhatsApp</h3>
+                <p style="font-size:13px; max-width:320px;">Selecciona una conversación de la lista para ver los mensajes y responder en vivo.</p>
               </div>
             `}
           </div>
@@ -4770,12 +4726,12 @@
     },
 
     renderBotActiveChatHTML(conv) {
+      // Mensajes ordenados cronológicamente: los más antiguos arriba, los más nuevos abajo
       const allMsgs = (this.activeList('botMessages') || [])
         .filter(m => m.convId === conv.id)
-        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
 
       const initials = (conv.customerName || 'U').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-      const botActive = conv.botActive !== false;
 
       return `
         <!-- Chat Header -->
@@ -4793,34 +4749,15 @@
               ${this.renderSocialBadgeHTML(conv.platform)}
             </div>
             <div>
-              <div class="bot-chat-user-title">${conv.customerName}</div>
+              <div class="bot-chat-user-title">${this.escapeHtml(conv.customerName || 'Cliente')}</div>
               <div class="bot-chat-user-sub">
                 <span class="bot-status-dot"></span>
-                <span>En línea • ${conv.platform === 'whatsapp' ? (conv.customerPhone || 'WhatsApp') : conv.platform === 'instagram' ? 'Instagram DM' : 'Facebook Messenger'}</span>
-                ${conv.platform === 'messenger' ? `<span style="opacity:0.75;">(Privado: ${conv.platformAccount})</span>` : ''}
+                <span>En línea • WhatsApp ${conv.customerPhone ? `• ${this.escapeHtml(conv.customerPhone)}` : ''}</span>
               </div>
             </div>
           </div>
 
           <div class="bot-chat-header-actions">
-            <!-- Bot Toggle switch -->
-            <button class="btn-cashew ${botActive ? 'btn-surface' : 'btn-primary'}"
-                    style="font-size:12px; padding:6px 12px; ${!botActive ? 'border-color:#d49b4b; color:#d49b4b; background:rgba(212,155,75,0.12);' : ''}"
-                    title="${botActive ? 'El Bot IA responde automáticamente. Clic para pausarlo en este chat.' : 'Modo Manual activo (IA pausada). Clic para reactivar el Bot IA.'}"
-                    onclick="CashewApp.toggleBotAutoReply('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:17px; ${!botActive ? 'color:#d49b4b;' : ''}">${botActive ? 'smart_toy' : 'pause_circle'}</span>
-              <span>${botActive ? 'Bot IA: Activo' : 'Modo Manual (IA Pausada)'}</span>
-            </button>
-
-            <!-- Manual Alerta Button -->
-            <button class="btn-cashew"
-                    style="font-size:12px; padding:6px 12px; font-weight:700; ${conv.needsAttention ? 'background:rgba(212,155,75,0.22); border:1.5px solid #d49b4b; color:#d49b4b;' : 'background:var(--bg-elevated); border:1px solid var(--border-subtle); color:var(--text-muted);'}"
-                    title="${conv.needsAttention ? 'Quitar etiqueta de alerta de este chat' : 'Marcar este chat con etiqueta Alerta para recordar responder o verificar'}"
-                    onclick="CashewApp.toggleBotChatAlert('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:17px; color:${conv.needsAttention ? '#d49b4b' : 'inherit'};">warning</span>
-              <span>${conv.needsAttention ? '⚠️ Alerta Activa' : 'Poner Alerta'}</span>
-            </button>
-
             <!-- Delete Conversation Button -->
             <button class="btn-cashew btn-surface"
                     style="font-size:12px; padding:6px 10px; color:#ef4444; border-color:rgba(239,68,68,0.25);"
@@ -4829,43 +4766,21 @@
               <span class="material-symbols-rounded" style="font-size:17px; color:#ef4444;">delete</span>
               <span>Borrar Chat</span>
             </button>
-
-            ${conv.needsAttention && !conv.pendingPayment ? `
-              <button class="btn-cashew btn-surface"
-                      style="font-size:12px; padding:6px 12px; border-color:#d49b4b; color:#d49b4b;"
-                      onclick="CashewApp.markBotAttentionResolved('${conv.id}')">
-                <span class="material-symbols-rounded" style="font-size:17px;">done_all</span>
-                Resolver Alerta
-              </button>
-            ` : ''}
           </div>
         </div>
 
-        <!-- Attention Alert Banner at Top of Chat (ONLY for operator assistance, NOT payments) -->
-        ${conv.needsAttention && !conv.pendingPayment ? `
-          <div class="bot-attention-banner">
-            <div class="bot-attention-banner-text">
-              <span class="material-symbols-rounded" style="font-size:24px;">warning</span>
-              <div>
-                <strong>Atención requerida para responder:</strong>
-                <div>${this.escapeHtml(conv.attentionReason || 'El cliente solicitó asistencia de un operador humano.')}</div>
-              </div>
-            </div>
-            <div class="bot-attention-banner-actions">
-              <button class="btn-cashew btn-surface" onclick="CashewApp.markBotAttentionResolved('${conv.id}')">
-                Marcar Atendido
-              </button>
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Messages Stream -->
+        <!-- Messages Stream (Oldest at top, newest at bottom) -->
         <div id="botMessagesStream" class="bot-messages-stream">
-          ${allMsgs.map(m => this.renderBotMessageBubbleHTML(m, conv)).join('')}
+          ${allMsgs.length === 0 ? `
+            <div style="text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13px;">
+              <span class="material-symbols-rounded" style="font-size:36px; opacity:0.4; margin-bottom:8px;">chat</span>
+              <div>No hay mensajes en este chat aún.</div>
+            </div>
+          ` : allMsgs.map(m => this.renderBotMessageBubbleHTML(m, conv)).join('')}
 
           ${conv.isTyping ? `
             <div class="bot-typing-box">
-              <span>Doomlater Bot está escribiendo</span>
+              <span>Escribiendo</span>
               <div class="bot-typing-dots">
                 <span class="bot-typing-dot"></span>
                 <span class="bot-typing-dot"></span>
@@ -4875,78 +4790,10 @@
           ` : ''}
         </div>
 
-        <!-- Pending Payment Verification Card (ONLY at bottom of chat with the customer) -->
-        ${conv.pendingPayment ? `
-          <div class="bot-payment-bottom-card">
-            <div class="bot-payment-bottom-content">
-              <div class="bot-payment-bottom-icon">
-                <span class="material-symbols-rounded">receipt_long</span>
-              </div>
-              <div class="bot-payment-bottom-details">
-                <div class="bot-payment-bottom-title">
-                  <span>Pago por verificar:</span>
-                  <span class="bot-payment-bottom-badge">$${Number(conv.pendingPaymentAmount || 0).toFixed(2)}</span>
-                </div>
-                <div class="bot-payment-bottom-sub">
-                  ${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')} • Clic para verificar y registrar en caja
-                </div>
-              </div>
-            </div>
-            <button class="btn-cashew bot-payment-bottom-btn"
-                    onclick="CashewApp.openVerifyPaymentModal('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:18px;">verified</span>
-              Verificar Pago
-            </button>
-          </div>
-        ` : ''}
-
-        <!-- Media Attachment Preview Tray (if file selected) -->
-        ${this.botSelectedMedia ? `
-          <div class="bot-media-tray">
-            <div class="bot-media-thumb-wrap">
-              ${this.botSelectedMedia.type === 'video' ? `
-                <video src="${this.botSelectedMedia.dataUrl}"></video>
-              ` : `
-                <img src="${this.botSelectedMedia.dataUrl}" alt="Vista previa" />
-              `}
-              <button class="bot-media-thumb-remove" onclick="CashewApp.clearBotSelectedMedia()">✕</button>
-            </div>
-            <div style="font-size:12px; color:var(--text-muted); flex:1;">
-              <strong>Archivo adjunto listo para enviar:</strong>
-              <div>${this.botSelectedMedia.name || 'Multimedia'} (${this.botSelectedMedia.type.toUpperCase()})</div>
-            </div>
-          </div>
-        ` : ''}
-
-        ${!botActive ? `
-          <div style="background:rgba(212,155,75,0.1); border:1px solid rgba(212,155,75,0.3); border-radius:8px; padding:7px 12px; margin:0 16px 8px 16px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#f0f4f8;">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span class="material-symbols-rounded" style="color:#d49b4b; font-size:18px;">pause_circle</span>
-              <span><strong>Modo Manual Activo:</strong> El Bot IA está pausado en esta conversación para atención personal.</span>
-            </div>
-            <button class="btn-cashew btn-primary" style="font-size:11px; padding:3px 10px;" onclick="CashewApp.toggleBotAutoReply('${conv.id}')">
-              <span class="material-symbols-rounded" style="font-size:14px;">play_arrow</span> Reactivar Bot IA
-            </button>
-          </div>
-        ` : ''}
-
         <!-- Composer Bar -->
         <div class="bot-composer-bar">
-          <label class="bot-icon-btn" title="Adjuntar foto o video">
-            <span class="material-symbols-rounded">attach_file</span>
-            <input type="file" accept="image/*,video/*" style="display:none;" onchange="CashewApp.onBotMediaSelected(event)" />
-          </label>
-
-          <button type="button" class="bot-icon-btn" title="Enviar GIF rápido" onclick="CashewApp.sendBotPresetReply('gif')">
-            <span class="material-symbols-rounded">gif_box</span>
-          </button>
-
-          <button type="button" class="bot-icon-btn" title="Enviar datos de pago" onclick="CashewApp.sendBotPresetReply('payment')">
-            <span class="material-symbols-rounded">credit_card</span>
-          </button>
-
           <input type="text" id="botMessageInput" class="bot-composer-input"
-                 placeholder="Escribe una respuesta como @${this.user || 'socio'}..."
+                 placeholder="Escribe un mensaje como @${this.user || 'socio'}..."
                  onkeydown="if(event.key === 'Enter') CashewApp.sendBotMessageManual()" />
 
           <button class="bot-send-btn" title="Enviar mensaje" onclick="CashewApp.sendBotMessageManual()">
@@ -4959,39 +4806,54 @@
     renderBotMessageBubbleHTML(msg, conv) {
       const isOutgoing = msg.direction === 'out';
       const timeStr = msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
-      const authorLabel = isOutgoing
-        ? (msg.sentBy === 'bot' ? '🤖 Doom Bot IA' : `👤 @${msg.sentBy || 'Operador'}`)
-        : (conv.customerName || 'Cliente');
+
+      let authorLabel = conv.customerName || 'Cliente';
+      let isPhone = false;
+      let isBot = false;
+
+      if (isOutgoing) {
+        if (msg.sentBy === 'bot' || msg.sentBy === 'Doom Bot IA') {
+          authorLabel = '🤖 Bot IA';
+          isBot = true;
+        } else if (msg.sentBy === 'WhatsApp (Móvil)' || (msg.sentBy && msg.sentBy.toLowerCase().includes('móvil'))) {
+          authorLabel = '📱 Nosotros (Teléfono)';
+          isPhone = true;
+        } else {
+          authorLabel = `👤 @${msg.sentBy || 'Nosotros'}`;
+        }
+      }
 
       let statusIcon = '';
       if (isOutgoing) {
         if (msg.deliveryStatus === 'error') {
-          statusIcon = `<span class="material-symbols-rounded" style="color:#ef4444; font-size:15px; margin-left:4px; vertical-align:middle; cursor:help;" title="No entregado: ${this.escapeHtml(msg.deliveryError || 'Error de red')}">error</span>`;
+          statusIcon = `<span class="material-symbols-rounded" style="color:#ef4444; font-size:15px; margin-left:4px; vertical-align:middle;" title="No entregado">error</span>`;
         } else if (msg.deliveryStatus === 'sent') {
-          statusIcon = `<span style="color:#38bdf8; font-size:12px; margin-left:4px; font-weight:700;" title="Entregado con éxito">✓✓</span>`;
+          statusIcon = `<span style="color:#38bdf8; font-size:12px; margin-left:4px; font-weight:700;" title="Entregado">✓✓</span>`;
         } else {
           statusIcon = `<span class="material-symbols-rounded" style="color:var(--text-muted); font-size:13px; margin-left:4px; vertical-align:middle;" title="Enviando...">schedule</span>`;
         }
       }
 
       return `
-        <div class="bot-msg-row ${isOutgoing ? 'outgoing' : 'incoming'}">
-          <span class="bot-msg-sender-name">${authorLabel}</span>
-          <div class="bot-bubble">
+        <div class="bot-msg-row ${isOutgoing ? 'outgoing' : 'incoming'} ${isBot ? 'from-bot' : ''} ${isPhone ? 'from-phone' : ''}">
+          <div style="display:flex; align-items:center; justify-content:${isOutgoing ? 'flex-end' : 'flex-start'}; gap:6px;">
+            ${isOutgoing ? `
+              <span class="bot-msg-badge ${isBot ? 'bot' : (isPhone ? 'phone' : 'web')}">${authorLabel}</span>
+            ` : `
+              <span class="bot-msg-sender-name">${this.escapeHtml(authorLabel)}</span>
+            `}
+          </div>
+          <div class="bot-bubble ${isPhone ? 'phone-bubble' : ''}">
             ${msg.mediaUrl ? `
               <div class="bot-msg-media-box">
-                ${msg.mediaType === 'video' ? `
-                  <video src="${msg.mediaUrl}" controls playsinline></video>
-                ` : `
-                  <img src="${msg.mediaUrl}" alt="Adjunto" onclick="CashewApp.openChatImageViewer('${msg.mediaUrl}', '${msg.mediaType || 'image'}')" />
-                `}
+                <img src="${msg.mediaUrl}" alt="Adjunto" onclick="CashewApp.openChatImageViewer('${msg.mediaUrl}', 'image')" />
               </div>
             ` : ''}
             <div>${this.escapeHtml(msg.text || '').replace(/\n/g, '<br/>')}</div>
             <div class="bot-bubble-meta">
               <span>${timeStr}</span>
               ${statusIcon}
-              <button type="button" class="bot-msg-del-btn" title="Eliminar mensaje de la conversación" onclick="event.stopPropagation(); CashewApp.confirmDeleteBotMessage('${msg.id}')">
+              <button type="button" class="bot-msg-del-btn" title="Eliminar mensaje" onclick="event.stopPropagation(); CashewApp.confirmDeleteBotMessage('${msg.id}')">
                 <span class="material-symbols-rounded">delete</span>
               </button>
             </div>

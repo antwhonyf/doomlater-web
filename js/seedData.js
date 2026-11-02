@@ -298,6 +298,11 @@ window.createInitialSeedState = function () {
       typingDelaySec: 3.5,
       showTypingIndicator: true,
       showOnlinePresence: true,
+      customAiRules: `- No dar descuentos mayores al 5% sin consultar previamente a Anthony (+584142005801) o Sebastián (+584264181643).
+- El horario de atención en tienda y taller es de Lunes a Sábado de 9:00 AM a 6:00 PM.
+- Para envíos nacionales trabajamos exclusivamente con MRW, Zoom y Tealca asegurado.
+- Si el cliente pregunta por presupuestos grandes o combos, pedirle su nombre y decirle que Anthony o el socio le confirmarán.
+- En pagos móviles verificar siempre los últimos 4 dígitos del comprobante antes de entregar mercancía.`,
       geminiApiKey: '',
       whatsappConnected: false,
       whatsappQr: null,

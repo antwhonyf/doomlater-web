@@ -3947,13 +3947,24 @@
        PAGE 10: BOT MULTICANAL & BANDEJA OMNICANAL (WHATSAPP, INSTAGRAM, MESSENGER)
        ====================================================================== */
 
+    DEFAULT_CUSTOM_RULES_TEXT: `- No dar descuentos mayores al 5% sin consultar previamente a Anthony (+584142005801) o Sebastián (+584264181643).
+- El horario de atención en tienda y taller es de Lunes a Sábado de 9:00 AM a 6:00 PM.
+- Para envíos nacionales trabajamos exclusivamente con MRW, Zoom y Tealca asegurado.
+- Si el cliente pregunta por presupuestos grandes o combos, pedirle su nombre y decirle que Anthony o el socio le confirmarán.
+- En pagos móviles verificar siempre los últimos 4 dígitos del comprobante antes de entregar mercancía.`,
+
     getBotConfig() {
       const cfg = (this.st.botConfig && typeof this.st.botConfig === 'object') ? this.st.botConfig : {};
+      const rules = cfg.customAiRules !== undefined && cfg.customAiRules !== null && String(cfg.customAiRules).trim() !== ''
+        ? cfg.customAiRules
+        : this.DEFAULT_CUSTOM_RULES_TEXT;
+
       return {
         globalBotEnabled: cfg.globalBotEnabled !== false,
         typingDelaySec: cfg.typingDelaySec !== undefined ? Number(cfg.typingDelaySec) : 3.5,
         showTypingIndicator: cfg.showTypingIndicator !== false,
         showOnlinePresence: cfg.showOnlinePresence !== false,
+        customAiRules: rules,
         geminiApiKey: cfg.geminiApiKey || '',
         whatsappConnected: Boolean(cfg.whatsappConnected),
         whatsappQr: cfg.whatsappQr || null,
@@ -6007,19 +6018,69 @@
               </div>
 
               <!-- Reglas del Asistente IA & Filtros de Comportamiento -->
-              <div style="margin-top:16px;">
-                <label style="font-weight:700; font-size:13.5px; color:var(--text-main); display:flex; align-items:center; gap:8px; margin-bottom:5px;">
-                  <span class="material-symbols-rounded" style="color:var(--primary); font-size:20px;">rule</span>
-                  Reglas del Asistente IA & Filtros de Negocio (Directo en Web):
+              <div style="margin-top:20px; padding:18px; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:18px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                  <label style="font-weight:800; font-size:14.5px; color:var(--text-main); display:flex; align-items:center; gap:8px; margin:0;">
+                    <span class="material-symbols-rounded" style="color:var(--primary); font-size:22px;">rule</span>
+                    Reglas del Asistente IA & Filtros de Negocio
+                  </label>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn-cashew btn-surface btn-sm" style="font-size:11.5px; padding:4px 10px;" onclick="CashewApp.restoreDefaultRules()" title="Restaurar reglas sugeridas estándar">
+                      <span class="material-symbols-rounded" style="font-size:15px;">restart_alt</span> Sugeridas
+                    </button>
+                    <button type="button" class="btn-cashew btn-primary btn-sm" style="font-size:11.5px; padding:4px 12px; background:var(--primary); color:var(--on-primary); font-weight:800;" onclick="CashewApp.saveCustomAiRulesOnly()" title="Guardar cambios de las reglas en Firebase">
+                      <span class="material-symbols-rounded" style="font-size:15px;">save</span> Guardar Reglas
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Banner explicativo interactivo de cómo funcionan las reglas -->
+                <div style="padding:12px 14px; background:rgba(212,155,75,0.09); border:1px solid rgba(212,155,75,0.25); border-radius:14px; font-size:12px; line-height:1.5; color:var(--text-main); margin-bottom:14px;">
+                  <strong style="color:var(--primary); font-size:12.5px;">💡 ¿Cómo funcionan las reglas?</strong>
+                  <div style="margin-top:3px; color:var(--text-muted);">
+                    Estas reglas son directivas prioritarias que se inyectan en el cerebro de Gemini antes de generar cada respuesta a clientes o a ustedes por WhatsApp.
+                  </div>
+                  <div style="margin-top:5px; font-weight:600;">
+                    • <strong>¿Escribirlas todas juntas o una por una?</strong> ¡Puedes de ambas formas!
+                  </div>
+                  <div style="color:var(--text-muted); font-size:11.5px; margin-top:2px;">
+                    1. <strong>Una por una:</strong> Escribe tu regla en el campo rápido de abajo y pulsa <em>"+ Agregar"</em>.<br>
+                    2. <strong>Todas juntas:</strong> Puedes escribir, editar o pegar todas tus reglas con guiones en el cuadro de texto y pulsar <em>"Guardar Reglas"</em>.<br>
+                    ✨ Las reglas se quedan <strong>siempre visibles en pantalla</strong> sin borrarse.
+                  </div>
+                </div>
+
+                <!-- Campo rápido para agregar regla una por una -->
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+                  <input type="text" id="cfg_newRuleInput" class="cashew-input" style="flex:1; font-size:13px;" placeholder="Escribe una regla rápida (ej: Los domingos solo atendemos entregas coordinadas)..." onkeydown="if(event.key==='Enter'){event.preventDefault();CashewApp.addSingleCustomRule();}" />
+                  <button type="button" class="btn-cashew btn-tonal" style="white-space:nowrap; padding:7px 14px; font-size:12.5px; font-weight:800;" onclick="CashewApp.addSingleCustomRule()">
+                    <span class="material-symbols-rounded" style="font-size:18px;">add</span> Agregar Regla
+                  </button>
+                </div>
+
+                <!-- Listado interactivo de reglas activas (eliminables una por una) -->
+                <div id="cfg_rulesChipsContainer" style="display:flex; flex-direction:column; gap:6px; margin-bottom:14px;">
+                  ${(cfg.customAiRules || '').split('\n').map(l => l.trim()).filter(l => l.length > 0).map((r, idx) => {
+                    const clean = r.replace(/^[-•*]\s*/, '');
+                    return `
+                      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 12px; background:var(--bg-sidebar); border:1px solid var(--border-subtle); border-radius:10px; font-size:12.5px;">
+                        <span style="display:flex; align-items:flex-start; gap:6px; line-height:1.35;">
+                          <span style="color:var(--primary); font-weight:800;">•</span>
+                          <span>${this.escapeHtml(clean)}</span>
+                        </span>
+                        <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:2px; flex-shrink:0;" onclick="CashewApp.deleteCustomRule(${idx})" title="Eliminar esta regla">
+                          <span class="material-symbols-rounded" style="font-size:17px;">delete</span>
+                        </button>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+
+                <!-- Cuadro de texto completo (Siempre visible con todas las reglas) -->
+                <label style="font-size:12px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:5px;">
+                  O edita todas las reglas a la vez en el bloque de texto:
                 </label>
-                <textarea id="cfg_customAiRules" class="cashew-input" style="width:100%; height:130px; font-size:13px; line-height:1.45; font-family:inherit;" placeholder="Ejemplo:
-- No dar descuentos mayores al 5% sin consultar previamente a Anthony o al socio.
-- El horario de atención en tienda es de Lunes a Sábado de 9:00 AM a 6:00 PM.
-- Para envíos nacionales indicar que trabajamos con MRW, Zoom y Tealca asegurado.
-- Si el cliente pregunta por presupuestos grandes o combos, pedirle su nombre y decirle que Anthony o el socio le confirmarán.">${this.escapeHtml(cfg.customAiRules || '')}</textarea>
-                <span style="font-size:12px; color:var(--text-muted); display:block; margin-top:4px;">
-                  Estas reglas se inyectan como directivas estrictas en el cerebro de Gemini antes de generar cada respuesta a los clientes. Puedes actualizarlas aquí en la web en cualquier momento sin programar nada.
-                </span>
+                <textarea id="cfg_customAiRules" class="cashew-input" style="width:100%; height:135px; font-size:12.5px; line-height:1.45; font-family:inherit; box-sizing:border-box;">${this.escapeHtml(cfg.customAiRules || '')}</textarea>
               </div>
 
               <!-- Facebook Messenger Dedicated Redirect Message -->
@@ -6073,6 +6134,51 @@
       }, 'Configuración del bot guardada');
 
       this.toast('Ajustes del bot guardados con éxito', 'verified');
+      this.renderMainView();
+    },
+
+    addSingleCustomRule() {
+      const inp = document.getElementById('cfg_newRuleInput');
+      const val = inp ? inp.value.trim() : '';
+      if (!val) {
+        this.toast('Escribe el texto de la regla primero', 'warning');
+        return;
+      }
+      const cleanVal = val.startsWith('-') || val.startsWith('•') ? val.replace(/^[-•*]\s*/, '').trim() : val;
+      const cfg = this.getBotConfig();
+      const currentText = document.getElementById('cfg_customAiRules')?.value || cfg.customAiRules || '';
+      const updatedText = currentText.trim() ? `${currentText.trim()}\n- ${cleanVal}` : `- ${cleanVal}`;
+
+      window.cashewSync.saveBotConfig({ customAiRules: updatedText }, 'Regla IA agregada');
+      this.toast('Regla agregada con éxito', 'verified');
+      if (inp) inp.value = '';
+      this.renderMainView();
+    },
+
+    deleteCustomRule(idx) {
+      const cfg = this.getBotConfig();
+      const currentText = document.getElementById('cfg_customAiRules')?.value || cfg.customAiRules || '';
+      const lines = currentText.split('\n').filter(l => l.trim().length > 0);
+      if (idx >= 0 && idx < lines.length) {
+        lines.splice(idx, 1);
+        const updatedText = lines.join('\n');
+        window.cashewSync.saveBotConfig({ customAiRules: updatedText }, 'Regla IA eliminada');
+        this.toast('Regla eliminada', 'verified');
+        this.renderMainView();
+      }
+    },
+
+    restoreDefaultRules() {
+      if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlater.Corp?')) return;
+      window.cashewSync.saveBotConfig({ customAiRules: this.DEFAULT_CUSTOM_RULES_TEXT }, 'Reglas IA restauradas');
+      this.toast('Reglas recomendadas restauradas', 'verified');
+      this.renderMainView();
+    },
+
+    saveCustomAiRulesOnly() {
+      const val = document.getElementById('cfg_customAiRules')?.value?.trim() || '';
+      window.cashewSync.saveBotConfig({ customAiRules: val }, 'Reglas IA actualizadas');
+      this.toast('Reglas del Asistente IA guardadas correctamente', 'verified');
       this.renderMainView();
     },
 

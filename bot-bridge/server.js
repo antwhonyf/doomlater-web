@@ -64,6 +64,16 @@ const META_APP_SECRET = process.env.META_APP_SECRET || '';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
 const GEMINI_API_KEY_ENV = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL_ENV = process.env.GEMINI_MODEL || '';
+
+/** Modelos de Gemini verificados y compatibles en orden de prioridad */
+const WORKING_GEMINI_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash'
+];
 const WA_AUTH_SECRET = process.env.WA_AUTH_SECRET || '';
 const WA_DISABLED = process.env.WA_DISABLED === '1';
 const RENDER_URL = (process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
@@ -397,18 +407,48 @@ async function checkLowStockAndAlert() {
   }
 }
 
+let cachedRate = { rate: 998, updatedAt: 0 };
+async function getLiveExchangeRate() {
+  if (Date.now() - cachedRate.updatedAt < 15 * 60 * 1000 && cachedRate.rate > 0) {
+    return cachedRate.rate;
+  }
+  try {
+    const res = await fetch('https://ve.dolarapi.com/v1/dolares', { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const data = await res.json();
+      const par = Array.isArray(data) ? data.find(d => d.fuente === 'paralelo') : null;
+      const rateVal = par ? Number(par.promedio) : (data[0] ? Number(data[0].promedio) : 0);
+      if (rateVal > 0) {
+        cachedRate = { rate: Math.round(rateVal * 100) / 100, updatedAt: Date.now() };
+        return cachedRate.rate;
+      }
+    }
+  } catch (e) {
+    logger.warn({ err: e.message }, 'No se pudo obtener tasa en vivo de dolarapi, usando fallback');
+  }
+  return cachedRate.rate || 998;
+}
+
 async function loadAdminExecutiveContext() {
-  const [walletsRaw, stockRaw, txsRaw, convsRaw] = await Promise.all([
+  const [walletsRaw, stockRaw, txsRaw, convsRaw, botConfigRaw, obligRaw, partnerSalesRaw] = await Promise.all([
     fb('GET', ws('wallets')),
     fb('GET', ws('stockItems')),
     fb('GET', ws('transactions')),
-    fb('GET', ws('botConversations'))
+    fb('GET', ws('botConversations')),
+    fb('GET', ws('meta/botConfig')),
+    fb('GET', ws('obligations')),
+    fb('GET', ws('partnerPendingRegistrations'))
   ]);
 
   const wallets = walletsRaw ? Object.values(walletsRaw).filter(w => w && !w.deleted) : [];
   const stock = stockRaw ? Object.values(stockRaw).filter(i => i && !i.deleted) : [];
   const txs = txsRaw ? Object.values(txsRaw).filter(t => t && !t.deleted) : [];
   const convs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
+  const botConfig = botConfigRaw || {};
+  const obligations = obligRaw ? Object.values(obligRaw).filter(o => o && !o.deleted) : [];
+  const partnerSales = partnerSalesRaw ? Object.values(partnerSalesRaw).filter(p => p && !p.deleted && p.status === 'pending') : [];
+
+  const exchangeRate = await getLiveExchangeRate();
 
   const walletBalances = wallets.map(w => {
     let bal = Number(w.startingBalance) || 0;
@@ -424,26 +464,74 @@ async function loadAdminExecutiveContext() {
         bal += Number(t.destinationAmount || amt);
       }
     }
+    const isBs = (
+      w.currency === 'VES' ||
+      w.currency === 'BS' ||
+      String(w.symbol || '').includes('Bs') ||
+      w.name.toLowerCase().includes('cuenta') ||
+      w.name.toLowerCase().includes('banco')
+    );
     return {
       id: w.id,
       name: w.name,
-      currency: w.currency || 'USD',
-      symbol: w.symbol || '$',
+      currency: w.currency || (isBs ? 'VES' : 'USD'),
+      symbol: w.symbol || (isBs ? 'Bs.' : '$'),
+      isBs,
       balance: bal
     };
   });
 
-  let totalUsd = 0;
+  // Totales separados: Divisas vs Bolívares
+  let totalUsdDirect = 0;
+  let totalBs = 0;
   for (const wb of walletBalances) {
-    if (wb.currency === 'USDT' || wb.currency === 'USD' || wb.name.toLowerCase().includes('usd') || wb.name.toLowerCase().includes('binance') || wb.name.toLowerCase().includes('efectivo')) {
-      totalUsd += wb.balance;
+    if (wb.isBs) {
+      totalBs += wb.balance;
+    } else {
+      totalUsdDirect += wb.balance;
     }
   }
 
+  const bsConvertedToUsdt = exchangeRate > 0 ? (totalBs / exchangeRate) : 0;
+  const grandTotalUsdt = totalUsdDirect + bsConvertedToUsdt;
+
+  // Movimientos de hoy separados por moneda
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayTxs = txs.filter(t => (t.date === todayStr || (t.createdAt && new Date(t.createdAt).toISOString().slice(0, 10) === todayStr)) && t.paid !== false);
-  const todayIncome = todayTxs.filter(t => t.type === 'income').reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const todayProfit = todayTxs.filter(t => t.type === 'income').reduce((s, t) => s + (Number(t.netProfit || t.amount) || 0), 0);
+
+  let todayIncomeUsd = 0;
+  let todayIncomeBs = 0;
+  let todayProfitUsd = 0;
+  let todayProfitBs = 0;
+
+  for (const t of todayTxs) {
+    if (t.type !== 'income') continue;
+    const amt = Number(t.amount) || 0;
+    const profit = Number(t.netProfit !== undefined ? t.netProfit : t.amount) || 0;
+    const w = walletBalances.find(wb => wb.id === t.walletId);
+    if (w && w.isBs) {
+      todayIncomeBs += amt;
+      todayProfitBs += profit;
+    } else {
+      todayIncomeUsd += amt;
+      todayProfitUsd += profit;
+    }
+  }
+
+  const todayIncomeBsConverted = exchangeRate > 0 ? (todayIncomeBs / exchangeRate) : 0;
+  const todayTotalIncomeEquivUsdt = todayIncomeUsd + todayIncomeBsConverted;
+  const todayTotalProfitEquivUsdt = todayProfitUsd + (exchangeRate > 0 ? (todayProfitBs / exchangeRate) : 0);
+
+  // Últimas 35 transacciones legibles
+  const recentTxs = txs
+    .sort((a, b) => `${b.date || ''} ${b.time || '00:00'}`.localeCompare(`${a.date || ''} ${a.time || '00:00'}`) || (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 35)
+    .map(t => {
+      const w = walletBalances.find(wb => wb.id === t.walletId);
+      const isBs = w ? w.isBs : false;
+      const cur = isBs ? 'Bs.' : '$';
+      return `- [${t.date || 'Hoy'}] ${t.type.toUpperCase()}: ${cur} ${Number(t.amount || 0).toFixed(2)} | Concepto: "${t.title || t.name || t.notes || 'Operación'}" | Cuenta: ${w ? w.name : 'Caja'}${t.netProfit !== undefined ? ` | Ganancia neta: $${Number(t.netProfit).toFixed(2)}` : ''}`;
+    });
 
   const sellables = stock.filter(i => i.kind === 'para_vender');
   const insumos = stock.filter(i => i.kind === 'insumo');
@@ -453,28 +541,43 @@ async function loadAdminExecutiveContext() {
 
   return {
     walletBalances,
-    totalUsd,
-    todayIncome,
-    todayProfit,
+    exchangeRate,
+    totalUsdDirect,
+    totalBs,
+    bsConvertedToUsdt,
+    grandTotalUsdt,
+    todayIncomeUsd,
+    todayIncomeBs,
+    todayTotalIncomeEquivUsdt,
+    todayProfitUsd,
+    todayProfitBs,
+    todayTotalProfitEquivUsdt,
     stock,
     sellables,
     insumos,
     lowStock,
     zeroStock,
-    pendingPayments
+    pendingPayments,
+    recentTxs,
+    obligations,
+    partnerSales,
+    botConfig
   };
 }
 
 function buildAdminSystemPrompt(adminCtx, partnerName) {
   const walletsSummary = adminCtx.walletBalances.map(w => {
-    const isBs = w.currency === 'VES' || w.name.toLowerCase().includes('cuenta');
-    const val = isBs ? `Bs. ${w.balance.toFixed(2)}` : `$${w.balance.toFixed(2)} ${w.currency}`;
-    return `- ${w.name}: ${val}`;
+    if (w.isBs) {
+      const equiv = adminCtx.exchangeRate > 0 ? (w.balance / adminCtx.exchangeRate).toFixed(2) : '0.00';
+      return `- ${w.name}: Bs. ${w.balance.toFixed(2)} (~$${equiv} USDT a tasa ${adminCtx.exchangeRate} Bs/$)`;
+    } else {
+      return `- ${w.name}: $${w.balance.toFixed(2)} ${w.currency}`;
+    }
   }).join('\n');
 
   const stockSummary = adminCtx.stock.map(i => {
-    const kind = i.kind === 'insumo' ? 'Insumo Taller' : 'Venta Producto';
-    return `- ${i.name} (${kind} | ${i.category || 'General'}): stock ${i.stock} unidades | precio $${Number(i.salePrice || 0).toFixed(2)} | costo compra $${Number(i.purchaseCost || 0).toFixed(2)}`;
+    const kind = i.kind === 'insumo' ? 'Insumo Taller' : 'Producto Venta';
+    return `- ${i.name} (${kind} | ${i.category || 'General'}): stock ${i.stock} uds | PVP: $${Number(i.salePrice || 0).toFixed(2)} | Costo compra: $${Number(i.purchaseCost || 0).toFixed(2)}`;
   }).join('\n');
 
   const lowStockSummary = adminCtx.lowStock.length > 0
@@ -482,58 +585,100 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
     : 'Todo el stock en niveles óptimos';
 
   const pendingSummary = adminCtx.pendingPayments.length > 0
-    ? adminCtx.pendingPayments.map(c => `- ${c.customerName || 'Cliente'} (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por ${c.pendingPaymentItem || 'Servicio/Venta'}`).join('\n')
+    ? adminCtx.pendingPayments.map(c => `- ${c.customerName || 'Cliente'} (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por "${c.pendingPaymentItem || 'Servicio/Venta'}"`).join('\n')
     : 'No hay pagos pendientes de verificar';
 
-  return `Eres el Asistente Ejecutivo Inteligente Privado de Doomlater.Corp exclusivo para el socio fundador: ${partnerName}.
-Tu función es responderle a los dueños por WhatsApp con información ejecutiva, precisa, rápida y clara sobre las finanzas, dinero acumulado, stock y estado del negocio.
-Usa formato limpio de WhatsApp: negritas (*palabra*), viñetas (•) y emojis para que se lea impecable en el teléfono.
-REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes una respuesta, reporte o lista a la mitad. Toda información solicitada debe ser 100% completa y terminar con punto final.
+  const partnerSalesSummary = adminCtx.partnerSales.length > 0
+    ? adminCtx.partnerSales.map(s => `- Venta registrada por ${s.registeredBy || 'Socio'}: ${s.detail} por $${s.amount} (${s.isBs ? 'Bs.' : 'USDT'}, cuenta ${s.targetWalletName || 'Billetera'}) esperando verificación en la web`).join('\n')
+    : 'No hay ventas de socios pendientes por verificar';
 
-=== BALANCES Y DINERO ACUMULADO EN TIEMPO REAL ===
-Total acumulado en divisas: $${adminCtx.totalUsd.toFixed(2)} USD
-Cuentas y Billeteras:
+  const recentTxsSummary = adminCtx.recentTxs.slice(0, 20).join('\n') || '(Sin transacciones recientes)';
+
+  const customRules = adminCtx.botConfig?.customAiRules ? `
+=== REGLAS DE NEGOCIO DEFINIDAS EN LA WEB ===
+${adminCtx.botConfig.customAiRules}
+` : '';
+
+  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater.Corp, interactuando en vivo por WhatsApp exclusivamente con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+
+Tu misión: Responder CUALQUIER pregunta que te haga ${partnerName} sobre la base de datos de la empresa (dinero acumulado, stock, precios, insumos, clientes, deudas, transacciones pasadas, etc.) con datos 100% exactos, precisos y sin inventar nada.
+
+REGLA CRÍTICA DE MONEDAS Y MATEMÁTICAS (NUNCA MEZCLAR BS CON USD):
+- En Venezuela existen bolívares (Bs) y divisas (USDT/USD).
+- Tasa de cambio actual en vivo estimada: ${adminCtx.exchangeRate} Bs/USD.
+- Billeteras directas en divisas (Binance USDT + Efectivo Caja): $${adminCtx.totalUsdDirect.toFixed(2)} USDT.
+- Billeteras en Bolívares (Cuentas bancarias de Sebastián y Anthony): Bs. ${adminCtx.totalBs.toFixed(2)}.
+- Conversión de los Bolívares a USDT: Bs. ${adminCtx.totalBs.toFixed(2)} / ${adminCtx.exchangeRate} = $${adminCtx.bsConvertedToUsdt.toFixed(2)} USDT.
+- GRAN TOTAL CONSOLIDADO DEL NEGOCIO: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT.
+- NUNCA sumes números de bolívares directamente a los dólares (ej: sumar 5000 Bs + $270 no da $5270, da $275.09 USDT).
+- Si el socio te pregunta "¿cuánto hay en total?" o "¿cuánta plata tenemos?", dale siempre el desglose claro y el GRAN TOTAL CONSOLIDADO en USDT explicando la conversión rápida de los Bs.
+- Si el socio te dice que te equivocaste o "sumaste mal", discúlpate con cordialidad y muestra el cálculo exacto paso a paso con la tasa del día.
+
+REGLAS DE FORMATO Y ESTILO:
+- Escribe en español latino, formato impecable de WhatsApp: negritas (*palabra*), viñetas (•) y emojis pertinentes.
+- REGLA DE CONCLUSIÓN: NUNCA dejes una respuesta, reporte o lista a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final.
+- Tono: Colega ejecutivo, proactivo, rápido, gamer, de absoluta confianza.
+
+=== ESTADO FINANCIERO Y BALANCES EN VIVO ===
+• Gran Total Consolidado en USDT: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT
+• Subtotal Divisas Directas: $${adminCtx.totalUsdDirect.toFixed(2)} USDT
+• Subtotal Bolívares: Bs. ${adminCtx.totalBs.toFixed(2)} (~$${adminCtx.bsConvertedToUsdt.toFixed(2)} USDT a ${adminCtx.exchangeRate} Bs/$)
+• Desglose por Cuentas:
 ${walletsSummary}
 
-Ingresos registrados hoy: +$${adminCtx.todayIncome.toFixed(2)} USD
-Ganancia neta registrada hoy: +$${adminCtx.todayProfit.toFixed(2)} USD
+• Ingresos hoy:
+  - En Divisas: +$${adminCtx.todayIncomeUsd.toFixed(2)} USD
+  - En Bolívares: +Bs. ${adminCtx.todayIncomeBs.toFixed(2)} (~$${(adminCtx.todayIncomeBs / (adminCtx.exchangeRate || 1)).toFixed(2)} USDT)
+  - Total equivalente hoy: +$${adminCtx.todayTotalIncomeEquivUsdt.toFixed(2)} USDT (Ganancia neta: +$${adminCtx.todayTotalProfitEquivUsdt.toFixed(2)} USDT)
 
 === INVENTARIO Y STOCK EN VIVO ===
-${stockSummary || '(No hay productos registrados en stock)'}
+${stockSummary || '(No hay productos registrados en inventario)'}
 
-=== PRODUCTOS O INSUMOS POR AGOTARSE (STOCK CRÍTICO) ===
+=== PRODUCTOS O INSUMOS POR AGOTARSE O AGOTADOS ===
 ${lowStockSummary}
 
-=== PAGOS PENDIENTES DE VERIFICACIÓN ===
+=== PAGOS DE CLIENTES PENDIENTES DE VERIFICAR ===
 ${pendingSummary}
 
-Instrucciones:
-1. Si pregunta cuánto dinero tenemos o acumulado o saldo o balance o caja: Indícale el Total Acumulado en divisas y el desglose de cada billetera/cuenta.
-2. Si pregunta por un producto específico (ej: "¿cuántos cargadores de 3ds quedan?"): Busca en la lista y dile exactamente cuántas unidades quedan, su precio de venta y su costo de compra.
-3. Si pregunta qué queda en stock: da un resumen categorizado de los productos para la venta e insumos.
-4. Si pregunta qué falta o qué está por acabarse: lista los que tienen stock bajo o agotado.
-5. Si pregunta por pagos pendientes: dile si hay clientes con comprobante en espera de verificación.
-6. Habla con confianza, tono de socio colaborador, ágil y directo.`;
+=== VENTAS REGISTRADAS POR WHATSAPP PENDIENTES DE VERIFICACIÓN EN WEB ===
+${partnerSalesSummary}
+
+=== ÚLTIMAS TRANSACCIONES EN EL SISTEMA ===
+${recentTxsSummary}
+${customRules}`;
 }
 
 function fallbackAdminRuleBased(userText, ctx, partnerName) {
   const q = String(userText || '').toLowerCase().trim();
 
-  // 1. Dinero / Saldo / Balance / Caja / Acumulado
-  if (/(dinero|plata|cuanto|cuánto|saldo|balance|caja|acumulado|cuentas|billetera)/i.test(q)) {
+  // 1. Dinero / Saldo / Balance / Caja / Acumulado / Total
+  if (/(dinero|plata|cuanto|cuánto|saldo|balance|caja|acumulado|cuentas|billetera|total)/i.test(q)) {
     const lines = [
       `💼 *Resumen Financiero Doomlater.Corp* (${partnerName})`,
-      `💵 *Total Acumulado en Divisas:* $${ctx.totalUsd.toFixed(2)} USD`,
+      `💰 *GRAN TOTAL CONSOLIDADO:* *$${ctx.grandTotalUsdt.toFixed(2)} USDT*`,
       ``,
       `*Desglose por Cuentas:*`
     ];
     for (const wb of ctx.walletBalances) {
-      const isBs = wb.currency === 'VES' || wb.name.toLowerCase().includes('cuenta');
-      const valStr = isBs ? `Bs. ${wb.balance.toFixed(2)}` : `$${wb.balance.toFixed(2)} ${wb.currency}`;
-      lines.push(`• *${wb.name}:* ${valStr}`);
+      if (wb.isBs) {
+        const equiv = ctx.exchangeRate > 0 ? (wb.balance / ctx.exchangeRate).toFixed(2) : '0.00';
+        lines.push(`• *${wb.name}:* Bs. ${wb.balance.toFixed(2)} (~$${equiv} USDT a tasa ${ctx.exchangeRate} Bs/$)`);
+      } else {
+        lines.push(`• *${wb.name}:* $${wb.balance.toFixed(2)} ${wb.currency}`);
+      }
     }
-    if (ctx.todayIncome > 0) {
-      lines.push(``, `📈 *Ingresos hoy:* +$${ctx.todayIncome.toFixed(2)} (Ganancia neta: +$${ctx.todayProfit.toFixed(2)})`);
+    lines.push(
+      ``,
+      `*Subtotales:*`,
+      `💵 Divisas directas: *$${ctx.totalUsdDirect.toFixed(2)} USDT*`,
+      `🇻🇪 Bolívares en bancos: *Bs. ${ctx.totalBs.toFixed(2)}* (equivale a *$${ctx.bsConvertedToUsdt.toFixed(2)} USDT*)`,
+      `📈 Tasa de cambio estimada: *${ctx.exchangeRate} Bs/USD*`
+    );
+    if (ctx.todayTotalIncomeEquivUsdt > 0 || ctx.todayIncomeUsd > 0 || ctx.todayIncomeBs > 0) {
+      const parts = [];
+      if (ctx.todayIncomeUsd > 0) parts.push(`$${ctx.todayIncomeUsd.toFixed(2)} USD`);
+      if (ctx.todayIncomeBs > 0) parts.push(`Bs. ${ctx.todayIncomeBs.toFixed(2)}`);
+      lines.push(``, `📈 *Ingresos hoy:* ${parts.join(' + ')} (Equivalente total: *+$${ctx.todayTotalIncomeEquivUsdt.toFixed(2)} USDT*)`);
     }
     return lines.join('\n');
   }
@@ -606,7 +751,7 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
   }
 
   // 6. Saludo / Ayuda por defecto
-  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"Vendí un cargador de 3DS en 15$"_ (lo registraré para verificación en la Web)\n• _"A las 4pm recuérdale a mi socio que entregue la Switch"_\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
+  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuánto hay en total con la conversión de Bs a USDT?"_\n• _"Vendí un cargador de 3DS en 15$"_ (lo registraré para verificación en la Web)\n• _"A las 4pm recuérdale a mi socio que entregue la Switch"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
 }
 
 async function handlePartnerCommands(userText, adminCtx, partnerName) {
@@ -638,10 +783,10 @@ async function handlePartnerCommands(userText, adminCtx, partnerName) {
 
     if (isBs) {
       if (mentionsAnthony || (partnerName === 'Anthony' && !mentionsSocio)) {
-        targetWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1'))) ||
+        targetWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1')) || w.id === 'wal_mvyqjfw2_qtw8') ||
                        wallets.find(w => w.currency === 'VES') || wallets[0];
       } else {
-        targetWallet = wallets.find(w => w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2'))) ||
+        targetWallet = wallets.find(w => w.name.toLowerCase().includes('sebasti') || w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2')) || w.id === 'w_banco') ||
                        wallets.find(w => w.currency === 'VES') || wallets[0];
       }
     } else {
@@ -845,26 +990,49 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
   const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
   if (!apiKey) return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
 
-  const models = [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-flash-latest',
-    'gemini-1.5-pro'
-  ];
+  // Construir historial multi-turno para mantener contexto completo de la conversación
+  const history = (convHistory.get(convId) || []).slice(-10);
+  const contents = [];
+  for (const h of history) {
+    if (!h.text || !h.text.trim()) continue;
+    const role = h.role === 'bot' ? 'model' : 'user';
+    if (contents.length > 0 && contents[contents.length - 1].role === role) {
+      contents[contents.length - 1].parts[0].text += '\n' + h.text;
+    } else {
+      contents.push({ role, parts: [{ text: h.text }] });
+    }
+  }
 
-  for (const model of models) {
+  // Asegurar que el último turno sea del usuario con el mensaje actual
+  if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
+    contents.push({ role: 'user', parts: [{ text: userMessage || 'Hola' }] });
+  } else if (userMessage && !contents[contents.length - 1].parts[0].text.includes(userMessage)) {
+    contents[contents.length - 1].parts[0].text += '\n' + userMessage;
+  }
+
+  // Gemini exige que el primer turno sea de usuario
+  while (contents.length > 0 && contents[0].role !== 'user') {
+    contents.shift();
+  }
+
+  const models = [
+    adminCtx?.botConfig?.geminiModel,
+    GEMINI_MODEL_ENV,
+    ...WORKING_GEMINI_MODELS
+  ].filter(Boolean);
+
+  for (const model of [...new Set(models)]) {
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          contents,
           generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
         })
       });
-      if (res.status === 404) continue;
+      if (res.status === 404 || res.status === 429) continue;
       if (!res.ok) continue;
       const data = await res.json();
       const reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
@@ -969,11 +1137,7 @@ async function queryAI(convId, userMessage, ctx) {
   const models = [
     ctx.botConfig.geminiModel,
     GEMINI_MODEL_ENV,
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-flash-latest',
-    'gemini-1.5-pro'
+    ...WORKING_GEMINI_MODELS
   ].filter(Boolean);
   for (const model of [...new Set(models)]) {
     try {
@@ -1037,12 +1201,7 @@ async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
   const cleanMime = String(mimeType || 'audio/ogg').split(';')[0].trim();
   const base64Audio = audioBuffer.toString('base64');
 
-  const models = [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-flash-latest'
-  ];
+  const models = [...WORKING_GEMINI_MODELS];
 
   for (const model of models) {
     try {
@@ -1090,12 +1249,7 @@ async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
   const cleanMime = String(mimeType || 'image/jpeg').split(';')[0].trim();
   const base64Image = imageBuffer.toString('base64');
 
-  const models = [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-flash-latest'
-  ];
+  const models = [...WORKING_GEMINI_MODELS];
 
   for (const model of models) {
     try {

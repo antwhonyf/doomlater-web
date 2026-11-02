@@ -4765,7 +4765,7 @@
           msgId: newMsg.id,
           convId: conv.id,
           platform: conv.platform,
-          to: conv.customerPhone || conv.customerJid || conv.customerPlatformId || '',
+          to: conv.customerJid || conv.customerPhone || conv.customerPlatformId || '',
           phone: conv.customerPhone || '',
           jid: conv.customerJid || '',
           text: text,

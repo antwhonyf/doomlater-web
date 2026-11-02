@@ -554,15 +554,19 @@ async function runAiReply(convId, q) {
   try {
     if (q.ctx.platform === 'whatsapp') {
       const candidateJids = [];
+      if (q.ctx.jid) candidateJids.push(q.ctx.jid);
       const cleanPhone = String(q.ctx.phone || '').replace(/\D/g, '');
-      if (cleanPhone && cleanPhone.length >= 8) candidateJids.push(`${cleanPhone}@s.whatsapp.net`);
-      if (q.ctx.jid && !candidateJids.includes(q.ctx.jid)) candidateJids.push(q.ctx.jid);
-      if (candidateJids.length === 0) candidateJids.push(q.ctx.jid);
+      if (cleanPhone && cleanPhone.length >= 8) {
+        const pnJid = `${cleanPhone}@s.whatsapp.net`;
+        if (!candidateJids.includes(pnJid)) candidateJids.push(pnJid);
+      }
+      if (candidateJids.length === 0 && q.ctx.jid) candidateJids.push(q.ctx.jid);
 
       let sentOk = false;
       let lastErr = null;
       for (const targetJid of candidateJids) {
         try {
+          await waPresence('composing', targetJid);
           await waSend(targetJid, { text: result.reply });
           await waPresence('paused', targetJid);
           sentOk = true;
@@ -1070,22 +1074,24 @@ async function resolveMediaPayload(mediaUrl, text) {
 
 function resolveWaJids(item) {
   const jids = [];
+  // 1. Explicit conversation JID (LID or group) takes HIGHEST PRIORITY
+  // because that is the exact thread the client is viewing!
+  if (item.jid && item.jid.includes('@')) {
+    jids.push(item.jid);
+  }
+  if (item.to && item.to.includes('@') && !jids.includes(item.to)) {
+    jids.push(item.to);
+  }
+  // 2. Phone number JID as alternative / fallback
   const rawPhone = item.phone || item.customerPhone || (item.to && !item.to.includes('@') ? item.to : '') || '';
   let phoneDigits = String(rawPhone || '').replace(/\D/g, '');
   if (!phoneDigits && item.convId && item.convId.startsWith('conv_wa_')) {
     const extracted = item.convId.replace('conv_wa_', '');
     if (/^\d{8,16}$/.test(extracted)) phoneDigits = extracted;
   }
-  // 1. Phone JID is the most universal and reliable destination for WhatsApp users
   if (phoneDigits && phoneDigits.length >= 8) {
-    jids.push(`${phoneDigits}@s.whatsapp.net`);
-  }
-  // 2. Explicit JID if provided (e.g. LID or group)
-  if (item.jid && item.jid.includes('@') && !jids.includes(item.jid)) {
-    jids.push(item.jid);
-  }
-  if (item.to && item.to.includes('@') && !jids.includes(item.to)) {
-    jids.push(item.to);
+    const pnJid = `${phoneDigits}@s.whatsapp.net`;
+    if (!jids.includes(pnJid)) jids.push(pnJid);
   }
   if (jids.length === 0 && item.to) {
     const d = String(item.to).replace(/\D/g, '');

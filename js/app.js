@@ -4011,11 +4011,13 @@
       const convs = this.getVisibleBotConversations();
       const attentionCount = convs.filter(c => c.needsAttention).length;
       const unreadCount = convs.reduce((acc, c) => acc + (Number(c.unreadCount) || 0), 0);
-      const total = attentionCount + unreadCount;
+      const pendingRegs = (this.activeList('partnerPendingRegistrations') || []).filter(r => !r.deleted && r.status === 'pending');
+      const total = attentionCount + unreadCount + pendingRegs.length;
       if (total > 0) {
         badge.style.display = 'inline-flex';
-        badge.textContent = attentionCount > 0 ? `⚠️ ${attentionCount}` : String(unreadCount);
-        badge.className = attentionCount > 0 ? 'nav-item-badge warn' : 'nav-item-badge';
+        const warnCount = attentionCount + pendingRegs.length;
+        badge.textContent = warnCount > 0 ? `⚠️ ${warnCount}` : String(unreadCount);
+        badge.className = warnCount > 0 ? 'nav-item-badge warn' : 'nav-item-badge';
       } else {
         badge.style.display = 'none';
       }
@@ -4425,6 +4427,173 @@
     },
 
     /* ======================================================================
+       PARTNER WHATSAPP PENDING REGISTRATIONS & DUAL APPROVAL
+       ====================================================================== */
+    renderPartnerPendingRegistrationsBannerHTML() {
+      const list = (this.activeList('partnerPendingRegistrations') || []).filter(r => !r.deleted && r.status === 'pending');
+      if (list.length === 0) return '';
+
+      return `
+        <div class="partner-pending-banner">
+          <div class="partner-pending-banner-header">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="material-symbols-rounded" style="color:#f59e0b; font-size:22px;">notification_important</span>
+              <span style="font-weight:800; font-size:14px; color:#f8fafc;">
+                Ventas Registradas por WhatsApp Pendientes de Verificación (${list.length})
+              </span>
+            </div>
+            <span style="font-size:11.5px; color:#cbd5e1;">Se requiere confirmación en la web para asentar en caja y descontar stock</span>
+          </div>
+          <div class="partner-pending-list">
+            ${list.map(reg => {
+              const registeredBy = reg.registeredByName || reg.registeredBy || 'Socio';
+              const isService = reg.type === 'servicio';
+              return `
+                <div class="partner-pending-item">
+                  <div class="partner-pending-item-main">
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap;">
+                      <span class="partner-badge ${reg.registeredBy === 'doom1' ? 'badge-doom1' : 'badge-doom2'}">
+                        @${this.escapeHtml(reg.registeredBy || 'doom1')} (${this.escapeHtml(registeredBy)})
+                      </span>
+                      <span class="partner-type-pill ${isService ? 'type-service' : 'type-sale'}">
+                        <span class="material-symbols-rounded" style="font-size:14px;">${isService ? 'build' : 'shopping_bag'}</span>
+                        ${isService ? 'Servicio Técnico' : 'Venta de Producto'}
+                      </span>
+                      <span style="font-size:11.5px; color:var(--text-muted);">
+                        ${this.escapeHtml(reg.date || '')} • ${this.escapeHtml(reg.time || '')}
+                      </span>
+                    </div>
+                    <div style="font-weight:800; font-size:15px; color:var(--text-main); margin-bottom:4px;">
+                      ${reg.qty ? reg.qty + 'x ' : ''}${this.escapeHtml(reg.itemTitle || 'Artículo')}
+                    </div>
+                    <div style="display:flex; gap:12px; font-size:12.5px; flex-wrap:wrap; color:var(--text-muted);">
+                      <span>Cobrado: <strong style="color:var(--cashew-income);">$${Number(reg.amount || 0).toFixed(2)}</strong></span>
+                      <span>Reinversión/Costo: <strong style="color:var(--cashew-expense);">-$${Number(reg.costBasis || 0).toFixed(2)}</strong></span>
+                      <span>Ganancia Neta: <strong style="color:#38bdf8;">+$${Number(reg.netProfit || 0).toFixed(2)}</strong></span>
+                      <span>Cuenta: <strong>${this.escapeHtml(reg.walletName || 'Billetera')}</strong></span>
+                    </div>
+                  </div>
+                  <div class="partner-pending-actions">
+                    <button type="button" class="btn-cashew btn-success btn-sm" onclick="CashewApp.approvePartnerRegistration('${reg.id}')" title="Aprobar venta, asentar en transacciones y descontar stock">
+                      <span class="material-symbols-rounded" style="font-size:16px;">check_circle</span>
+                      Aprobar y Sumar a Caja
+                    </button>
+                    <button type="button" class="btn-cashew btn-danger btn-sm" onclick="CashewApp.rejectPartnerRegistration('${reg.id}')" title="Descartar este registro">
+                      <span class="material-symbols-rounded" style="font-size:16px;">cancel</span>
+                      Descartar
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    },
+
+    approvePartnerRegistration(regId) {
+      const reg = (this.activeList('partnerPendingRegistrations') || []).find(r => r.id === regId);
+      if (!reg) {
+        this.toast('Registro no encontrado', 'error');
+        return;
+      }
+
+      const now = Date.now();
+      const ops = [];
+
+      // 1. Deduct stock and record Kardex movement if stockItemId exists
+      if (reg.stockItemId) {
+        const item = (this.activeList('stockItems') || []).find(i => i.id === reg.stockItemId);
+        if (item) {
+          const qty = Number(reg.qty) || 1;
+          const updatedStock = Math.max(0, (Number(item.stock) || 0) - qty);
+          ops.push({
+            collection: 'stockItems',
+            item: {
+              ...item,
+              stock: updatedStock,
+              updatedAt: now,
+              updatedBy: this.user || 'doom1'
+            }
+          });
+
+          ops.push({
+            collection: 'stockMovements',
+            item: {
+              id: 'sm_preg_' + now.toString(36),
+              stockItemId: item.id,
+              stockItemName: item.name,
+              kind: 'out',
+              qty: qty,
+              reason: reg.type === 'servicio' ? 'service_insumo' : 'sale',
+              costBasis: Number(reg.costBasis) || 0,
+              note: `Venta registrada por @${reg.registeredBy} vía WhatsApp y aprobada por @${this.user || 'socio'}`,
+              createdBy: this.user || 'doom1',
+              createdAt: now
+            }
+          });
+        }
+      }
+
+      // 2. Insert transaction in transactions table
+      const categoryId = reg.type === 'servicio' ? 'c_servicio' : 'c_ventas';
+      ops.push({
+        collection: 'transactions',
+        item: {
+          id: 'tx_preg_' + now.toString(36),
+          type: 'income',
+          title: `${reg.type === 'servicio' ? 'Servicio' : 'Venta'}: ${reg.qty > 1 ? reg.qty + 'x ' : ''}${reg.itemTitle}`,
+          amount: Number(reg.amount) || 0,
+          costBasis: Number(reg.costBasis) || 0,
+          netProfit: Number(reg.netProfit) || (Number(reg.amount) - (Number(reg.costBasis) || 0)),
+          walletId: reg.walletId,
+          categoryId: categoryId,
+          date: reg.date || new Date().toISOString().slice(0, 10),
+          time: reg.time || new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+          note: `Registrado vía WhatsApp por @${reg.registeredBy} (${reg.registeredByName || ''}) • Aprobado en Web por @${this.user || 'socio'}`,
+          author: reg.registeredBy,
+          approvedBy: this.user || 'doom1',
+          createdAt: now
+        }
+      });
+
+      // 3. Mark registration as approved
+      ops.push({
+        collection: 'partnerPendingRegistrations',
+        item: {
+          ...reg,
+          status: 'approved',
+          approvedBy: this.user || 'doom1',
+          approvedAt: now
+        }
+      });
+
+      window.cashewSync.batchUpsert(ops, `Venta de ${reg.itemTitle} aprobada por @${this.user || 'socio'}`);
+      this.toast(`¡Venta aprobada! Stock descontado y $${Number(reg.amount).toFixed(2)} sumados a ${reg.walletName || 'caja'}`, 'verified');
+      this.renderMainView();
+    },
+
+    rejectPartnerRegistration(regId) {
+      const reg = (this.activeList('partnerPendingRegistrations') || []).find(r => r.id === regId);
+      if (!reg) return;
+
+      if (!confirm(`¿Deseas descartar el registro de venta "${reg.itemTitle}" de @${reg.registeredBy}?`)) {
+        return;
+      }
+
+      const updated = {
+        ...reg,
+        status: 'rejected',
+        rejectedBy: this.user || 'doom1',
+        rejectedAt: Date.now()
+      };
+
+      window.cashewSync.upsertEntity('partnerPendingRegistrations', updated, 'Registro de venta descartado');
+      this.toast('Registro de venta descartado', 'info');
+      this.renderMainView();
+    },
+
+    /* ======================================================================
        SUB-TAB 1: INBOX MULTICANAL
        ====================================================================== */
     buildBotInboxHTML() {
@@ -4444,6 +4613,8 @@
       const attnCount = allConvs.filter(c => c.needsAttention).length;
 
       return `
+        ${this.renderPartnerPendingRegistrationsBannerHTML()}
+
         <div class="bot-inbox-grid">
           <!-- Left Column: Search, Channels & Chat List -->
           <div class="bot-inbox-sidebar ${activeConv ? 'hidden-mobile' : ''}">
@@ -5050,24 +5221,33 @@
             </div>
           </div>
 
-          <!-- SERVICIO: Insumo Selection section -->
+          <!-- SERVICIO: Insumo Selection section (Supports Multiple Insumos) -->
           <div id="vpay_insumoSection" style="display:${defaultType === 'servicio' ? 'block' : 'none'}; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
-            <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
-              Insumo de taller consumido (se descontará del stock):
-            </label>
-            <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown()">
-              ${insumos.length === 0 ? `
-                <option value="">(No hay insumos registrados en stock - se registrará sin descuento)</option>
-              ` : insumos.map(i => `
-                <option value="${i.id}" data-cost="${Number(i.purchaseCost) || 0}" data-stock="${Number(i.stock) || 0}">
-                  ${this.escapeHtml(i.name)} (Stock: ${i.stock} un. • Costo compra: $${Number(i.purchaseCost || 0).toFixed(2)})
-                </option>
-              `).join('')}
-            </select>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <label class="form-label" style="font-weight:700; font-size:12.5px; margin:0;">
+                Insumos de taller consumidos (se descontarán del stock):
+              </label>
+              <button type="button" class="btn-cashew btn-surface btn-sm" style="font-size:11.5px; padding:3px 9px;" onclick="CashewApp.addVerifyInsumoRow()">
+                <span class="material-symbols-rounded" style="font-size:15px;">add</span> Agregar Insumo
+              </button>
+            </div>
 
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
-              <span style="font-size:12px; color:var(--text-muted);">Cantidad consumida:</span>
-              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown()" />
+            <div id="vpay_insumosContainer" style="display:flex; flex-direction:column; gap:8px;">
+              <div class="vpay-insumo-row" style="display:flex; gap:8px; align-items:center;">
+                <select class="cashew-input vpay-insumo-select" style="flex:1; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown()">
+                  ${insumos.length === 0 ? `
+                    <option value="">(No hay insumos registrados en stock - se registrará sin descuento)</option>
+                  ` : insumos.map(i => `
+                    <option value="${i.id}" data-cost="${Number(i.purchaseCost) || 0}" data-stock="${Number(i.stock) || 0}">
+                      ${this.escapeHtml(i.name)} (Stock: ${i.stock} un. • Costo compra: $${Number(i.purchaseCost || 0).toFixed(2)})
+                    </option>
+                  `).join('')}
+                </select>
+                <input type="number" class="cashew-input vpay-insumo-qty" value="1" min="1" max="100" style="width:65px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown()" title="Cantidad" />
+                <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:4px;" onclick="CashewApp.removeVerifyInsumoRow(this)" title="Quitar insumo">
+                  <span class="material-symbols-rounded" style="font-size:18px;">close</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -5094,6 +5274,47 @@
 
       this.openModalHTML(bodyHtml, false);
       setTimeout(() => this.updateVerifyPaymentBreakdown(amount), 30);
+    },
+
+    addVerifyInsumoRow() {
+      const insumos = (this.activeList('stockItems') || []).filter(i => !i.deleted && i.kind === 'insumo');
+      if (insumos.length === 0) {
+        this.toast('No tienes insumos registrados en inventario', 'warning');
+        return;
+      }
+      const container = document.getElementById('vpay_insumosContainer');
+      if (!container) return;
+      const row = document.createElement('div');
+      row.className = 'vpay-insumo-row';
+      row.style.cssText = 'display:flex; gap:8px; align-items:center; animation:fadeIn 0.2s ease;';
+      row.innerHTML = `
+        <select class="cashew-input vpay-insumo-select" style="flex:1; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown()">
+          ${insumos.map(i => `
+            <option value="${i.id}" data-cost="${Number(i.purchaseCost) || 0}" data-stock="${Number(i.stock) || 0}">
+              ${this.escapeHtml(i.name)} (Stock: ${i.stock} un. • Costo: $${Number(i.purchaseCost || 0).toFixed(2)})
+            </option>
+          `).join('')}
+        </select>
+        <input type="number" class="cashew-input vpay-insumo-qty" value="1" min="1" max="100" style="width:65px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown()" title="Cantidad" />
+        <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:4px;" onclick="CashewApp.removeVerifyInsumoRow(this)" title="Quitar insumo">
+          <span class="material-symbols-rounded" style="font-size:18px;">close</span>
+        </button>
+      `;
+      container.appendChild(row);
+      this.updateVerifyPaymentBreakdown();
+    },
+
+    removeVerifyInsumoRow(btn) {
+      const container = document.getElementById('vpay_insumosContainer');
+      if (!container) return;
+      const rows = container.querySelectorAll('.vpay-insumo-row');
+      if (rows.length <= 1) {
+        this.toast('Debe haber al menos un insumo o selecciona Ingreso Libre', 'info');
+        return;
+      }
+      const row = btn.closest('.vpay-insumo-row');
+      if (row) row.remove();
+      this.updateVerifyPaymentBreakdown();
     },
 
     onVerifyOperationTypeChange(type) {
@@ -5129,15 +5350,22 @@
           label = `Costo Producto: -$${costBasis.toFixed(2)}`;
         }
       } else if (type === 'servicio') {
-        const insumoSel = document.getElementById('vpay_insumoId');
-        const qtyInp = document.getElementById('vpay_insumoQty');
-        if (insumoSel && insumoSel.selectedIndex >= 0) {
-          const opt = insumoSel.options[insumoSel.selectedIndex];
-          const cost = opt ? (Number(opt.dataset.cost) || 0) : 0;
-          const qty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
-          costBasis = cost * qty;
-          label = `Costo Insumo: -$${costBasis.toFixed(2)}`;
-        }
+        const rows = document.querySelectorAll('.vpay-insumo-row');
+        let totalCost = 0;
+        let count = 0;
+        rows.forEach(r => {
+          const sel = r.querySelector('.vpay-insumo-select');
+          const qtyInp = r.querySelector('.vpay-insumo-qty');
+          if (sel && sel.selectedIndex >= 0) {
+            const opt = sel.options[sel.selectedIndex];
+            const cost = opt ? (Number(opt.dataset.cost) || 0) : 0;
+            const qty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
+            totalCost += (cost * qty);
+            count += qty;
+          }
+        });
+        costBasis = totalCost;
+        label = `Costo Insumos (${count} un.): -$${costBasis.toFixed(2)}`;
       }
 
       const netProfit = Math.max(0, currentTotal - costBasis);
@@ -5206,45 +5434,54 @@
           }
         }
       } else if (operationType === 'servicio') {
-        const insumoId = document.getElementById('vpay_insumoId') ? document.getElementById('vpay_insumoId').value : null;
-        const insumoQty = document.getElementById('vpay_insumoQty') ? (Number(document.getElementById('vpay_insumoQty').value) || 1) : 1;
         const servCat = (this.activeList('categories') || []).find(c => c.id === 'c_servicio' || c.name?.toLowerCase().includes('servicio') || c.type === 'income') || { id: 'c_servicio' };
         categoryId = servCat.id;
 
-        if (insumoId) {
-          const insumo = (this.activeList('stockItems') || []).find(i => i.id === insumoId);
-          if (insumo) {
-            costBasis = (Number(insumo.purchaseCost) || 0) * insumoQty;
-            itemName = insumo.name;
-            const updatedStock = Math.max(0, (Number(insumo.stock) || 0) - insumoQty);
-            ops.push({
-              collection: 'stockItems',
-              item: {
-                ...insumo,
-                stock: updatedStock,
-                updatedAt: now,
-                updatedBy: this.user || 'doom1'
-              }
-            });
+        const rows = document.querySelectorAll('.vpay-insumo-row');
+        const insumoNames = [];
+        rows.forEach(r => {
+          const sel = r.querySelector('.vpay-insumo-select');
+          const qtyInp = r.querySelector('.vpay-insumo-qty');
+          const insumoId = sel ? sel.value : null;
+          const insumoQty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
 
-            // Kardex movement for workshop service
-            ops.push({
-              collection: 'stockMovements',
-              item: {
-                id: 'sm_vpay_' + now.toString(36),
-                stockItemId: insumo.id,
-                stockItemName: insumo.name,
-                kind: 'out',
-                qty: insumoQty,
-                reason: 'service_insumo',
-                costBasis: costBasis,
-                note: `Insumo usado en servicio técnico para ${conv.customerName} (${conv.platform})`,
-                createdBy: this.user || 'doom1',
-                createdAt: now
-              }
-            });
+          if (insumoId) {
+            const insumo = (this.activeList('stockItems') || []).find(i => i.id === insumoId);
+            if (insumo) {
+              const itemCost = (Number(insumo.purchaseCost) || 0) * insumoQty;
+              costBasis += itemCost;
+              insumoNames.push(`${insumoQty}x ${insumo.name}`);
+              const updatedStock = Math.max(0, (Number(insumo.stock) || 0) - insumoQty);
+              ops.push({
+                collection: 'stockItems',
+                item: {
+                  ...insumo,
+                  stock: updatedStock,
+                  updatedAt: now,
+                  updatedBy: this.user || 'doom1'
+                }
+              });
+
+              // Kardex movement for workshop service
+              ops.push({
+                collection: 'stockMovements',
+                item: {
+                  id: 'sm_vpay_' + now.toString(36) + '_' + Math.random().toString(36).slice(2, 5),
+                  stockItemId: insumo.id,
+                  stockItemName: insumo.name,
+                  kind: 'out',
+                  qty: insumoQty,
+                  reason: 'service_insumo',
+                  costBasis: itemCost,
+                  note: `Insumo consumido en servicio para ${conv.customerName} (${conv.platform})`,
+                  createdBy: this.user || 'doom1',
+                  createdAt: now
+                }
+              });
+            }
           }
-        }
+        });
+        itemName = insumoNames.join(', ');
       } else {
         // Ingreso Libre / Sin Stock
         const otherCat = (this.activeList('categories') || []).find(c => c.id === 'c_otros_ing' || c.type === 'income') || { id: 'c_otros_ing' };
@@ -5686,6 +5923,22 @@
                 </label>
               </div>
 
+              <!-- Reglas del Asistente IA & Filtros de Comportamiento -->
+              <div style="margin-top:16px;">
+                <label style="font-weight:700; font-size:13.5px; color:var(--text-main); display:flex; align-items:center; gap:8px; margin-bottom:5px;">
+                  <span class="material-symbols-rounded" style="color:var(--primary); font-size:20px;">rule</span>
+                  Reglas del Asistente IA & Filtros de Negocio (Directo en Web):
+                </label>
+                <textarea id="cfg_customAiRules" class="cashew-input" style="width:100%; height:130px; font-size:13px; line-height:1.45; font-family:inherit;" placeholder="Ejemplo:
+- No dar descuentos mayores al 5% sin consultar previamente a Anthony o al socio.
+- El horario de atención en tienda es de Lunes a Sábado de 9:00 AM a 6:00 PM.
+- Para envíos nacionales indicar que trabajamos con MRW, Zoom y Tealca asegurado.
+- Si el cliente pregunta por presupuestos grandes o combos, pedirle su nombre y decirle que Anthony o el socio le confirmarán.">${this.escapeHtml(cfg.customAiRules || '')}</textarea>
+                <span style="font-size:12px; color:var(--text-muted); display:block; margin-top:4px;">
+                  Estas reglas se inyectan como directivas estrictas en el cerebro de Gemini antes de generar cada respuesta a los clientes. Puedes actualizarlas aquí en la web en cualquier momento sin programar nada.
+                </span>
+              </div>
+
               <!-- Facebook Messenger Dedicated Redirect Message -->
               <div style="margin-top:14px;">
                 <label style="font-weight:700; font-size:13.5px; color:var(--text-main); display:block; margin-bottom:5px;">
@@ -5723,6 +5976,7 @@
       const delay = Number(document.getElementById('cfg_delay').value) || 3.5;
       const showTyping = document.getElementById('cfg_showTyping').checked;
       const showOnline = document.getElementById('cfg_showOnline').checked;
+      const customAiRules = document.getElementById('cfg_customAiRules')?.value?.trim() || '';
       const messengerMsg = document.getElementById('cfg_messengerMsg').value.trim();
       const geminiKey = document.getElementById('cfg_geminiKey').value.trim();
 
@@ -5730,6 +5984,7 @@
         typingDelaySec: delay,
         showTypingIndicator: showTyping,
         showOnlinePresence: showOnline,
+        customAiRules: customAiRules,
         messengerRedirectMessage: messengerMsg,
         geminiApiKey: geminiKey
       }, 'Configuración del bot guardada');

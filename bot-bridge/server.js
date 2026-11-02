@@ -303,11 +303,13 @@ const DEFAULT_FAQ = [
 const PARTNER_ACCOUNTS = [
   {
     name: 'Anthony',
+    profileId: 'doom1',
     phone: '584142005801',
     jids: ['268135210995915@lid', '584142005801@s.whatsapp.net']
   },
   {
     name: 'Socio',
+    profileId: 'doom2',
     phone: '584264181643',
     jids: ['584264181643@s.whatsapp.net']
   }
@@ -321,7 +323,7 @@ function isAuthorizedPartner(phoneOrJid) {
   const digits = raw.replace(/\D/g, '');
   for (const p of PARTNER_ACCOUNTS) {
     if (p.jids && p.jids.some(j => raw.includes(j.toLowerCase()))) return p;
-    if (digits && (digits.endsWith(p.phone) || p.phone.endsWith(digits) && digits.length >= 10)) return p;
+    if (digits && (digits.endsWith(p.phone) || (p.phone.endsWith(digits) && digits.length >= 10))) return p;
     if (raw.includes(p.phone)) return p;
   }
   return null;
@@ -343,6 +345,25 @@ async function notifyPartners(text, alertKey = null) {
       } catch (err) {
         logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar alerta por este JID, probando alternativo');
       }
+    }
+  }
+}
+
+async function notifySinglePartner(target, text) {
+  if (!waSock || waState !== 'connected') return;
+  const targetLower = String(target || '').toLowerCase();
+  const p = PARTNER_ACCOUNTS.find(acc =>
+    acc.name.toLowerCase() === targetLower ||
+    acc.profileId === targetLower ||
+    acc.phone.includes(targetLower)
+  );
+  if (!p) return;
+  for (const jid of p.jids) {
+    try {
+      await waSend(jid, { text });
+      break;
+    } catch (err) {
+      logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar mensaje directo al socio');
     }
   }
 }
@@ -582,10 +603,242 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
   }
 
   // 6. Saludo / Ayuda por defecto
-  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes preguntarme por WhatsApp:\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
+  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"Vendí un cargador de 3DS en 15$"_ (lo registraré para verificación en la Web)\n• _"A las 4pm recuérdale a mi socio que entregue la Switch"_\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
+}
+
+async function handlePartnerCommands(userText, adminCtx, partnerName) {
+  const text = String(userText || '').trim();
+  const lower = text.toLowerCase();
+
+  // 1. REGISTRAR VENTA O COBRO POR WHATSAPP
+  if (/(vend[ií]|se vendi[oó]|vendimos|registra(?:r)? venta|anota(?:r)? venta|cobr[eé]|cobramos)/i.test(lower)) {
+    // Detect Amount
+    const amtMatch = text.match(/(?:\$|bs\.?|usd)?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:\$|usd|d[oó]lares|bs\.?|bol[ií]vares)?/i);
+    let amount = amtMatch ? parseFloat(amtMatch[1].replace(',', '.')) : 0;
+    if (amount <= 0) {
+      const bareMatch = text.match(/(?:en|por)\s+(\d+(?:[.,]\d{1,2})?)/i);
+      if (bareMatch) amount = parseFloat(bareMatch[1].replace(',', '.'));
+    }
+
+    // Detect Quantity
+    let qty = 1;
+    const qtyMatch = text.match(/(\d+)\s*(?:unidades?|uds?|piezas?|cargadores?|pantallas?|consolas?|juegos?)/i);
+    if (qtyMatch) qty = parseInt(qtyMatch[1], 10) || 1;
+
+    // Detect Currency & Target Wallet
+    const isBs = /(bs|bol[ií]vares|pago m[oó]vil|pagomovil)/i.test(lower);
+    const mentionsAnthony = /(anthony|m[ií]a|mio|doom1)/i.test(lower);
+    const mentionsSocio = /(socio|doom2)/i.test(lower);
+
+    let targetWallet = null;
+    const wallets = adminCtx.walletBalances || [];
+
+    if (isBs) {
+      if (mentionsAnthony || (partnerName === 'Anthony' && !mentionsSocio)) {
+        targetWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1'))) ||
+                       wallets.find(w => w.currency === 'VES') || wallets[0];
+      } else {
+        targetWallet = wallets.find(w => w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2'))) ||
+                       wallets.find(w => w.currency === 'VES') || wallets[0];
+      }
+    } else {
+      targetWallet = wallets.find(w => w.name.toLowerCase().includes('conjunt') || w.name.toLowerCase().includes('$') || w.currency === 'USD' || w.currency === 'USDT') || wallets[0];
+    }
+
+    if (!targetWallet) targetWallet = { id: 'w_usd_main', name: 'Cuenta Conjunta ($)', currency: 'USD' };
+
+    // Search matching item in stock
+    const cleanItemName = text
+      .replace(/(?:vend[ií]|se vendi[oó]|vendimos|registra(?:r)? venta|anota(?:r)? venta|cobr[eé]|cobramos)/gi, '')
+      .replace(/(?:en|por|a|de|un|una|el|la|los|las|\$|usd|d[oó]lares|bs\.?|bol[ií]vares|\d+(?:[.,]\d{1,2})?)/gi, '')
+      .replace(/(?:cuenta|billetera|socio|anthony|m[ií]a|m[ií]o|conjunta)/gi, '')
+      .trim();
+
+    const queryWords = cleanItemName.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+    let matchedItem = null;
+    let bestScore = 0;
+
+    for (const it of adminCtx.stock) {
+      const itName = String(it.name || '').toLowerCase();
+      let score = 0;
+      for (const w of queryWords) {
+        if (itName.includes(w)) score += 2;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        matchedItem = it;
+      }
+    }
+
+    if (amount <= 0 && matchedItem) {
+      amount = (Number(matchedItem.salePrice) || 40) * qty;
+    }
+    if (amount <= 0) amount = 40.00;
+
+    const unitCost = matchedItem ? (Number(matchedItem.purchaseCost) || 0) : 0;
+    const costBasis = unitCost * qty;
+    const netProfit = Math.max(0, amount - costBasis);
+    const itemTitle = matchedItem ? matchedItem.name : (cleanItemName || 'Artículo de tienda');
+
+    const regId = 'reg_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    const registeredBy = partnerName === 'Anthony' ? 'doom1' : 'doom2';
+    const targetReviewer = partnerName === 'Anthony' ? 'doom2' : 'doom1';
+    const nowIso = new Date().toISOString();
+    const todayDate = nowIso.slice(0, 10);
+    const nowTime = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+    const regData = {
+      id: regId,
+      registeredBy,
+      registeredByName: partnerName,
+      targetReviewer,
+      type: matchedItem && matchedItem.kind === 'insumo' ? 'servicio' : 'venta',
+      itemTitle,
+      stockItemId: matchedItem ? matchedItem.id : null,
+      qty,
+      amount,
+      costBasis,
+      netProfit,
+      walletId: targetWallet.id,
+      walletName: targetWallet.name,
+      currency: targetWallet.currency || 'USD',
+      date: todayDate,
+      time: nowTime,
+      createdAt: Date.now(),
+      status: 'pending'
+    };
+
+    await fb('PUT', ws(`partnerPendingRegistrations/${regId}`), regData);
+    await touchMeta(`Venta registrada por @${partnerName} vía WhatsApp`);
+
+    // Notify the other partner directly on WhatsApp
+    const alertOther = `🔔 *DOOMLATER: Venta por Confirmar*\n\n` +
+      `Tu socio *${partnerName}* (@${registeredBy}) registró por WhatsApp:\n` +
+      `• *Artículo:* ${qty}x *${itemTitle}*\n` +
+      `• *Cobrado:* $${amount.toFixed(2)} (${targetWallet.name})\n` +
+      `• *Ganancia Neta:* +$${netProfit.toFixed(2)} (Costo: -$${costBasis.toFixed(2)})\n` +
+      `• *Fecha/Hora:* ${todayDate} a las ${nowTime}\n\n` +
+      `👉 _Entra a la Web para verificarla y sumarla a las transacciones oficiales._`;
+    notifySinglePartner(targetReviewer, alertOther).catch(() => {});
+
+    return `✅ *¡Venta registrada exitosamente @${partnerName}!* 🛍️\n\n` +
+      `• *Artículo:* ${qty}x *${itemTitle}*\n` +
+      `• *Monto Cobrado:* $${amount.toFixed(2)}\n` +
+      `• *Costo de Reinversión:* -$${costBasis.toFixed(2)}\n` +
+      `• *Ganancia Neta:* *+$${netProfit.toFixed(2)}*\n` +
+      `• *Destino:* ${targetWallet.name}\n` +
+      `• *Fecha y Hora:* ${todayDate} a las ${nowTime}\n\n` +
+      `⏳ *Pendiente de verificación:* Tu socio @${targetReviewer} debe entrar a la Web para verificar y asentar la transacción en caja y stock.`;
+  }
+
+  // 2. PROGRAMAR RECORDATORIO A SOCIO
+  if (/(recu[eé]rdale|recuerda a mi socio|av[ií]sale|dile a mi socio|recordatorio)/i.test(lower)) {
+    const targetPartner = partnerName === 'Anthony' ? 'Socio' : 'Anthony';
+    const targetPhone = partnerName === 'Anthony' ? '584264181643' : '584142005801';
+    const targetJid = `${targetPhone}@s.whatsapp.net`;
+
+    let reminderText = text
+      .replace(/(?:recu[eé]rdale|recuerda a mi socio|av[ií]sale|dile a mi socio|a mi socio que|que)/gi, '')
+      .replace(/(?:a las \d+(?::\d+)?\s*(?:am|pm)?|en \d+\s*(?:horas?|minutos?)|mañana)/gi, '')
+      .trim();
+    if (!reminderText) reminderText = 'Revisar pendientes de Doomlater.Corp';
+
+    let delayMs = 30 * 60 * 1000;
+    let timeLabel = 'en 30 minutos';
+
+    const minMatch = lower.match(/en\s+(\d+)\s*min/);
+    if (minMatch) {
+      const m = parseInt(minMatch[1], 10) || 30;
+      delayMs = m * 60 * 1000;
+      timeLabel = `en ${m} minuto(s)`;
+    }
+
+    const hrMatch = lower.match(/en\s+(\d+)\s*hora/);
+    if (hrMatch) {
+      const h = parseInt(hrMatch[1], 10) || 1;
+      delayMs = h * 3600 * 1000;
+      timeLabel = `en ${h} hora(s)`;
+    }
+
+    const atTimeMatch = lower.match(/a las\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    let triggerAt = Date.now() + delayMs;
+    if (atTimeMatch) {
+      let hours = parseInt(atTimeMatch[1], 10);
+      const mins = atTimeMatch[2] ? parseInt(atTimeMatch[2], 10) : 0;
+      const meridiem = atTimeMatch[3] ? atTimeMatch[3].toLowerCase() : null;
+      if (meridiem === 'pm' && hours < 12) hours += 12;
+      if (meridiem === 'am' && hours === 12) hours = 0;
+
+      const d = new Date();
+      d.setHours(hours, mins, 0, 0);
+      if (d.getTime() <= Date.now()) {
+        d.setDate(d.getDate() + 1);
+      }
+      triggerAt = d.getTime();
+      timeLabel = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    const remId = 'rem_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    const remData = {
+      id: remId,
+      from: partnerName,
+      fromProfile: partnerName === 'Anthony' ? 'doom1' : 'doom2',
+      to: targetPartner,
+      toPhone: targetPhone,
+      toJid: targetJid,
+      text: reminderText,
+      triggerAt,
+      timeStr: timeLabel,
+      createdAt: Date.now(),
+      sent: false
+    };
+
+    await fb('PUT', ws(`partnerReminders/${remId}`), remData);
+    await touchMeta(`Recordatorio programado para @${targetPartner}`);
+
+    return `⏰ *¡Recordatorio programado!* 🔔\n\nA las *${timeLabel}* le enviaré este mensaje por WhatsApp a tu socio @${targetPartner}:\n\n` +
+      `👉 "${reminderText}"`;
+  }
+
+  return null;
+}
+
+async function checkPartnerReminders() {
+  if (!isOwner || !waSock || waState !== 'connected') return;
+  try {
+    const raw = await fb('GET', ws('partnerReminders'));
+    if (!raw || typeof raw !== 'object') return;
+    const now = Date.now();
+    for (const [key, rem] of Object.entries(raw)) {
+      if (!rem || rem.sent || !rem.triggerAt) continue;
+      if (now >= Number(rem.triggerAt)) {
+        rem.sent = true;
+        rem.sentAt = now;
+        await fb('PATCH', ws(`partnerReminders/${key}`), { sent: true, sentAt: now });
+
+        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
+        const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
+        await waSend(destJid, { text: msgText });
+
+        const confirmSender = `✅ *Recordatorio entregado:* Ya le envié el mensaje a tu socio @${rem.to}:\n"${rem.text}"`;
+        notifySinglePartner(rem.from, confirmSender).catch(() => {});
+        await touchMeta(`Recordatorio entregado a @${rem.to}`);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Error al procesar recordatorios de socios');
+  }
 }
 
 async function queryAdminAI(convId, userMessage, adminCtx, partnerName) {
+  // Primero revisa si es un comando ejecutable directo (venta o recordatorio)
+  try {
+    const commandReply = await handlePartnerCommands(userMessage, adminCtx, partnerName);
+    if (commandReply) return { reply: commandReply, isPayment: false, needsHuman: false };
+  } catch (cmdErr) {
+    logger.error({ err: cmdErr.message }, 'Error procesando comando de socio');
+  }
+
   const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
   if (!apiKey) return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
 
@@ -633,18 +886,24 @@ async function loadAiContext() {
   };
 }
 
-function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq }) {
+function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {} }) {
   const stock = stockItems
     .filter(i => !i.deleted && (i.kind === 'para_vender' || i.kind === 'insumo'))
     .map(i => `- ${i.name}: stock ${i.stock} | precio $${Number(i.salePrice || i.purchaseCost || 0).toFixed(2)}${i.extraDetail || i.notes ? ` | ${i.extraDetail || i.notes}` : ''}`)
     .join('\n');
   const faq = knowledgeBaseFaq.map(f => `P: ${f.question}\nR: ${f.answer}`).join('\n\n');
   const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
+
+  const customRules = botConfig.customAiRules ? `
+=== REGLAS Y FILTROS ESTRICTOS DEFINIDOS POR LOS DUEÑOS EN LA WEB ===
+${botConfig.customAiRules}
+` : '';
+
   return `Eres el asistente oficial de atención al cliente de Doomlater.Corp.
 Nos especializamos en consolas de videojuegos (PlayStation, Nintendo, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
 Responde siempre en español, con tono amable, cálido, profesional y conciso (máximo 3-4 frases).
 No digas que eres una IA salvo que te lo pregunten directamente.
-
+${customRules}
 === INFORMACIÓN Y PREGUNTAS FRECUENTES ===
 ${faq}
 
@@ -1141,9 +1400,11 @@ async function handleWaMessage(msg, type) {
   if (!ctype || WA_IGNORED.has(ctype)) return;
 
   const tsMs = (Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000;
-  // Solo mensajes nuevos (nunca responder al historial antiguo al vincular)
-  if (type !== 'notify' && !msg.key.fromMe) return;
-  if (Date.now() - tsMs > 3 * 60 * 1000) return;
+  // Solo mensajes nuevos entrantes (nunca responder al historial antiguo al vincular)
+  if (!msg.key.fromMe) {
+    if (type !== 'notify') return;
+    if (Date.now() - tsMs > 3 * 60 * 1000) return;
+  }
 
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
   const phone = pnJid ? pnJid.split('@')[0].split(':')[0] : '';
@@ -1153,12 +1414,45 @@ async function handleWaMessage(msg, type) {
   const text = caption ? (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption) : (label || '[Mensaje]');
   const msgId = `bmsg_wa_${safeId(msg.key.id)}`;
 
-  // Mensajes que TÚ escribes desde el teléfono: se guardan en el inbox (no los que envió el bot)
+  // Mensajes que Tú o tu socio escriben desde la aplicación de WhatsApp (móvil):
+  // Se reflejan de inmediato en la Web y en Firebase
   if (msg.key.fromMe) {
     if (botSentIds.has(msg.key.id)) return;
-    const existing = await fb('GET', ws(`botConversations/${convId}`));
-    if (!existing) return;
-    await recordOutgoing(convId, { id: msgId, text, sentBy: 'Teléfono' });
+
+    let mediaKey = null;
+    if (ctype === 'imageMessage' || ctype === 'stickerMessage') {
+      try {
+        const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: silentLogger, reuploadRequest: waSock?.updateMediaMessage });
+        mediaKey = await saveMedia(msgId, content[ctype]?.mimetype || 'image/jpeg', buffer);
+      } catch (err) {}
+    }
+
+    let existing = await fb('GET', ws(`botConversations/${convId}`));
+    if (!existing) {
+      existing = {
+        id: convId,
+        platform: 'whatsapp',
+        platformAccount: 'shared',
+        customerName: phone ? `+${phone}` : 'Cliente WhatsApp',
+        customerPhone: phone ? `+${phone}` : '',
+        customerJid: jid,
+        botActive: false, // El operador humano tomó el control desde el teléfono
+        needsAttention: false,
+        unreadCount: 0,
+        createdAt: tsMs || Date.now()
+      };
+      await fb('PUT', ws(`botConversations/${convId}`), existing);
+    }
+
+    await recordOutgoing(convId, {
+      id: msgId,
+      text,
+      sentBy: 'WhatsApp (Móvil)',
+      deliveryStatus: 'sent',
+      mediaKey
+    }, {
+      botActive: false
+    });
     return;
   }
 
@@ -1665,6 +1959,7 @@ app.listen(PORT, async () => {
   setInterval(() => processOutbox().catch(() => {}), 3000);
   setInterval(() => backupAuthNow().catch(() => {}), 30000);
   setInterval(() => checkLowStockAndAlert().catch(() => {}), 5 * 60 * 1000);
+  setInterval(() => checkPartnerReminders().catch(() => {}), 20000);
 
   // Render (plan gratis) se duerme tras 15 min sin tráfico: nos auto-visitamos cada 10 min.
   if (RENDER_URL) {

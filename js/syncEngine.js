@@ -34,7 +34,9 @@
     'goals',
     'obligations',
     'botConversations',
-    'botMessages'
+    'botMessages',
+    'partnerPendingRegistrations',
+    'partnerReminders'
   ];
 
   const clientId = 'cl_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);

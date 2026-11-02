@@ -292,6 +292,8 @@ window.createInitialSeedState = function () {
 
     botConversations: [],
     botMessages: [],
+    partnerPendingRegistrations: [],
+    partnerReminders: [],
     botConfig: {
       typingDelaySec: 3.5,
       showTypingIndicator: true,

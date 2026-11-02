@@ -3,3 +3,4 @@ baileys_auth/
 .env
 .DS_Store
 Thumbs.db
+scratch/

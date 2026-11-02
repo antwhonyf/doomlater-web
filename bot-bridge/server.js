@@ -859,6 +859,16 @@ Cuando ${partnerName} te pida en lenguaje natural que le envíes algo a su socio
 
 El servidor interceptará estas órdenes automáticamente, generará el PDF y/o enviará el mensaje al WhatsApp del socio (+584264181643 para Sebastián o +584142005801 para Anthony), y le confirmará a ${partnerName}.
 
+REGISTRO DE TRANSACCIONES DIRECTO AL DASHBOARD EN TIEMPO REAL:
+Tanto Anthony (@doom1) como Sebastián (@doom2) pueden agregar transacciones directamente al dashboard contable mediante notas de voz (audio) o mensajes de texto.
+Los datos necesarios son:
+1. Título / Concepto
+2. Monto
+3. Moneda (USD, USDT o Bs.)
+4. Descripción
+5. Fecha (hoy o fecha específica) y Hora (a la que se acordó o se empezó a hablar)
+El servidor intercepta y procesa estas transacciones en tiempo real (<100ms) asentándolas bajo el perfil del socio correspondiente. Si el socio solo dice que quiere registrar una transacción sin dar los datos, indícale amablemente los datos requeridos y anímalo a enviarte una sola nota de voz con todo.
+
 === ESTADO FINANCIERO Y BALANCES EN VIVO ===
 • Gran Total Consolidado en USDT: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT
 • Subtotal Divisas Directas: $${adminCtx.totalUsdDirect.toFixed(2)} USDT
@@ -990,133 +1000,427 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
     }
   }
 
-  // 6. Saludo / Ayuda por defecto
-  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuánto hay en total con la conversión de Bs a USDT?"_\n• _"Vendí un cargador de 3DS en 15$"_ (lo registraré para verificación en la Web)\n• _"A las 4pm recuérdale a mi socio que entregue la Switch"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
+// 6. Saludo / Ayuda por defecto
+  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater.Corp listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"Agrega una transacción al dashboard"_ (puedes dictarme o escribirme título, monto, moneda, descripción y hora)\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuánto hay en total con la conversión de Bs a USDT?"_\n• _"Pásame el estado de cuenta en PDF"_\n• _"Envíale un mensaje de estados de cuenta a mi socio"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_`;
 }
 
-async function handlePartnerCommands(userText, adminCtx, partnerName) {
+/**
+ * Borradores en memoria para recopilación paso a paso de transacciones de socios.
+ */
+const partnerTxDrafts = new Map();
+
+/**
+ * Extractor inteligente de datos de transacción con Gemini 3.5 Flash.
+ */
+async function extractTransactionWithGemini(userText, partnerName, apiKey, existingDraft = null) {
+  if (!userText || !apiKey) return null;
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const timeNowStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const draftContext = existingDraft ? `
+Borrador previo en proceso:
+- Título actual: ${existingDraft.title || 'Pendiente'}
+- Monto actual: ${existingDraft.amount || 'Pendiente'}
+- Moneda actual: ${existingDraft.currency || 'Pendiente'}
+- Descripción actual: ${existingDraft.description || 'Pendiente'}
+- Fecha actual: ${existingDraft.date || 'Pendiente'}
+- Hora actual: ${existingDraft.time || 'Pendiente'}
+` : '';
+
+  const prompt = `Eres el asistente contable oficial de Doomlater.Corp. Tu misión es extraer los datos necesarios para registrar una transacción directamente en el dashboard financiero de la Web.
+Socio que envía el mensaje o audio: @${partnerName}.
+Fecha de hoy (referencia): ${todayStr}.
+Hora actual (referencia): ${timeNowStr}.
+${draftContext}
+
+Mensaje o transcripción del socio:
+"${userText}"
+
+Analiza si el socio quiere registrar o agregar una transacción (o si está completando los datos de una).
+Extrae los campos:
+1. "title": Título claro y conciso del concepto (ej: "Venta de Cargador 3DS", "Mantenimiento PS5", "Venta Nintendo Switch", "Compra de Insumos"). Si no se deduce aún, pon null.
+2. "amount": Monto numérico mayor a 0 (ej: 15, 45, 120.5). Si no se indica, pon null.
+3. "currency": "USD" si son dólares / efectivo, "USDT" si es Binance / cripto, o "VES" si son bolívares / pago móvil. Si no dice moneda, asume "USD".
+4. "type": "income" (ingreso, venta o cobro) o "expense" (gasto, compra o pago).
+5. "description": Descripción o nota explicativa (cliente, detalles de la venta o trabajo).
+6. "date": Fecha en formato YYYY-MM-DD. Si dice "hoy", "la de hoy" o no menciona fecha distinta, pon "${todayStr}".
+7. "time": Hora en formato HH:mm (24h). Si el socio menciona la hora a la que se pactó o se empezó a hablar (ej: "a las 2:30", "a las 11 am", "a las 3 de la tarde"), conviértela a 24h. Si no menciona hora, pon "${timeNowStr}".
+8. "wallet": "efectivo" | "binance" | "bs" | null.
+
+Devuelve ÚNICAMENTE un JSON válido (sin formato markdown ni \`\`\`):
+{
+  "isTransactionIntent": true o false,
+  "readyToCreate": true o false (debe ser true si se cuenta con al menos un monto válido > 0 y un título entendible),
+  "title": string o null,
+  "amount": number o null,
+  "currency": "USD" | "USDT" | "VES",
+  "type": "income" | "expense",
+  "description": string o null,
+  "date": string,
+  "time": string,
+  "wallet": string o null,
+  "missingFields": ["titulo", "monto", "moneda", "descripcion"]
+}
+
+Si el mensaje no tiene ninguna relación con registrar o agregar una transacción, responde:
+{"isTransactionIntent": false, "readyToCreate": false}`;
+
+  const models = [...WORKING_GEMINI_MODELS];
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+        })
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const rawText = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extractor de respaldo por reglas y expresiones regulares.
+ */
+function fallbackExtractTransaction(userText, partnerName, existingDraft = null) {
+  const text = String(userText || '').trim();
+  const lower = text.toLowerCase();
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const timeNowStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const isTx = /(transacci[oó]n|agregar|registrar|asentar|vend[ií]|cobr[eé]|ingreso|gasto)/i.test(lower) || Boolean(existingDraft);
+  if (!isTx) return { isTransactionIntent: false, readyToCreate: false };
+
+  // Monto
+  let amount = existingDraft?.amount || null;
+  const amtMatch = text.match(/(?:\$|bs\.?|usd)?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:\$|usd|d[oó]lares|bs\.?|bol[ií]vares)?/i);
+  if (amtMatch) amount = parseFloat(amtMatch[1].replace(',', '.'));
+
+  // Moneda
+  let currency = existingDraft?.currency || 'USD';
+  if (/(bs|bol[ií]vares|pago m[oó]vil|pagomovil)/i.test(lower)) currency = 'VES';
+  else if (/(usdt|binance|tether)/i.test(lower)) currency = 'USDT';
+  else if (/(\$|usd|d[oó]lar|efectivo)/i.test(lower)) currency = 'USD';
+
+  // Tipo
+  const type = /(gasto|compra|pagu[eé]|pagamos)/i.test(lower) ? 'expense' : 'income';
+
+  // Hora
+  let time = existingDraft?.time || timeNowStr;
+  const timeMatch = text.match(/(?:a\s*las|hora)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1], 10);
+    const m = timeMatch[2] ? timeMatch[2] : '00';
+    const ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    time = `${String(h).padStart(2, '0')}:${m}`;
+  }
+
+  // Título
+  let title = existingDraft?.title || null;
+  if (!title) {
+    const titleMatch = text.match(/(?:t[ií]tulo|concepto)[:\s]+([^,\n\.]+)/i);
+    if (titleMatch) {
+      title = titleMatch[1].trim();
+    } else {
+      const clean = text
+        .replace(/(?:agrega|registra|asienta|nueva|un|una|transacci[oó]n|al\s*dashboard|por\s*whatsapp|vend[ií]|cobr[eé])/gi, '')
+        .replace(/(?:\$|bs\.?|usd)?\s*\d+(?:[.,]\d{1,2})?\s*(?:\$|usd|d[oó]lares|bs\.?|bol[ií]vares)?/gi, '')
+        .replace(/(?:hoy|la\s*de\s*hoy|a\s*las\s*\d+.*)/gi, '')
+        .trim();
+      if (clean.length >= 3) title = clean.charAt(0).toUpperCase() + clean.slice(1);
+    }
+  }
+
+  // Descripción
+  let description = existingDraft?.description || '';
+  const descMatch = text.match(/(?:descripci[oó]n|detalle|nota)[:\s]+([^,\n]+)/i);
+  if (descMatch) description = descMatch[1].trim();
+  else if (!description) description = title || 'Transacción registrada vía WhatsApp';
+
+  const readyToCreate = Boolean(amount && amount > 0 && title && title.length >= 3);
+  return {
+    isTransactionIntent: true,
+    readyToCreate,
+    title,
+    amount,
+    currency,
+    type,
+    description,
+    date: todayStr,
+    time,
+    wallet: currency === 'VES' ? 'bs' : (currency === 'USDT' ? 'binance' : 'efectivo'),
+    missingFields: readyToCreate ? [] : ['titulo', 'monto']
+  };
+}
+
+/**
+ * Crea la transacción directamente en Firebase Realtime Database para que
+ * aparezca reflejada al instante (<100ms) en el Dashboard de la Web.
+ */
+async function executeCreateTransactionInDashboard({
+  partnerName,
+  title,
+  amount,
+  currency,
+  type = 'income',
+  description = '',
+  date = null,
+  time = null,
+  walletNameOrId = null,
+  matchedStockItem = null,
+  qty = 1
+}) {
+  const isAnthony = partnerName === 'Anthony';
+  const profileUser = isAnthony ? 'doom1' : 'doom2';
+  const profileId = isAnthony ? 'profile_1' : 'profile_2';
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const timeNowStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const finalDate = (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) ? date : todayStr;
+  const finalTime = (time && /^\d{1,2}:\d{2}$/.test(time)) ? time : timeNowStr;
+  const finalAmount = Math.abs(Number(amount)) || 0;
+  const finalCur = String(currency || 'USD').toUpperCase();
+  const isBs = finalCur === 'VES' || finalCur === 'BS' || finalCur.includes('BOL');
+
+  // Match wallet in Firebase
+  const walletsRaw = await fb('GET', ws('wallets'));
+  const wallets = walletsRaw ? Object.values(walletsRaw).filter(w => w && !w.deleted) : [];
+
+  let chosenWallet = null;
+  if (walletNameOrId) {
+    const qW = String(walletNameOrId).toLowerCase();
+    chosenWallet = wallets.find(w => w.id === walletNameOrId || w.name.toLowerCase().includes(qW));
+  }
+
+  if (!chosenWallet) {
+    if (isBs) {
+      if (isAnthony) {
+        chosenWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1'))) ||
+                       wallets.find(w => w.currency === 'VES');
+      } else {
+        chosenWallet = wallets.find(w => w.name.toLowerCase().includes('sebasti') || w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2'))) ||
+                       wallets.find(w => w.currency === 'VES');
+      }
+    } else if (finalCur === 'USDT' || String(walletNameOrId || '').toLowerCase().includes('binance')) {
+      chosenWallet = wallets.find(w => w.currency === 'USDT' || w.name.toLowerCase().includes('binance'));
+    } else {
+      chosenWallet = wallets.find(w => w.name.toLowerCase().includes('efectivo') || w.name.toLowerCase().includes('$') || w.currency === 'USD');
+    }
+  }
+
+  if (!chosenWallet && wallets.length > 0) chosenWallet = wallets[0];
+  const walletId = chosenWallet ? chosenWallet.id : 'w_efectivo';
+  const walletName = chosenWallet ? chosenWallet.name : 'Efectivo Caja ($)';
+  const curSymbol = isBs ? 'Bs.' : '$';
+
+  // Category mapping
+  let categoryId = 'c_ventas';
+  const lowerTitle = (title || '').toLowerCase();
+  if (type === 'expense') {
+    categoryId = lowerTitle.includes('insumo') ? 'c_insumos' : (lowerTitle.includes('envio') || lowerTitle.includes('delivery') ? 'c_envios' : 'c_operativo');
+  } else if (lowerTitle.includes('servicio') || lowerTitle.includes('mantenimiento') || lowerTitle.includes('reparac') || lowerTitle.includes('cambio') || lowerTitle.includes('pantalla')) {
+    categoryId = 'c_servicio';
+  } else {
+    categoryId = 'c_ventas';
+  }
+
+  const txId = 'tx_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+  const txData = {
+    id: txId,
+    title: title || 'Transacción registrada por WhatsApp',
+    amount: finalAmount,
+    type: type || 'income',
+    categoryId,
+    walletId,
+    date: finalDate,
+    time: finalTime,
+    paid: true,
+    note: description ? `${description} (Registrado vía WhatsApp por @${profileUser})` : `Registrado vía WhatsApp por @${profileUser}`,
+    createdBy: profileUser,
+    updatedBy: profileUser,
+    profileId,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+
+  const patchUpdates = {
+    [`transactions/${txId}`]: txData,
+    'meta/updatedAt': Date.now(),
+    'meta/rev': Date.now(),
+    'meta/lastLabel': `Transacción "${txData.title}" creada por @${profileUser}`,
+    'meta/lastClientId': 'bot_bridge',
+    'meta/updatedBy': profileUser
+  };
+
+  // Si coincide con un artículo del stock, descontar inventario y registrar movimiento de kardex
+  if (matchedStockItem && type === 'income') {
+    const currentStock = Number(matchedStockItem.stock) || 0;
+    const newStock = Math.max(0, currentStock - (qty || 1));
+    patchUpdates[`stockItems/${matchedStockItem.id}/stock`] = newStock;
+    patchUpdates[`stockItems/${matchedStockItem.id}/updatedAt`] = Date.now();
+
+    const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
+    patchUpdates[`stockMovements/${smId}`] = {
+      id: smId,
+      stockItemId: matchedStockItem.id,
+      stockItemName: matchedStockItem.name,
+      type: 'out',
+      quantity: qty || 1,
+      reason: 'sale',
+      notes: `Venta registrada por WhatsApp por @${profileUser}`,
+      date: finalDate,
+      time: finalTime,
+      createdBy: profileUser,
+      createdAt: Date.now()
+    };
+  }
+
+  await fb('PATCH', ROOT, patchUpdates);
+
+  // Notificar al otro socio de inmediato por WhatsApp
+  const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+  const otherAlert = `📊 *DOOMLATER: Nueva Transacción en Dashboard*\n\n` +
+    `Tu socio *${partnerName}* (@${profileUser}) acaba de registrar en tiempo real:\n` +
+    `• *Título:* ${txData.title}\n` +
+    `• *Monto:* ${curSymbol} ${finalAmount.toFixed(2)} ${finalCur} (${walletName})\n` +
+    `• *Fecha/Hora:* ${finalDate} a las ${finalTime}\n` +
+    `• *Detalle:* ${description || 'Registrado directamente por WhatsApp'}\n\n` +
+    `✨ _Ya aparece reflejada en tiempo real en la Web._`;
+  notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+
+  return {
+    success: true,
+    tx: txData,
+    walletName,
+    curSymbol,
+    finalCur,
+    profileUser
+  };
+}
+
+async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = null) {
   const text = String(userText || '').trim();
   const lower = text.toLowerCase();
 
-  // 1. REGISTRAR VENTA O COBRO POR WHATSAPP
-  if (/(vend[ií]|se vendi[oó]|vendimos|registra(?:r)? venta|anota(?:r)? venta|cobr[eé]|cobramos)/i.test(lower)) {
-    // Detect Amount
-    const amtMatch = text.match(/(?:\$|bs\.?|usd)?\s*(\d+(?:[.,]\d{1,2})?)\s*(?:\$|usd|d[oó]lares|bs\.?|bol[ií]vares)?/i);
-    let amount = amtMatch ? parseFloat(amtMatch[1].replace(',', '.')) : 0;
-    if (amount <= 0) {
-      const bareMatch = text.match(/(?:en|por)\s+(\d+(?:[.,]\d{1,2})?)/i);
-      if (bareMatch) amount = parseFloat(bareMatch[1].replace(',', '.'));
+  // 0. CANCELAR TRANSACCIÓN EN CURSO SI EL SOCIO LO SOLICITA
+  if (partnerTxDrafts.has(partnerName) && /(cancelar|olv[ií]dalo|no\s*importa|deja\s*eso|ya\s*no)/i.test(lower)) {
+    partnerTxDrafts.delete(partnerName);
+    return `❌ *Registro de transacción cancelado.* Cuando desees agregar una nueva transacción al dashboard, solo dímelo por aquí.`;
+  }
+
+  // 1. REGISTRAR O AGREGAR TRANSACCIONES AL DASHBOARD EN TIEMPO REAL
+  const hasActiveDraft = partnerTxDrafts.has(partnerName);
+  const isTxIntent = hasActiveDraft ||
+    /(?:transacci[oó]n|agregar\s+transacci[oó]n|registrar\s+transacci[oó]n|nueva\s+transacci[oó]n|asentar|meter\s+transacci[oó]n|anota(?:r)?\s+transacci[oó]n|vend[ií]|se vendi[oó]|vendimos|cobr[eé]|cobramos|ingreso|gasto)/i.test(lower);
+
+  if (isTxIntent) {
+    const activeDraft = partnerTxDrafts.get(partnerName) || null;
+    let extracted = await extractTransactionWithGemini(userText, partnerName, apiKey, activeDraft);
+    if (!extracted || typeof extracted !== 'object') {
+      extracted = fallbackExtractTransaction(userText, partnerName, activeDraft);
     }
 
-    // Detect Quantity
-    let qty = 1;
-    const qtyMatch = text.match(/(\d+)\s*(?:unidades?|uds?|piezas?|cargadores?|pantallas?|consolas?|juegos?)/i);
-    if (qtyMatch) qty = parseInt(qtyMatch[1], 10) || 1;
+    if (extracted && extracted.isTransactionIntent) {
+      const isAnthony = partnerName === 'Anthony';
+      const profileUser = isAnthony ? 'doom1' : 'doom2';
 
-    // Detect Currency & Target Wallet
-    const isBs = /(bs|bol[ií]vares|pago m[oó]vil|pagomovil)/i.test(lower);
-    const mentionsAnthony = /(anthony|m[ií]a|mio|doom1)/i.test(lower);
-    const mentionsSocio = /(socio|doom2)/i.test(lower);
+      // Combinar con borrador previo si existía
+      if (activeDraft) {
+        if (!extracted.title && activeDraft.title) extracted.title = activeDraft.title;
+        if ((!extracted.amount || extracted.amount <= 0) && activeDraft.amount) extracted.amount = activeDraft.amount;
+        if (!extracted.currency && activeDraft.currency) extracted.currency = activeDraft.currency;
+        if (!extracted.description && activeDraft.description) extracted.description = activeDraft.description;
+        if (!extracted.date && activeDraft.date) extracted.date = activeDraft.date;
+        if (!extracted.time && activeDraft.time) extracted.time = activeDraft.time;
+        if (!extracted.wallet && activeDraft.wallet) extracted.wallet = activeDraft.wallet;
+        if (extracted.amount > 0 && extracted.title) extracted.readyToCreate = true;
+      }
 
-    let targetWallet = null;
-    const wallets = adminCtx.walletBalances || [];
+      if (extracted.readyToCreate && extracted.amount > 0 && extracted.title) {
+        partnerTxDrafts.delete(partnerName);
 
-    if (isBs) {
-      if (mentionsAnthony || (partnerName === 'Anthony' && !mentionsSocio)) {
-        targetWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1')) || w.id === 'wal_mvyqjfw2_qtw8') ||
-                       wallets.find(w => w.currency === 'VES') || wallets[0];
+        // Buscar coincidencia de artículo de stock para rebajar inventario
+        let matchedStock = null;
+        const queryWords = (extracted.title || '').toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+        let bestScore = 0;
+        for (const it of adminCtx.stock || []) {
+          const itName = String(it.name || '').toLowerCase();
+          let score = 0;
+          for (const w of queryWords) {
+            if (itName.includes(w)) score += 2;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            matchedStock = it;
+          }
+        }
+
+        const res = await executeCreateTransactionInDashboard({
+          partnerName,
+          title: extracted.title,
+          amount: extracted.amount,
+          currency: extracted.currency || 'USD',
+          type: extracted.type || 'income',
+          description: extracted.description || '',
+          date: extracted.date,
+          time: extracted.time,
+          walletNameOrId: extracted.wallet,
+          matchedStockItem: bestScore >= 4 ? matchedStock : null,
+          qty: 1
+        });
+
+        const stockNote = (bestScore >= 4 && matchedStock)
+          ? `\n📦 *Stock actualizado:* Se descontó 1 ud de *${matchedStock.name}* (Quedan: ${Math.max(0, (Number(matchedStock.stock) || 0) - 1)} uds).`
+          : '';
+
+        const nowIso = new Date().toISOString().slice(0, 10);
+        const isToday = res.tx.date === nowIso;
+
+        return `✅ *¡Transacción Registrada en el Dashboard en Tiempo Real!* 📊\n\n` +
+          `👤 *Creada desde perfil:* @${res.profileUser} (${partnerName})\n` +
+          `🏷️ *Título:* ${res.tx.title}\n` +
+          `💰 *Monto:* ${res.curSymbol} ${res.tx.amount.toFixed(2)} ${res.finalCur}\n` +
+          `🏦 *Billetera / Cuenta:* ${res.walletName}\n` +
+          `📅 *Fecha:* ${res.tx.date} ${isToday ? '(Hoy)' : ''}\n` +
+          `⏰ *Hora:* ${res.tx.time} ${extracted.time ? '(Hora acordada)' : '(Hora actual)'}\n` +
+          `📝 *Descripción:* ${extracted.description || res.tx.title}${stockNote}\n\n` +
+          `✨ _El dashboard de la Web se actualizó al instante en vivo sin recargar la página._`;
       } else {
-        targetWallet = wallets.find(w => w.name.toLowerCase().includes('sebasti') || w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2')) || w.id === 'w_banco') ||
-                       wallets.find(w => w.currency === 'VES') || wallets[0];
-      }
-    } else {
-      targetWallet = wallets.find(w => w.name.toLowerCase().includes('conjunt') || w.name.toLowerCase().includes('$') || w.currency === 'USD' || w.currency === 'USDT') || wallets[0];
-    }
+        // Guardar borrador y pedir campos faltantes
+        partnerTxDrafts.set(partnerName, {
+          ...activeDraft,
+          ...extracted,
+          startedAt: Date.now()
+        });
 
-    if (!targetWallet) targetWallet = { id: 'w_usd_main', name: 'Cuenta Conjunta ($)', currency: 'USD' };
+        const hasAmount = extracted.amount && extracted.amount > 0;
+        const hasTitle = extracted.title && extracted.title.length > 2;
 
-    // Search matching item in stock
-    const cleanItemName = text
-      .replace(/(?:vend[ií]|se vendi[oó]|vendimos|registra(?:r)? venta|anota(?:r)? venta|cobr[eé]|cobramos)/gi, '')
-      .replace(/(?:en|por|a|de|un|una|el|la|los|las|\$|usd|d[oó]lares|bs\.?|bol[ií]vares|\d+(?:[.,]\d{1,2})?)/gi, '')
-      .replace(/(?:cuenta|billetera|socio|anthony|m[ií]a|m[ií]o|conjunta)/gi, '')
-      .trim();
-
-    const queryWords = cleanItemName.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
-    let matchedItem = null;
-    let bestScore = 0;
-
-    for (const it of adminCtx.stock) {
-      const itName = String(it.name || '').toLowerCase();
-      let score = 0;
-      for (const w of queryWords) {
-        if (itName.includes(w)) score += 2;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        matchedItem = it;
+        return `📋 *Registro de Nueva Transacción en el Dashboard:*\n\n` +
+          `¡Listo @${partnerName}! Para registrar la transacción en tiempo real a tu perfil (@${profileUser}), indícame:\n\n` +
+          `1️⃣ *Título:* (ej: Venta de Control PS5 o Reparación de Switch)${hasTitle ? ` 👉 *Captado:* ${extracted.title}` : ''}\n` +
+          `2️⃣ *Monto:* (ej: $40 o Bs. 4000)${hasAmount ? ` 👉 *Captado:* $${extracted.amount}` : ''}\n` +
+          `3️⃣ *Moneda:* (USD, USDT o Bs.)\n` +
+          `4️⃣ *Descripción:* (detalle del cliente, trabajo o producto)\n` +
+          `5️⃣ *Fecha y Hora:* (¿Es con fecha de hoy y a qué hora se acordó?)\n\n` +
+          `🎙️ *Tip de audio:* ¡Puedes enviarme una sola *nota de voz* con todos estos datos juntos y el bot la creará en el dashboard al instante!`;
       }
     }
-
-    if (amount <= 0 && matchedItem) {
-      amount = (Number(matchedItem.salePrice) || 40) * qty;
-    }
-    if (amount <= 0) amount = 40.00;
-
-    const unitCost = matchedItem ? (Number(matchedItem.purchaseCost) || 0) : 0;
-    const costBasis = unitCost * qty;
-    const netProfit = Math.max(0, amount - costBasis);
-    const itemTitle = matchedItem ? matchedItem.name : (cleanItemName || 'Artículo de tienda');
-
-    const regId = 'reg_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-    const registeredBy = partnerName === 'Anthony' ? 'doom1' : 'doom2';
-    const targetReviewer = partnerName === 'Anthony' ? 'doom2' : 'doom1';
-    const nowIso = new Date().toISOString();
-    const todayDate = nowIso.slice(0, 10);
-    const nowTime = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-
-    const regData = {
-      id: regId,
-      registeredBy,
-      registeredByName: partnerName,
-      targetReviewer,
-      type: matchedItem && matchedItem.kind === 'insumo' ? 'servicio' : 'venta',
-      itemTitle,
-      stockItemId: matchedItem ? matchedItem.id : null,
-      qty,
-      amount,
-      costBasis,
-      netProfit,
-      walletId: targetWallet.id,
-      walletName: targetWallet.name,
-      currency: targetWallet.currency || 'USD',
-      date: todayDate,
-      time: nowTime,
-      createdAt: Date.now(),
-      status: 'pending'
-    };
-
-    await fb('PUT', ws(`partnerPendingRegistrations/${regId}`), regData);
-    await touchMeta(`Venta registrada por @${partnerName} vía WhatsApp`);
-
-    // Notify the other partner directly on WhatsApp
-    const alertOther = `🔔 *DOOMLATER: Venta por Confirmar*\n\n` +
-      `Tu socio *${partnerName}* (@${registeredBy}) registró por WhatsApp:\n` +
-      `• *Artículo:* ${qty}x *${itemTitle}*\n` +
-      `• *Cobrado:* $${amount.toFixed(2)} (${targetWallet.name})\n` +
-      `• *Ganancia Neta:* +$${netProfit.toFixed(2)} (Costo: -$${costBasis.toFixed(2)})\n` +
-      `• *Fecha/Hora:* ${todayDate} a las ${nowTime}\n\n` +
-      `👉 _Entra a la Web para verificarla y sumarla a las transacciones oficiales._`;
-    notifySinglePartner(targetReviewer, alertOther).catch(() => {});
-
-    return `✅ *¡Venta registrada exitosamente @${partnerName}!* 🛍️\n\n` +
-      `• *Artículo:* ${qty}x *${itemTitle}*\n` +
-      `• *Monto Cobrado:* $${amount.toFixed(2)}\n` +
-      `• *Costo de Reinversión:* -$${costBasis.toFixed(2)}\n` +
-      `• *Ganancia Neta:* *+$${netProfit.toFixed(2)}*\n` +
-      `• *Destino:* ${targetWallet.name}\n` +
-      `• *Fecha y Hora:* ${todayDate} a las ${nowTime}\n\n` +
-      `⏳ *Pendiente de verificación:* Tu socio @${targetReviewer} debe entrar a la Web para verificar y asentar la transacción en caja y stock.`;
   }
 
   // 2. GENERAR Y ENVIAR PDF LOCAL AL SOCIO QUE LO SOLICITA
@@ -1295,9 +1599,11 @@ async function checkPartnerReminders() {
 }
 
 async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAttachment = null) {
-  // Primero revisa si es un comando ejecutable directo (venta, recordatorio, pdf local o mensaje a socio)
+  const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
+
+  // Primero revisa si es un comando ejecutable directo (transacción al dashboard, recordatorio, pdf local o mensaje a socio)
   try {
-    const commandReply = await handlePartnerCommands(userMessage, adminCtx, partnerName);
+    const commandReply = await handlePartnerCommands(userMessage, adminCtx, partnerName, apiKey);
     if (commandReply) {
       if (typeof commandReply === 'object' && commandReply.reply) {
         return { reply: commandReply.reply, pdfAttachment: commandReply.pdfAttachment || null, isPayment: false, needsHuman: false };
@@ -1308,7 +1614,6 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
     logger.error({ err: cmdErr.message }, 'Error procesando comando de socio');
   }
 
-  const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
   if (!apiKey) {
     return { reply: fallbackAdminRuleBased(userMessage, adminCtx, partnerName), isPayment: false, needsHuman: false };
   }

@@ -344,8 +344,10 @@ function isAuthorizedPartner(phoneOrJid) {
 async function notifyPartners(text, alertKey = null) {
   if (!waSock || waState !== 'connected') return;
   if (alertKey) {
+    const isPaymentAlert = String(alertKey).startsWith('pay_');
+    const cooldownMs = isPaymentAlert ? 30 * 1000 : (15 * 60 * 1000);
     const last = partnerAlertCooldown.get(alertKey) || 0;
-    if (Date.now() - last < 15 * 60 * 1000) return; // Cooldown de 15 min para evitar alertas repetidas
+    if (Date.now() - last < cooldownMs) return; // Cooldown de 30s para pagos, 15 min para otras alertas
     partnerAlertCooldown.set(alertKey, Date.now());
   }
 
@@ -1313,6 +1315,72 @@ async function executeCreateTransactionInDashboard({
   };
 }
 
+/**
+ * Localiza con máxima precisión un artículo en el inventario/stock según el texto del socio.
+ * Tolera singular/plural (cargador/cargadores, memoria/memorias), acentos, modelos (3ds, oled, hwfly, ps5)
+ * y frases completas como "mira se vendió un cargador de 3ds del stock".
+ */
+function findMatchingStockItem(rawText, stockList) {
+  if (!rawText || !Array.isArray(stockList) || stockList.length === 0) return null;
+  const clean = String(rawText || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim();
+
+  const stopWords = new Set([
+    'mira', 'se', 'vendio', 'vendi', 'vendimos', 'vendo', 'venta', 'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas',
+    'stock', 'apartado', 'tienda', 'taller', 'conseguimos', 'consegui', 'traje', 'trajimos', 'llegaron', 'llego', 'compre', 'compramos',
+    'entran', 'entraron', 'resta', 'quita', 'descuenta', 'por', 'para', 'en', 'al', 'uds', 'unidad', 'unidades', 'piezas', 'dolares', 'bolivares',
+    'hoy', 'ayer', 'ahorita', 'favor', 'porfa', 'doom1', 'doom2', 'socio', 'hermano', 'amigo'
+  ]);
+
+  const rawWords = clean.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
+  if (rawWords.length === 0) return null;
+
+  let bestItem = null;
+  let bestScore = 0;
+
+  for (const it of stockList) {
+    if (!it || !it.name || it.deleted) continue;
+    const itClean = String(it.name || '').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ');
+    const itWords = itClean.split(/\s+/).filter(w => w.length >= 2);
+
+    let score = 0;
+
+    for (const w of rawWords) {
+      if (itWords.includes(w)) {
+        score += 5;
+        if (['3ds', 'dsi', 'ds', 'oled', 'switch', 'ps5', 'ps4', 'hwfly', 'rpi', 'adata', 'microsd', 'sd'].includes(w)) {
+          score += 4;
+        }
+      } else {
+        const matchPartial = itWords.some(iw => {
+          if (iw.startsWith(w) || w.startsWith(iw)) return true;
+          if (w.endsWith('s') && iw === w.slice(0, -1)) return true;
+          if (iw.endsWith('s') && w === iw.slice(0, -1)) return true;
+          if (w.endsWith('es') && iw === w.slice(0, -2)) return true;
+          if (iw.endsWith('es') && w === iw.slice(0, -2)) return true;
+          return false;
+        });
+        if (matchPartial) {
+          score += 3;
+        }
+      }
+    }
+
+    if (itClean.includes(clean)) score += 10;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestItem = it;
+    }
+  }
+
+  return bestScore >= 4 ? bestItem : null;
+}
+
 async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = null) {
   const text = String(userText || '').trim();
   const lower = text.toLowerCase();
@@ -1365,99 +1433,305 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `👉 *Ahora entra a la sección "Bot & Inbox" en la Web:* Verás tu chat con la etiqueta *⚠️ Alerta* y abajo la tarjeta dorada con el botón *[Verificar Pago]*. Al darle clic podrás probar la selección de insumos múltiples, la cuenta destino y la suma a caja en tiempo real.`;
   }
 
-  // 0.B. AJUSTE DIRECTO DE STOCK VÍA WHATSAPP (AUMENTAR O QUITAR/RESTAR STOCK)
-  const isStockAdd = /(?:llegaron|entraron|ingresaron|agrega(?:r)?\s+(?:al\s*stock|\d+)|suma(?:r)?\s+(?:al\s*stock|\d+)|aumenta(?:r)?\s+(?:al\s*stock|\d+))/i.test(lower);
-  const isStockSub = /(?:resta(?:r)?|quita(?:r)?|descuenta|descontar|disminuye|disminuir)\s+(?:del?\s*stock|\d+)/i.test(lower);
+  // 0.B. VENTA DIRECTA DE STOCK (SIMULACIÓN DEL BOTÓN "Confirmar Venta y Sumar a Finanzas")
+  const isSaleIntent = /(?:se\s*vendi[oó]|vend[ií]|vendimos|sali[oó]\s*(?:del?\s*stock)?|despach(?:amos|aron|[eé])|confirmar\s*venta|venta\s+de)\b/i.test(lower);
+  const matchedStockSale = isSaleIntent ? findMatchingStockItem(text, adminCtx.stock) : null;
 
-  if ((isStockAdd || isStockSub) && !partnerTxDrafts.has(partnerName)) {
+  if (matchedStockSale) {
+    partnerTxDrafts.delete(partnerName);
+    const isAnthony = partnerName === 'Anthony';
+    const profileUser = isAnthony ? 'doom1' : 'doom2';
+    const profileId = isAnthony ? 'profile_1' : 'profile_2';
+
+    // 1. Cantidad a vender (por defecto 1 ud si dice "un cargador", "cargador", o número específico)
+    let qty = 1;
+    const qtyMatch = text.match(/\b(\d+)\s*(?:uds?|unidades?|piezas?)?\b/i);
+    if (qtyMatch) {
+      const q = parseInt(qtyMatch[1], 10);
+      if (!isNaN(q) && q > 0 && q <= 1000) qty = q;
+    }
+
+    // 2. Precio de venta unitario ($)
+    let unitPriceUSD = Number(matchedStockSale.salePrice) || 0;
+    if (unitPriceUSD <= 0) unitPriceUSD = 5.0; // Respaldo seguro
+    const priceMatch = text.match(/(?:en|por|a|precio(?:\s*de)?)\s*(?:\$|bs\.?|usd)?\s*(\d+(?:[.,]\d+)?)\s*(?:\$|usd|usdt|bs\.?|bol[ií]vares)?/i);
+    if (priceMatch && priceMatch[1]) {
+      const p = parseFloat(priceMatch[1].replace(',', '.'));
+      if (!isNaN(p) && p > 0 && p < 100000) unitPriceUSD = p;
+    }
+
+    // 3. Moneda y Cuenta destino
+    const isBs = /(?:bs|bol[ií]vares|pago\s*m[oó]vil|pagomovil)/i.test(lower);
+    const isUsdt = /(?:usdt|binance|cripto)/i.test(lower);
+    const isEfectivo = /(?:efectivo|cash|f[ií]sico)/i.test(lower);
+
+    const walletsRaw = await fb('GET', ws('wallets'));
+    const wallets = walletsRaw ? Object.values(walletsRaw).filter(w => w && !w.deleted) : [];
+
+    let chosenWallet = null;
+    if (isBs) {
+      if (isAnthony) {
+        chosenWallet = wallets.find(w => w.name.toLowerCase().includes('anthony') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom1'))) ||
+                       wallets.find(w => w.currency === 'VES');
+      } else {
+        chosenWallet = wallets.find(w => w.name.toLowerCase().includes('sebasti') || w.name.toLowerCase().includes('socio') || (w.currency === 'VES' && w.name.toLowerCase().includes('doom2'))) ||
+                       wallets.find(w => w.currency === 'VES');
+      }
+    } else if (isUsdt) {
+      chosenWallet = wallets.find(w => w.currency === 'USDT' || w.name.toLowerCase().includes('binance'));
+    } else if (isEfectivo) {
+      chosenWallet = wallets.find(w => w.name.toLowerCase().includes('efectivo') || w.name.toLowerCase().includes('$') || w.currency === 'USD');
+    }
+
+    if (!chosenWallet) {
+      chosenWallet = wallets.find(w => w.currency === 'USDT' || w.name.toLowerCase().includes('binance')) ||
+                     wallets.find(w => w.currency === 'USD') ||
+                     wallets[0];
+    }
+
+    const curStock = Number(matchedStockSale.stock) || 0;
+    const newStock = Math.max(0, curStock - qty);
+    const unitCostUSD = (Number(matchedStockSale.purchaseCost) || 0) + (Number(matchedStockSale.extraCost) || 0);
+    const totalSaleUSD = qty * unitPriceUSD;
+    const totalCostUSD = qty * unitCostUSD;
+    const netProfitUSD = totalSaleUSD - totalCostUSD;
+
+    const rate = adminCtx.exchangeRate || 998;
+    const txAmount = isBs ? Math.round(totalSaleUSD * rate * 100) / 100 : totalSaleUSD;
+    const costBasis = isBs ? Math.round(totalCostUSD * rate * 100) / 100 : totalCostUSD;
+    const curSymbol = isBs ? 'Bs.' : '$';
+    const curCode = isBs ? 'VES' : (isUsdt ? 'USDT' : 'USD');
+    const walletName = chosenWallet ? chosenWallet.name : (isBs ? 'Cuenta Bs' : 'Binance (USDT)');
+    const walletId = chosenWallet ? chosenWallet.id : (isBs ? (isAnthony ? 'w_bs_anthony' : 'w_bs_socio') : 'w_binance');
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
+    const txId = 'tx_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+
+    const patchUpdates = {
+      [`stockItems/${matchedStockSale.id}/stock`]: newStock,
+      [`stockItems/${matchedStockSale.id}/updatedAt`]: Date.now(),
+      [`stockItems/${matchedStockSale.id}/updatedBy`]: profileUser,
+      [`stockMovements/${smId}`]: {
+        id: smId,
+        stockId: matchedStockSale.id,
+        stockItemId: matchedStockSale.id,
+        itemName: matchedStockSale.name,
+        stockItemName: matchedStockSale.name,
+        action: 'venta',
+        type: 'out',
+        reason: 'sale',
+        quantity: qty,
+        qtyChange: -qty,
+        newStock,
+        unitPrice: unitPriceUSD,
+        profit: netProfitUSD,
+        note: `Venta de ${qty} ud(s) vía WhatsApp por @${profileUser}`,
+        date: dateStr,
+        time: timeStr,
+        createdBy: profileUser,
+        createdAt: Date.now()
+      },
+      [`transactions/${txId}`]: {
+        id: txId,
+        title: `Venta (${qty}x) ${matchedStockSale.name}`,
+        amount: txAmount,
+        type: 'income',
+        categoryId: 'c_ventas',
+        walletId,
+        date: dateStr,
+        time: timeStr,
+        paid: true,
+        stockId: matchedStockSale.id,
+        costBasis,
+        note: `Venta de ${qty} ud(s) • Costo: $${totalCostUSD.toFixed(2)} USD • Ganancia neta: +$${netProfitUSD.toFixed(2)} USD (Confirmada vía WhatsApp por @${profileUser})`,
+        createdBy: profileUser,
+        updatedBy: profileUser,
+        profileId,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      'meta/updatedAt': Date.now(),
+      'meta/rev': Date.now(),
+      'meta/lastLabel': `Venta ${qty}x ${matchedStockSale.name} confirmada por @${profileUser}`,
+      'meta/lastClientId': 'bot_bridge',
+      'meta/updatedBy': profileUser
+    };
+
+    await fb('PATCH', ROOT, patchUpdates);
+
+    // Notificar al otro socio de inmediato
+    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+    const otherAlert = `🛍️ *DOOMLATER: Venta de Stock Confirmada*\n\n` +
+      `Tu socio *${partnerName}* (@${profileUser}) acaba de confirmar la venta en vivo:\n` +
+      `• *Producto:* ${matchedStockSale.name}\n` +
+      `• *Cantidad:* ${qty} ud(s)\n` +
+      `• *Total venta:* ${curSymbol} ${txAmount.toFixed(2)} ${curCode}\n` +
+      `• *Ganancia neta:* +$${netProfitUSD.toFixed(2)} USD\n` +
+      `• *Cuenta:* ${walletName}\n` +
+      `• *Stock restante:* ${newStock} uds disponibles\n\n` +
+      `✨ _Sumado a finanzas y descontado del inventario en vivo._`;
+    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+
+    return `🛍️ *¡Venta de Stock Confirmada y Sumada a Finanzas!* 🟢\n\n` +
+      `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
+      `📦 *Producto:* *${matchedStockSale.name}*\n` +
+      `🔢 *Cantidad:* ${qty} ud(s)\n` +
+      `💰 *Total Cobrado:* *${curSymbol} ${txAmount.toFixed(2)} ${curCode}*\n` +
+      `🏷️ *Costo Insumo (Reinversión):* $${totalCostUSD.toFixed(2)} USD\n` +
+      `📈 *Ganancia Neta:* *+$${netProfitUSD.toFixed(2)} USD*\n` +
+      `🏦 *Cuenta destino:* ${walletName}\n` +
+      `📊 *Stock restante:* *${newStock}* unidad(es) disponible(s)\n` +
+      `📅 *Fecha y Hora:* ${dateStr} a las ${timeStr}\n\n` +
+      `✨ _Simulación idéntica al botón [Confirmar Venta y Sumar a Finanzas]. El inventario, Kardex y la transacción de ingreso ya están reflejados en vivo en la Web._`;
+  }
+
+  // 0.C. REPOSICIÓN / AUMENTO DE STOCK ("conseguimos", "traje", "llegaron", "compré", "entran", "agrega al stock", "suma al stock")
+  const isRestockIntent = /(?:consegu(?:imos|í|e)|traj(?:e|imos)|lleg(?:aron|ó)|compr(?:é|amos)|entr(?:aron|ó)|agreg(?:ar?|a)|sum(?:ar?|a)|reposici[oó]n|aument(?:ar?|a))\b/i.test(lower);
+  const matchedStockRestock = isRestockIntent ? findMatchingStockItem(text, adminCtx.stock) : null;
+
+  if (matchedStockRestock) {
+    partnerTxDrafts.delete(partnerName);
     const isAnthony = partnerName === 'Anthony';
     const profileUser = isAnthony ? 'doom1' : 'doom2';
 
-    let deltaSign = isStockAdd ? 1 : -1;
     let qty = 1;
-
     const numMatch = text.match(/\b(\d+)\b/);
     if (numMatch) {
-      qty = parseInt(numMatch[1], 10) || 1;
+      const q = parseInt(numMatch[1], 10);
+      if (!isNaN(q) && q > 0 && q <= 5000) qty = q;
     }
 
-    const rawQuery = text
-      .replace(/(?:agrega(?:r)?|suma(?:r)?|llegaron|entraron|ingresaron|aumenta(?:r)?|resta(?:r)?|quita(?:r)?|descuenta|descontar|disminuye|disminuir)/gi, '')
-      .replace(/(?:al\s*stock|del\s*stock|en\s*stock|de\s*stock|stock)/gi, '')
-      .replace(/\b\d+\s*(?:uds?|unidades?|piezas?)?\b/gi, '')
-      .replace(/(?:de|del|un|una|unos|unas|para)\b/gi, '')
-      .trim();
+    const curStock = Number(matchedStockRestock.stock) || 0;
+    const newStock = curStock + qty;
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-    if (rawQuery.length >= 2) {
-      const qWords = rawQuery.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
-      let bestItem = null;
-      let bestScore = 0;
+    const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
+    const patchUpdates = {
+      [`stockItems/${matchedStockRestock.id}/stock`]: newStock,
+      [`stockItems/${matchedStockRestock.id}/updatedAt`]: Date.now(),
+      [`stockItems/${matchedStockRestock.id}/updatedBy`]: profileUser,
+      [`stockMovements/${smId}`]: {
+        id: smId,
+        stockId: matchedStockRestock.id,
+        stockItemId: matchedStockRestock.id,
+        itemName: matchedStockRestock.name,
+        stockItemName: matchedStockRestock.name,
+        action: 'reposicion',
+        type: 'in',
+        reason: 'restock',
+        quantity: qty,
+        qtyChange: qty,
+        newStock,
+        notes: `Reposición de ${qty} ud(s) registrada por WhatsApp (@${profileUser})`,
+        date: dateStr,
+        time: timeStr,
+        createdBy: profileUser,
+        createdAt: Date.now()
+      },
+      'meta/updatedAt': Date.now(),
+      'meta/rev': Date.now(),
+      'meta/lastLabel': `Stock "${matchedStockRestock.name}" aumentado (+${qty}) por @${profileUser}`,
+      'meta/lastClientId': 'bot_bridge',
+      'meta/updatedBy': profileUser
+    };
 
-      for (const it of adminCtx.stock || []) {
-        const itName = String(it.name || '').toLowerCase();
-        let score = 0;
-        for (const w of qWords) {
-          if (itName.includes(w)) score += 3;
-        }
-        if (itName.includes(rawQuery.toLowerCase())) score += 8;
-        if (score > bestScore) {
-          bestScore = score;
-          bestItem = it;
-        }
-      }
+    await fb('PATCH', ROOT, patchUpdates);
 
-      if (bestItem && bestScore >= 3) {
-        const curStock = Number(bestItem.stock) || 0;
-        const finalDelta = deltaSign * qty;
-        const newStock = Math.max(0, curStock + finalDelta);
+    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+    const otherAlert = `📦 *DOOMLATER: Reposición de Stock en Tiempo Real*\n\n` +
+      `Tu socio *${partnerName}* (@${profileUser}) añadió inventario:\n` +
+      `• *Artículo:* ${matchedStockRestock.name}\n` +
+      `• *Cantidad añadida:* +${qty} ud(s)\n` +
+      `• *Stock anterior:* ${curStock} uds\n` +
+      `• *Nuevo stock disponible:* *${newStock}* unidad(es)\n\n` +
+      `🌐 _Reflejado en vivo en la Web sin recargar._`;
+    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
 
-        const patchUpdates = {
-          [`stockItems/${bestItem.id}/stock`]: newStock,
-          [`stockItems/${bestItem.id}/updatedAt`]: Date.now(),
-          [`stockItems/${bestItem.id}/updatedBy`]: profileUser,
-          'meta/updatedAt': Date.now(),
-          'meta/rev': Date.now(),
-          'meta/lastLabel': `Stock "${bestItem.name}" modificado (${finalDelta > 0 ? '+' : ''}${finalDelta}) por @${profileUser}`,
-          'meta/lastClientId': 'bot_bridge',
-          'meta/updatedBy': profileUser
-        };
+    return `📦 *¡Stock Aumentado con Éxito!* ✅\n\n` +
+      `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
+      `• *Artículo:* *${matchedStockRestock.name}*\n` +
+      `• *Cantidad añadida:* *+${qty}* ud(s)\n` +
+      `• *Stock anterior:* ${curStock} uds\n` +
+      `• *Nuevo stock disponible:* *${newStock}* unidad(es)\n\n` +
+      `🌐 _Actualizado en tiempo real en la Web y registrado en el Kardex._`;
+  }
 
-        const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
-        patchUpdates[`stockMovements/${smId}`] = {
-          id: smId,
-          stockItemId: bestItem.id,
-          stockItemName: bestItem.name,
-          type: finalDelta > 0 ? 'in' : 'out',
-          quantity: Math.abs(finalDelta),
-          reason: finalDelta > 0 ? 'restock' : 'adjustment',
-          notes: `${finalDelta > 0 ? 'Ingreso / Reposición' : 'Salida / Ajuste'} de stock registrado por WhatsApp (@${profileUser})`,
-          date: new Date().toISOString().slice(0, 10),
-          time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false }),
-          createdBy: profileUser,
-          createdAt: Date.now()
-        };
+  // 0.D. DESCUENTO / AJUSTE DE STOCK ("resta", "quita", "descuenta", "saca del stock")
+  const isSubIntent = /(?:resta(?:r)?|quita(?:r)?|descuenta|descontar|disminuye|disminuir|saca(?:r)?)\b/i.test(lower);
+  const matchedStockSub = isSubIntent ? findMatchingStockItem(text, adminCtx.stock) : null;
 
-        await fb('PATCH', ROOT, patchUpdates);
+  if (matchedStockSub) {
+    partnerTxDrafts.delete(partnerName);
+    const isAnthony = partnerName === 'Anthony';
+    const profileUser = isAnthony ? 'doom1' : 'doom2';
 
-        // Notificar al otro socio
-        const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-        const otherAlert = `📦 *DOOMLATER: Movimiento de Stock en Tiempo Real*\n\n` +
-          `Tu socio *${partnerName}* (@${profileUser}) ajustó el inventario:\n` +
-          `• *Artículo:* ${bestItem.name}\n` +
-          `• *Ajuste:* ${finalDelta > 0 ? `+${finalDelta} uds añadidas` : `-${Math.abs(finalDelta)} uds descontadas`}\n` +
-          `• *Stock actual:* *${newStock}* unidades disponibles\n\n` +
-          `🌐 _Reflejado en vivo en la Web sin recargar._`;
-        notifySinglePartner(otherPartner, otherAlert).catch(() => {});
-
-        return `📦 *¡Stock Actualizado en Tiempo Real!* ✅\n\n` +
-          `• *Artículo:* *${bestItem.name}*\n` +
-          `• *Movimiento:* ${finalDelta > 0 ? `+${finalDelta} uds añadidas al stock` : `-${Math.abs(finalDelta)} uds descontadas del stock`}\n` +
-          `• *Stock anterior:* ${curStock} uds\n` +
-          `• *Nuevo stock disponible:* *${newStock}* unidades\n` +
-          `• *Registrado por:* @${profileUser} (${partnerName})\n\n` +
-          `🌐 _Actualizado en tiempo real en la Web y registrado en el Kardex._`;
-      }
+    let qty = 1;
+    const numMatch = text.match(/\b(\d+)\b/);
+    if (numMatch) {
+      const q = parseInt(numMatch[1], 10);
+      if (!isNaN(q) && q > 0 && q <= 5000) qty = q;
     }
+
+    const curStock = Number(matchedStockSub.stock) || 0;
+    const newStock = Math.max(0, curStock - qty);
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
+    const patchUpdates = {
+      [`stockItems/${matchedStockSub.id}/stock`]: newStock,
+      [`stockItems/${matchedStockSub.id}/updatedAt`]: Date.now(),
+      [`stockItems/${matchedStockSub.id}/updatedBy`]: profileUser,
+      [`stockMovements/${smId}`]: {
+        id: smId,
+        stockId: matchedStockSub.id,
+        stockItemId: matchedStockSub.id,
+        itemName: matchedStockSub.name,
+        stockItemName: matchedStockSub.name,
+        action: 'ajuste',
+        type: 'out',
+        reason: 'adjustment',
+        quantity: qty,
+        qtyChange: -qty,
+        newStock,
+        notes: `Salida / Ajuste de ${qty} ud(s) registrado por WhatsApp (@${profileUser})`,
+        date: dateStr,
+        time: timeStr,
+        createdBy: profileUser,
+        createdAt: Date.now()
+      },
+      'meta/updatedAt': Date.now(),
+      'meta/rev': Date.now(),
+      'meta/lastLabel': `Stock "${matchedStockSub.name}" descontado (-${qty}) por @${profileUser}`,
+      'meta/lastClientId': 'bot_bridge',
+      'meta/updatedBy': profileUser
+    };
+
+    await fb('PATCH', ROOT, patchUpdates);
+
+    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+    const otherAlert = `📦 *DOOMLATER: Movimiento de Stock en Tiempo Real*\n\n` +
+      `Tu socio *${partnerName}* (@${profileUser}) descontó inventario:\n` +
+      `• *Artículo:* ${matchedStockSub.name}\n` +
+      `• *Ajuste:* -${qty} uds descontadas\n` +
+      `• *Stock actual:* *${newStock}* unidades disponibles\n\n` +
+      `🌐 _Reflejado en vivo en la Web sin recargar._`;
+    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+
+    return `📦 *¡Stock Actualizado en Tiempo Real!* ✅\n\n` +
+      `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
+      `• *Artículo:* *${matchedStockSub.name}*\n` +
+      `• *Movimiento:* -${qty} uds descontadas del stock\n` +
+      `• *Stock anterior:* ${curStock} uds\n` +
+      `• *Nuevo stock disponible:* *${newStock}* unidades\n\n` +
+      `🌐 _Actualizado en tiempo real en la Web y registrado en el Kardex._`;
   }
 
   // 1. REGISTRAR O AGREGAR TRANSACCIONES AL DASHBOARD EN TIEMPO REAL
@@ -2279,6 +2553,13 @@ async function runAiReply(convId, q) {
     if (q.hasImage) { result.isPayment = true; result.needsHuman = true; }
   }
 
+  // Si el cliente indica explícitamente que ya pagó o adjuntó pago por texto
+  const paymentTextRegex = /(?:ya\s*(?:hice\s*el\s*pago|realic[eé]\s*el\s*pago|pagu[eé]|transfer[ií]|te\s*pagu[eé]|te\s*transfer[ií]|cancel[eé]|le\s*di)|pago\s*(?:listo|realizado|hecho|enviado)|listo\s*(?:amigo\s*)?(?:ya\s*)?(?:pagu[eé]|transfer[ií])|acabo\s*de\s*(?:pagar|transferir)|comprobante\s*(?:de\s*pago)?|capture\s*(?:del?\s*pago)?)/i;
+  if (!q.ctx.isPartner && paymentTextRegex.test(userText)) {
+    result.isPayment = true;
+    result.needsHuman = true;
+  }
+
   let deliveryStatus = 'sent';
   let deliveryError = '';
   try {
@@ -2338,7 +2619,7 @@ async function runAiReply(convId, q) {
         `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +
         `Monto: *${amtStr}*${refStr}${phoneStr}${dateStr}\n\n` +
         `👉 _Entra a la Web para verificarlo y sumarlo a caja con un clic._`;
-      notifyPartners(alertMsg, `pay_${convId}_${Math.floor(Date.now() / (10 * 60 * 1000))}`).catch(() => {});
+      notifyPartners(alertMsg, `pay_${convId}`).catch(() => {});
     } else if (result.needsHuman) {
       const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
         `Cliente: *${conv.customerName || 'Cliente'}* (${conv.customerPhone || 'WhatsApp'})\n` +

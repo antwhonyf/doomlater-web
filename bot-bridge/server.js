@@ -344,10 +344,10 @@ function isAuthorizedPartner(phoneOrJid) {
 async function notifyPartners(text, alertKey = null) {
   if (!waSock || waState !== 'connected') return;
   if (alertKey) {
-    const isPaymentAlert = String(alertKey).startsWith('pay_');
-    const cooldownMs = isPaymentAlert ? 30 * 1000 : (15 * 60 * 1000);
+    const isAlert = String(alertKey).startsWith('pay_') || String(alertKey).startsWith('human_') || String(alertKey).startsWith('alert_');
+    const cooldownMs = isAlert ? 30 * 1000 : (15 * 60 * 1000);
     const last = partnerAlertCooldown.get(alertKey) || 0;
-    if (Date.now() - last < cooldownMs) return; // Cooldown de 30s para pagos, 15 min para otras alertas
+    if (Date.now() - last < cooldownMs) return; // Cooldown de 30s para alertas críticas, 15 min para otras
     partnerAlertCooldown.set(alertKey, Date.now());
   }
 
@@ -765,6 +765,7 @@ async function loadAdminExecutiveContext() {
   const lowStock = stock.filter(i => (Number(i.stock) || 0) <= (Number(i.minStock) || 2));
   const zeroStock = stock.filter(i => (Number(i.stock) || 0) <= 0);
   const pendingPayments = convs.filter(c => c.pendingPayment);
+  const alertConvs = convs.filter(c => !c.deleted && (c.needsAttention || c.pendingPayment));
 
   return {
     walletBalances,
@@ -785,6 +786,7 @@ async function loadAdminExecutiveContext() {
     lowStock,
     zeroStock,
     pendingPayments,
+    alertConvs,
     recentTxs,
     obligations,
     partnerSales,
@@ -814,6 +816,10 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
   const pendingSummary = adminCtx.pendingPayments.length > 0
     ? adminCtx.pendingPayments.map(c => `- ${c.customerName || 'Cliente'} (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por "${c.pendingPaymentItem || 'Servicio/Venta'}"`).join('\n')
     : 'No hay pagos pendientes de verificar';
+
+  const alertsSummary = adminCtx.alertConvs && adminCtx.alertConvs.length > 0
+    ? adminCtx.alertConvs.map(c => `- ${c.customerName || 'Cliente'} (${c.customerPhone || c.platform}): ${c.pendingPayment ? `PAGO POR VERIFICAR ($${Number(c.pendingPaymentAmount || 0).toFixed(2)})` : `ATENCIÓN REQUERIDA (${c.attentionReason || 'Consulta sin responder'})`} | Último msj: "${(c.lastMessage || '').slice(0, 70)}"`).join('\n')
+    : 'No hay chats con alertas ni clientes esperando en la Web';
 
   const partnerSalesSummary = adminCtx.partnerSales.length > 0
     ? adminCtx.partnerSales.map(s => `- Venta registrada por ${s.registeredBy || 'Socio'}: ${s.detail} por $${s.amount} (${s.isBs ? 'Bs.' : 'USDT'}, cuenta ${s.targetWalletName || 'Billetera'}) esperando verificación en la web`).join('\n')
@@ -892,6 +898,9 @@ ${lowStockSummary}
 === PAGOS DE CLIENTES PENDIENTES DE VERIFICAR ===
 ${pendingSummary}
 
+=== CHATS CON ALERTAS O ATENCIÓN REQUERIDA EN LA WEB ===
+${alertsSummary}
+
 === VENTAS REGISTRADAS POR WHATSAPP PENDIENTES DE VERIFICACIÓN EN WEB ===
 ${partnerSalesSummary}
 
@@ -969,27 +978,41 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
     return lines.join('\n');
   }
 
-  // 4. Pagos pendientes / Verificaciones
-  if (/(pago|pendiente|por verificar|comprobante)/i.test(q)) {
-    if (ctx.pendingPayments.length === 0) {
-      return `✅ *Al día!* No hay pagos pendientes por verificar en la bandeja.`;
+  // 4. Chats con Alertas / Pagos Pendientes / Verificaciones / Atención Requerida
+  if (/(?:chat(?:s)?\s*(?:con|en)?\s*alerta|alerta(?:s)?|atenci[oó]n|duda|esperando|pago|pendiente|por verificar|comprobante)/i.test(q)) {
+    const alertList = (ctx.alertConvs || []).filter(c => !c.deleted);
+    if (alertList.length === 0) {
+      return `✅ *¡Bandeja al día!* No hay ningún chat con alertas ni clientes esperando atención en la Web.`;
     }
-    const lines = [`🧾 *Pagos Pendientes por Verificar (${ctx.pendingPayments.length}):*`, ``];
-    for (const c of ctx.pendingPayments) {
-      lines.push(`• *${c.customerName || 'Cliente'}* (${c.customerPhone || c.platform}): $${Number(c.pendingPaymentAmount || 0).toFixed(2)} por ${c.pendingPaymentItem || 'Servicio/Venta'}`);
+
+    const lines = [`⚠️ *Chats con Alertas en la Web (${alertList.length}):*`, ``];
+    for (const c of alertList) {
+      const isPayment = Boolean(c.pendingPayment);
+      const tag = isPayment ? '💳 VERIFICAR PAGO' : '⚠️ ATENCIÓN REQUERIDA';
+      const reason = c.attentionReason || (isPayment ? 'Pago reportado por cliente' : 'Consulta fuera de catálogo o caso especial');
+      const amtStr = isPayment && c.pendingPaymentAmount ? ` ($${Number(c.pendingPaymentAmount).toFixed(2)})` : '';
+      const phone = c.customerPhone ? ` (+${c.customerPhone})` : '';
+
+      lines.push(
+        `• *${c.customerName || 'Cliente'}*${phone} [${tag}${amtStr}]:`,
+        `  Motivo: ${reason}`,
+        `  Último mensaje: "${(c.lastMessage || '').slice(0, 80)}"`,
+        ``
+      );
     }
-    lines.push(``, `👉 _Puedes verificarlos desde la web para sumarlos a caja._`);
+    lines.push(`👉 _Entra a la sección "Bot & Inbox" en la Web para responderles o verificar los pagos con 1 clic._`);
     return lines.join('\n');
   }
 
   // 5. Búsqueda específica de un producto (ej. "3ds", "cargador", etc.)
-  const words = q.replace(/cuantos|cuántos|quedan|queda|de|hay|en|stock|\?|¿/gi, '').trim().split(/\s+/).filter(w => w.length >= 2);
+  const stopWordsStockSearch = new Set(['chat', 'chats', 'con', 'en', 'alerta', 'alertas', 'hola', 'amigo', 'socio', 'por', 'del', 'los', 'las', 'que', 'queda', 'quedan', 'hay']);
+  const words = q.replace(/cuantos|cuántos|quedan|queda|de|hay|en|stock|\?|¿/gi, '').trim().split(/\s+/).filter(w => w.length >= 3 && !stopWordsStockSearch.has(w));
   if (words.length > 0) {
     const matches = ctx.stock.filter(it => {
       const name = String(it.name || '').toLowerCase();
       const cat = String(it.category || '').toLowerCase();
       const extra = String(it.extraDetail || it.notes || '').toLowerCase();
-      return words.some(w => name.includes(w) || cat.includes(w) || extra.includes(w));
+      return words.some(w => name.includes(w) || (w.length >= 4 && cat.includes(w)) || extra.includes(w));
     });
 
     if (matches.length > 0) {
@@ -1402,6 +1425,37 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
   if (partnerTxDrafts.has(partnerName) && /(cancelar|olv[ií]dalo|no\s*importa|deja\s*eso|ya\s*no)/i.test(lower)) {
     partnerTxDrafts.delete(partnerName);
     return `❌ *Registro de transacción cancelado.* Cuando desees agregar una nueva transacción al dashboard, solo dímelo por aquí.`;
+  }
+
+  // 0.00. CONSULTA DIRECTA DE CHATS CON ALERTAS O ATENCIÓN PENDIENTE EN LA WEB
+  if (/(?:chat(?:s)?\s*(?:con|en)?\s*alerta|alerta(?:s)?|atenci[oó]n\s*pendiente|clientes?\s*esperando|duda(?:s)?|pagos?\s*por\s*verificar)/i.test(lower)) {
+    const alertList = (adminCtx.alertConvs || []).filter(c => !c.deleted);
+    if (alertList.length === 0) {
+      return `✅ *¡Bandeja al día!* No hay ningún chat con alertas ni clientes esperando atención en la Web.`;
+    }
+
+    const lines = [
+      `⚠️ *Chats con Alertas en la Web (${alertList.length}):*`,
+      ``
+    ];
+
+    for (const c of alertList) {
+      const isPayment = Boolean(c.pendingPayment);
+      const tag = isPayment ? '💳 VERIFICAR PAGO' : '⚠️ ATENCIÓN REQUERIDA';
+      const reason = c.attentionReason || (isPayment ? 'Pago reportado por cliente' : 'Consulta fuera de catálogo o caso especial');
+      const amtStr = isPayment && c.pendingPaymentAmount ? ` ($${Number(c.pendingPaymentAmount).toFixed(2)})` : '';
+      const phone = c.customerPhone ? ` (+${c.customerPhone})` : '';
+
+      lines.push(
+        `• *${c.customerName || 'Cliente'}*${phone} [${tag}${amtStr}]:`,
+        `  Motivo: ${reason}`,
+        `  Último mensaje: "${(c.lastMessage || '').slice(0, 80)}"`,
+        ``
+      );
+    }
+
+    lines.push(`👉 _Entra a la sección "Bot & Inbox" en la Web para responderles o verificar los pagos con 1 clic._`);
+    return lines.join('\n');
   }
 
   // 0.0. CONFIRMACIÓN O CANCELACIÓN DE ELIMINACIÓN DE TRANSACCIÓN PENDIENTE
@@ -3608,6 +3662,49 @@ app.post('/api/whatsapp/reset', async (_req, res) => {
 });
 
 /* --------------------------------------------------------------------------
+   MONITOR PROACTIVO DE CHATS EN ALERTA (WEB Y BOT)
+   -------------------------------------------------------------------------- */
+const alertedConvsTrack = new Set();
+
+async function checkAttentionAlertsAndNotify() {
+  if (!waSock || waState !== 'connected') return;
+  try {
+    const convsRaw = await fb('GET', ws('botConversations'));
+    if (!convsRaw) return;
+    const convs = Object.values(convsRaw).filter(c => c && !c.deleted);
+
+    for (const c of convs) {
+      if (c.needsAttention || c.pendingPayment) {
+        // Excluir chats directos entre socios a menos que sea una simulación
+        const isPartnerPhone = c.customerPhone === '584142005801' || c.customerPhone === '584264181643';
+        if (isPartnerPhone && !String(c.attentionReason || '').includes('Simulación')) continue;
+
+        const trackKey = `${c.id}_${Boolean(c.needsAttention)}_${Boolean(c.pendingPayment)}_${c.lastMessageAt || c.updatedAt || 0}`;
+        if (alertedConvsTrack.has(trackKey)) continue;
+        alertedConvsTrack.add(trackKey);
+
+        const isPayment = Boolean(c.pendingPayment);
+        const alertTag = isPayment ? '💳 Pago por Verificar' : '⚠️ Atención Requerida (Chat en Alerta)';
+        const custName = c.customerName || 'Cliente';
+        const custPhone = c.customerPhone ? ` (+${c.customerPhone})` : '';
+        const amtStr = isPayment && c.pendingPaymentAmount ? `\n• *Monto:* $${Number(c.pendingPaymentAmount).toFixed(2)}` : '';
+        const reason = c.attentionReason ? `\n• *Motivo:* ${c.attentionReason}` : '';
+        const lastMsg = c.lastMessage ? `\n• *Último mensaje:* "${String(c.lastMessage).slice(0, 80)}"` : '';
+
+        const alertMsg = `🔔 *DOOMLATER ALERT: ${alertTag}* 🌐\n\n` +
+          `• *Cliente:* *${custName}*${custPhone}\n` +
+          `• *Plataforma:* ${c.platform || 'WhatsApp'}${amtStr}${reason}${lastMsg}\n\n` +
+          `👉 _El chat está marcado con **Alerta** en la Web. Entra a "Bot & Inbox" para responder o verificar._`;
+
+        await notifyPartners(alertMsg, `alert_${c.id}`);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Error en monitor de chats en alerta');
+  }
+}
+
+/* --------------------------------------------------------------------------
    ARRANQUE
    -------------------------------------------------------------------------- */
 app.listen(PORT, async () => {
@@ -3624,6 +3721,7 @@ app.listen(PORT, async () => {
   setInterval(() => backupAuthNow().catch(() => {}), 30000);
   setInterval(() => checkLowStockAndAlert().catch(() => {}), 5 * 60 * 1000);
   setInterval(() => checkPartnerReminders().catch(() => {}), 20000);
+  setInterval(() => checkAttentionAlertsAndNotify().catch(() => {}), 5000);
 
   // Render (plan gratis) se duerme tras 15 min sin tráfico: nos auto-visitamos cada 10 min.
   if (RENDER_URL) {

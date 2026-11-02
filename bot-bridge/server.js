@@ -1323,6 +1323,143 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     return `❌ *Registro de transacción cancelado.* Cuando desees agregar una nueva transacción al dashboard, solo dímelo por aquí.`;
   }
 
+  // 0.A. SIMULACIÓN DE PRUEBA DE VERIFICACIÓN DE PAGO (SOLICITADA POR SOCIO)
+  if (/(?:prob(?:ar|emos)?|simul(?:ar|a)?|test(?:ear)?)\s*(?:el)?\s*(?:verificar\s*pago|pago|verificaci[oó]n)/i.test(lower) ||
+      /(?:vamos\s*a\s*probar|prueba|hazme\s*una\s*prueba\s*de)\s*(?:el)?\s*(?:verificar\s*pago|pago|verificaci[oó]n)/i.test(lower)) {
+    const isAnthony = partnerName === 'Anthony';
+    const partnerPhone = isAnthony ? '584142005801' : '584264181643';
+    const convId = 'conv_wa_' + partnerPhone;
+
+    // Extraer monto si se indicó (ej. "prueba verificar pago de 30$" o default 40$)
+    const amtMatch = text.match(/(?:\$|bs\.?|monto\s*(?:de)?\s*)?\s*(\d+(?:[.,]\d+)?)\s*(?:\$|usd|usdt|bs\.?)?/i);
+    let testAmt = 40.0;
+    if (amtMatch && amtMatch[1]) {
+      const parsed = parseFloat(amtMatch[1].replace(',', '.'));
+      if (!isNaN(parsed) && parsed > 0 && parsed < 100000) testAmt = parsed;
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const convPatch = {
+      needsAttention: true,
+      attentionReason: 'Simulación de prueba de verificación de pago solicitada por socio',
+      pendingPayment: true,
+      pendingPaymentAmount: testAmt,
+      pendingPaymentCurrency: 'USD',
+      pendingPaymentItem: 'Instalación Magia Switch OLED / Servicio de Taller',
+      pendingPaymentDate: todayStr,
+      pendingPaymentPhone: partnerPhone,
+      pendingPaymentRef: 'TEST-' + Math.floor(100000 + Math.random() * 900000),
+      pendingPaymentWalletId: isAnthony ? 'w_bs_anthony' : 'w_bs_socio',
+      lastMessage: '🔔 [SIMULACIÓN] Prueba de verificación de pago lista en la Web',
+      lastMessageAt: Date.now(),
+      unreadCount: 1
+    };
+
+    await fb('PATCH', ws(`botConversations/${convId}`), convPatch);
+
+    return `👑 *¡Prueba de Verificación Activada con Éxito!* 🔔\n\n` +
+      `• *Chat marcado:* @${isAnthony ? 'doom1' : 'doom2'} (${partnerName})\n` +
+      `• *Etiqueta:* ⚠️ *ALERTA* activada\n` +
+      `• *Tarjeta:* *Verificar Pago* ($${testAmt.toFixed(2)})\n` +
+      `• *Concepto:* Instalación Magia Switch OLED\n\n` +
+      `👉 *Ahora entra a la sección "Bot & Inbox" en la Web:* Verás tu chat con la etiqueta *⚠️ Alerta* y abajo la tarjeta dorada con el botón *[Verificar Pago]*. Al darle clic podrás probar la selección de insumos múltiples, la cuenta destino y la suma a caja en tiempo real.`;
+  }
+
+  // 0.B. AJUSTE DIRECTO DE STOCK VÍA WHATSAPP (AUMENTAR O QUITAR/RESTAR STOCK)
+  const isStockAdd = /(?:llegaron|entraron|ingresaron|agrega(?:r)?\s+(?:al\s*stock|\d+)|suma(?:r)?\s+(?:al\s*stock|\d+)|aumenta(?:r)?\s+(?:al\s*stock|\d+))/i.test(lower);
+  const isStockSub = /(?:resta(?:r)?|quita(?:r)?|descuenta|descontar|disminuye|disminuir)\s+(?:del?\s*stock|\d+)/i.test(lower);
+
+  if ((isStockAdd || isStockSub) && !partnerTxDrafts.has(partnerName)) {
+    const isAnthony = partnerName === 'Anthony';
+    const profileUser = isAnthony ? 'doom1' : 'doom2';
+
+    let deltaSign = isStockAdd ? 1 : -1;
+    let qty = 1;
+
+    const numMatch = text.match(/\b(\d+)\b/);
+    if (numMatch) {
+      qty = parseInt(numMatch[1], 10) || 1;
+    }
+
+    const rawQuery = text
+      .replace(/(?:agrega(?:r)?|suma(?:r)?|llegaron|entraron|ingresaron|aumenta(?:r)?|resta(?:r)?|quita(?:r)?|descuenta|descontar|disminuye|disminuir)/gi, '')
+      .replace(/(?:al\s*stock|del\s*stock|en\s*stock|de\s*stock|stock)/gi, '')
+      .replace(/\b\d+\s*(?:uds?|unidades?|piezas?)?\b/gi, '')
+      .replace(/(?:de|del|un|una|unos|unas|para)\b/gi, '')
+      .trim();
+
+    if (rawQuery.length >= 2) {
+      const qWords = rawQuery.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
+      let bestItem = null;
+      let bestScore = 0;
+
+      for (const it of adminCtx.stock || []) {
+        const itName = String(it.name || '').toLowerCase();
+        let score = 0;
+        for (const w of qWords) {
+          if (itName.includes(w)) score += 3;
+        }
+        if (itName.includes(rawQuery.toLowerCase())) score += 8;
+        if (score > bestScore) {
+          bestScore = score;
+          bestItem = it;
+        }
+      }
+
+      if (bestItem && bestScore >= 3) {
+        const curStock = Number(bestItem.stock) || 0;
+        const finalDelta = deltaSign * qty;
+        const newStock = Math.max(0, curStock + finalDelta);
+
+        const patchUpdates = {
+          [`stockItems/${bestItem.id}/stock`]: newStock,
+          [`stockItems/${bestItem.id}/updatedAt`]: Date.now(),
+          [`stockItems/${bestItem.id}/updatedBy`]: profileUser,
+          'meta/updatedAt': Date.now(),
+          'meta/rev': Date.now(),
+          'meta/lastLabel': `Stock "${bestItem.name}" modificado (${finalDelta > 0 ? '+' : ''}${finalDelta}) por @${profileUser}`,
+          'meta/lastClientId': 'bot_bridge',
+          'meta/updatedBy': profileUser
+        };
+
+        const smId = 'sm_wa_' + Date.now().toString(36) + '_' + crypto.randomBytes(2).toString('hex');
+        patchUpdates[`stockMovements/${smId}`] = {
+          id: smId,
+          stockItemId: bestItem.id,
+          stockItemName: bestItem.name,
+          type: finalDelta > 0 ? 'in' : 'out',
+          quantity: Math.abs(finalDelta),
+          reason: finalDelta > 0 ? 'restock' : 'adjustment',
+          notes: `${finalDelta > 0 ? 'Ingreso / Reposición' : 'Salida / Ajuste'} de stock registrado por WhatsApp (@${profileUser})`,
+          date: new Date().toISOString().slice(0, 10),
+          time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false }),
+          createdBy: profileUser,
+          createdAt: Date.now()
+        };
+
+        await fb('PATCH', ROOT, patchUpdates);
+
+        // Notificar al otro socio
+        const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+        const otherAlert = `📦 *DOOMLATER: Movimiento de Stock en Tiempo Real*\n\n` +
+          `Tu socio *${partnerName}* (@${profileUser}) ajustó el inventario:\n` +
+          `• *Artículo:* ${bestItem.name}\n` +
+          `• *Ajuste:* ${finalDelta > 0 ? `+${finalDelta} uds añadidas` : `-${Math.abs(finalDelta)} uds descontadas`}\n` +
+          `• *Stock actual:* *${newStock}* unidades disponibles\n\n` +
+          `🌐 _Reflejado en vivo en la Web sin recargar._`;
+        notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+
+        return `📦 *¡Stock Actualizado en Tiempo Real!* ✅\n\n` +
+          `• *Artículo:* *${bestItem.name}*\n` +
+          `• *Movimiento:* ${finalDelta > 0 ? `+${finalDelta} uds añadidas al stock` : `-${Math.abs(finalDelta)} uds descontadas del stock`}\n` +
+          `• *Stock anterior:* ${curStock} uds\n` +
+          `• *Nuevo stock disponible:* *${newStock}* unidades\n` +
+          `• *Registrado por:* @${profileUser} (${partnerName})\n\n` +
+          `🌐 _Actualizado en tiempo real en la Web y registrado en el Kardex._`;
+      }
+    }
+  }
+
   // 1. REGISTRAR O AGREGAR TRANSACCIONES AL DASHBOARD EN TIEMPO REAL
   const hasActiveDraft = partnerTxDrafts.has(partnerName);
   const isTxIntent = hasActiveDraft ||

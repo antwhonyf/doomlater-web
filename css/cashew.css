@@ -533,18 +533,63 @@ button {
 .app-shell.collapsed-sidebar .clock-text-wrap,
 .app-shell.collapsed-sidebar .sync-status-card,
 .app-shell.collapsed-sidebar .nav-label,
-.app-shell.collapsed-sidebar .nav-item-badge,
 .app-shell.collapsed-sidebar .profile-mini-text {
-  display: none;
+  display: none !important;
 }
 
 .app-shell.collapsed-sidebar .sidebar-brand-header,
 .app-shell.collapsed-sidebar .sidebar-top-clock,
-.app-shell.collapsed-sidebar .nav-item-btn,
-.app-shell.collapsed-sidebar .sidebar-profile-footer {
+.app-shell.collapsed-sidebar .nav-item-btn {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
+}
+
+/* Collapsed sidebar Bot & Inbox notification badge:
+   If there are notifications, HIDE the robot icon and SHOW ONLY the badge number centered! */
+.app-shell.collapsed-sidebar .nav-item-btn.has-bot-notifs .material-symbols-rounded,
+.app-shell.collapsed-sidebar .nav-item-btn[data-nav="bot"].has-bot-notifs .material-symbols-rounded {
+  display: none !important;
+}
+
+.app-shell.collapsed-sidebar .nav-item-btn.has-bot-notifs .nav-item-badge,
+.app-shell.collapsed-sidebar .nav-item-btn[data-nav="bot"].has-bot-notifs #navBotBadge {
+  display: inline-flex !important;
+  position: static !important;
+  margin: 0 auto !important;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.app-shell.collapsed-sidebar .nav-item-btn:not(.has-bot-notifs) .nav-item-badge {
+  display: none !important;
+}
+
+/* Collapsed profile footer: HIDE the logout button completely, center ONLY the avatar */
+.app-shell.collapsed-sidebar .sidebar-profile-footer {
+  justify-content: center !important;
+  padding: 12px 0 !important;
+}
+
+.app-shell.collapsed-sidebar .sidebar-profile-footer .icon-btn {
+  display: none !important;
+}
+
+.app-shell.collapsed-sidebar .sidebar-profile-footer .profile-mini-info {
+  flex: none !important;
+  justify-content: center !important;
+  margin: 0 auto !important;
+}
+
+.app-shell.collapsed-sidebar .sidebar-profile-footer .profile-mini-avatar {
+  margin: 0 auto !important;
 }
 
 /* Main Content Area */

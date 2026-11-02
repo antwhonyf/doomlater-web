@@ -284,14 +284,29 @@ function pushHistory(convId, role, text) {
   convHistory.set(convId, arr);
 }
 
+const DEFAULT_PAYMENT_METHODS = [
+  { id: 'pm_1', name: 'Pago Móvil / Banco', details: 'Banco Banesco (0134) • C.I: 12.345.678 • Tlf: 0412-1234567' },
+  { id: 'pm_2', name: 'Binance Pay / USDT', details: 'Pay ID: 123456789 • Red TRC20 / Binance Pay' },
+  { id: 'pm_3', name: 'Efectivo Divisas ($)', details: 'Entrega personal en tienda física o delivery en divisas exactas' }
+];
+
+const DEFAULT_FAQ = [
+  { id: 'faq_1', question: '¿Qué productos y servicios ofrecen en Doomlater.Corp?', answer: 'En Doomlater.Corp nos especializamos en venta de consolas de videojuegos (PlayStation, Nintendo Switch, Xbox), accesorios, controles, videojuegos, y servicio técnico especializado (mantenimiento preventivo, cambio de pastas térmicas, reparación de controles drift/botones, pantallas y puertos de carga).' },
+  { id: 'faq_2', question: '¿Hacen envíos o delivery?', answer: 'Sí, contamos con servicio de delivery en la ciudad y envíos nacionales asegurados a través de MRW, Zoom y Tealca.' },
+  { id: 'faq_3', question: '¿Los productos y servicios tienen garantía?', answer: 'Sí, todos nuestros productos cuentan con garantía de 30 días y los servicios técnicos son probados detalladamente antes de la entrega.' },
+  { id: 'faq_4', question: '¿Dónde están ubicados y cuál es el horario de atención?', answer: 'Estamos ubicados en nuestro local comercial. Atendemos de Lunes a Sábado de 9:00 AM a 6:00 PM.' }
+];
+
 async function loadAiContext() {
   const [botConfig, stockRaw] = await Promise.all([fb('GET', ws('meta/botConfig')), fb('GET', ws('stockItems'))]);
   const cfg = botConfig || {};
+  const pms = Array.isArray(cfg.paymentMethods) && cfg.paymentMethods.length > 0 ? cfg.paymentMethods : DEFAULT_PAYMENT_METHODS;
+  const faqs = Array.isArray(cfg.knowledgeBaseFaq) && cfg.knowledgeBaseFaq.length > 0 ? cfg.knowledgeBaseFaq : DEFAULT_FAQ;
   return {
     botConfig: cfg,
     stockItems: stockRaw ? Object.values(stockRaw).filter(Boolean) : [],
-    paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods : [],
-    knowledgeBaseFaq: Array.isArray(cfg.knowledgeBaseFaq) ? cfg.knowledgeBaseFaq : []
+    paymentMethods: pms,
+    knowledgeBaseFaq: faqs
   };
 }
 
@@ -302,24 +317,27 @@ function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq }) {
     .join('\n');
   const faq = knowledgeBaseFaq.map(f => `P: ${f.question}\nR: ${f.answer}`).join('\n\n');
   const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
-  return `Eres el asistente de atención al cliente de Doomlater.Corp (consolas, videojuegos, accesorios y servicio técnico).
-Responde en español, breve, cálido y humano (máximo 4 frases). No digas que eres una IA salvo que te lo pregunten.
-Usa SOLO estos datos:
+  return `Eres el asistente oficial de atención al cliente de Doomlater.Corp.
+Nos especializamos en consolas de videojuegos (PlayStation, Nintendo, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
+Responde siempre en español, con tono amable, cálido, profesional y conciso (máximo 3-4 frases).
+No digas que eres una IA salvo que te lo pregunten directamente.
 
-=== STOCK ===
-${stock || '(sin datos de stock)'}
-
-=== PREGUNTAS FRECUENTES ===
-${faq || '(sin FAQ)'}
+=== INFORMACIÓN Y PREGUNTAS FRECUENTES ===
+${faq}
 
 === MÉTODOS DE PAGO ===
-${pm || '(consultar con el equipo)'}
+${pm}
 
-Reglas:
-- Si preguntan cómo pagar: da los métodos de pago y pide el comprobante por este chat.
-- Si dicen que ya pagaron o envían comprobante: agradece, di que los socios lo verifican en breve y agrega al final [FLAG_PAGO_REPORTADO].
-- Si preguntan algo que no está en los datos: di que consultas con el equipo y responden en breve, y agrega al final [FLAG_REQUIERE_HUMANO].
-- Nunca inventes precios, productos ni datos.`;
+=== STOCK DISPONIBLE ACTUAL ===
+${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
+
+Instrucciones de respuesta:
+1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater.Corp (consolas, videojuegos, accesorios y servicio técnico).
+2. Preguntas sobre métodos de pago o cómo pagar: Brinda los métodos de pago disponibles y solicita el comprobante de pago por este chat.
+3. Si el cliente indica que ya pagó o envía un comprobante/capture: Agradece, indícale que el equipo lo está verificando y finaliza tu mensaje con [FLAG_PAGO_REPORTADO].
+4. Preguntas sobre productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, indícale amablemente qué servicios o modelos manejamos en Doomlater.Corp, ofrécele consultar la disponibilidad exacta con el equipo y finaliza con [FLAG_REQUIERE_HUMANO].
+5. Si preguntan sobre servicio técnico, envíos, garantía o ubicación: Responde con la información de Preguntas Frecuentes.
+6. Nunca inventes precios específicos que no conozcas.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -594,6 +612,16 @@ let waStopped = true;
 let waGeneration = 0;
 let waReconnectTimer = null;
 const botSentIds = new Set();
+const sentMessagesStore = new Map();
+
+function saveSentMessage(id, message) {
+  if (!id || !message) return;
+  sentMessagesStore.set(id, message);
+  if (sentMessagesStore.size > 2000) {
+    const oldest = sentMessagesStore.keys().next().value;
+    sentMessagesStore.delete(oldest);
+  }
+}
 
 function rememberSent(id) {
   if (!id) return;
@@ -605,6 +633,9 @@ async function waSend(jid, content) {
   if (!waSock || waState !== 'connected') throw new Error('WhatsApp no está conectado en este momento.');
   const sent = await waSock.sendMessage(jid, content);
   rememberSent(sent?.key?.id);
+  if (sent?.key?.id && sent?.message) {
+    saveSentMessage(sent.key.id, sent.message);
+  }
   return sent;
 }
 async function waPresence(type, jid) {
@@ -650,9 +681,13 @@ async function startWhatsApp() {
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, silentLogger) },
     logger: silentLogger,
     browser: Browsers.ubuntu('Chrome'),
-    markOnlineOnConnect: false,          // tu teléfono sigue recibiendo notificaciones
+    markOnlineOnConnect: true,
     syncFullHistory: false,
-    generateHighQualityLinkPreview: false
+    generateHighQualityLinkPreview: false,
+    getMessage: async (key) => {
+      const found = sentMessagesStore.get(key.id);
+      return found || undefined;
+    }
   });
   waSock = sock;
 
@@ -714,6 +749,7 @@ async function startWhatsApp() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (gen !== waGeneration) return;
     for (const m of messages || []) {
+      if (m.key?.id && m.message) saveSentMessage(m.key.id, m.message);
       try { await handleWaMessage(m, type); } catch (err) { logger.error({ err: err.message }, 'Error procesando mensaje de WhatsApp'); }
     }
   });
@@ -1079,11 +1115,13 @@ async function processOutbox() {
         let lastErr = null;
         for (const targetJid of candidateJids) {
           try {
+            await waPresence('composing', targetJid);
             if (mediaPayload) {
               await waSend(targetJid, mediaPayload);
             } else {
               await waSend(targetJid, { text: item.text || '' });
             }
+            await waPresence('paused', targetJid);
             sentOk = true;
             break;
           } catch (err) {

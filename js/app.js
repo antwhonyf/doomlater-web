@@ -5612,14 +5612,38 @@
       `;
     },
 
-    refreshWhatsAppQr() {
-      this.toast('Solicitando actualización de QR al servidor...', 'refresh');
-      window.cashewSync.saveBotConfig({
-        whatsappQr: null,
-        requestRefreshQr: Date.now()
-      }, 'Solicitud de actualización de QR');
-      fetch('https://doomlater-bot.onrender.com/api/whatsapp/pair', { method: 'OPTIONS' }).catch(() => {});
-      this.renderMainView();
+    async refreshWhatsAppQr() {
+      this.toast('Solicitando QR nuevo a WhatsApp...', 'refresh');
+      // 1. Post newQr command to server
+      fetch('https://ok-gogle-c018c-default-rtdb.firebaseio.com/cashew_doom_bot_commands/newQr.json', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestedAt: Date.now() })
+      }).catch(() => {});
+      fetch('https://doomlater-bot.onrender.com/api/whatsapp/reset', { method: 'POST' }).catch(() => {});
+
+      // 2. Poll for fresh QR from status
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const res = await fetch('https://ok-gogle-c018c-default-rtdb.firebaseio.com/cashew_doom_bot_status/whatsapp.json');
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.qr) {
+              clearInterval(poll);
+              window.cashewSync.saveBotConfig({
+                whatsappQr: data.qr,
+                whatsappConnected: Boolean(data.connected)
+              });
+              this.toast('¡Código QR listo! Escanéalo en WhatsApp.', 'verified');
+              this.renderMainView();
+              return;
+            }
+          }
+        } catch (e) {}
+        if (attempts >= 10) clearInterval(poll);
+      }, 1500);
     },
 
     requestWhatsAppPairingCode() {

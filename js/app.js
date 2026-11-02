@@ -4298,22 +4298,38 @@
     deleteBotConversation(convId) {
       const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
       if (!conv) return;
-      const name = conv.customerName || conv.customerPhone || 'este cliente';
-      if (!confirm(`¿Eliminar la conversación con ${name}? Ya no aparecerá en tu bandeja de entrada.`)) {
-        return;
-      }
+      const name = conv.customerName || conv.customerPhone || 'Cliente';
+      const allMsgs = (this.activeList('botMessages') || []).filter(m => m.convId === convId && !m.deleted);
 
-      window.cashewSync.upsertEntity('botConversations', {
-        ...conv,
-        deleted: true,
-        deletedAt: Date.now()
-      }, `Eliminó conversación con ${name}`);
+      this.confirmDeletionModal({
+        entityType: 'conversación y chat',
+        itemTitle: name,
+        icon: 'chat',
+        confirmBtnText: 'Sí, Borrar Conversación',
+        details: [
+          { label: 'Cliente', value: name },
+          { label: 'Plataforma', value: (conv.platform || 'whatsapp').toUpperCase() },
+          ...(conv.customerPhone ? [{ label: 'Teléfono', value: conv.customerPhone }] : []),
+          { label: 'Total Mensajes', value: `${allMsgs.length} mensaje(s) en historial` },
+          { label: 'Último Mensaje', value: conv.lastMessage || 'Sin mensajes' },
+          ...(conv.needsAttention ? [{ label: 'Estado', value: '⚠️ Alerta Activa', color: '#ef4444' }] : []),
+          ...(conv.pendingPayment ? [{ label: 'Pago Pendiente', value: `$${Number(conv.pendingPaymentAmount || 0).toFixed(2)}`, color: '#d49b4b' }] : [])
+        ],
+        onConfirm: () => {
+          window.cashewSync.upsertEntity('botConversations', {
+            ...conv,
+            deleted: true,
+            deletedAt: Date.now()
+          }, `Eliminó conversación con ${name}`);
 
-      if (this.botActiveConvId === convId) {
-        this.botActiveConvId = null;
-      }
-      this.toast(`Conversación con ${name} eliminada`, 'delete');
-      this.renderMainView();
+          if (this.botActiveConvId === convId) {
+            this.botActiveConvId = null;
+          }
+          this.toast(`Conversación con ${name} eliminada`, 'delete');
+          this.updateNavBotBadge();
+          this.renderMainView();
+        }
+      });
     },
 
     selectBotConversation(convId) {
@@ -5909,12 +5925,26 @@
     },
 
     deletePaymentMethod(pmId) {
-      if (!confirm('¿Eliminar este método de pago?')) return;
       const cfg = this.getBotConfig();
-      const list = (cfg.paymentMethods || []).filter(p => p.id !== pmId);
-      window.cashewSync.saveBotConfig({ paymentMethods: list }, 'Método de pago eliminado');
-      this.toast('Método de pago eliminado', 'delete');
-      this.renderMainView();
+      const p = (cfg.paymentMethods || []).find(x => x.id === pmId);
+      if (!p) return;
+
+      this.confirmDeletionModal({
+        entityType: 'método de pago',
+        itemTitle: p.name,
+        icon: 'account_balance_wallet',
+        confirmBtnText: 'Sí, Eliminar Método',
+        details: [
+          { label: 'Nombre del Método', value: p.name },
+          { label: 'Datos / Cuenta', value: p.details }
+        ],
+        onConfirm: () => {
+          const list = (cfg.paymentMethods || []).filter(x => x.id !== pmId);
+          window.cashewSync.saveBotConfig({ paymentMethods: list }, `Eliminó método de pago "${p.name}"`);
+          this.toast(`Método "${p.name}" eliminado`, 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     openEditFaqModal(faqId) {
@@ -5972,12 +6002,26 @@
     },
 
     deleteFaqItem(faqId) {
-      if (!confirm('¿Eliminar esta pregunta de la base de conocimiento?')) return;
       const cfg = this.getBotConfig();
-      const list = (cfg.knowledgeBaseFaq || []).filter(f => f.id !== faqId);
-      window.cashewSync.saveBotConfig({ knowledgeBaseFaq: list }, 'FAQ eliminado');
-      this.toast('Pregunta eliminada', 'delete');
-      this.renderMainView();
+      const f = (cfg.knowledgeBaseFaq || []).find(x => x.id === faqId);
+      if (!f) return;
+
+      this.confirmDeletionModal({
+        entityType: 'pregunta frecuente (FAQ)',
+        itemTitle: f.question,
+        icon: 'psychology',
+        confirmBtnText: 'Sí, Eliminar Pregunta',
+        details: [
+          { label: 'Pregunta', value: f.question },
+          { label: 'Respuesta que daba la IA', value: f.answer }
+        ],
+        onConfirm: () => {
+          const list = (cfg.knowledgeBaseFaq || []).filter(x => x.id !== faqId);
+          window.cashewSync.saveBotConfig({ knowledgeBaseFaq: list }, 'FAQ eliminado');
+          this.toast('Pregunta frecuente eliminada', 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     /* ======================================================================
@@ -6208,12 +6252,31 @@
     },
 
     deleteServiceMapping(id) {
-      if (!confirm('¿Eliminar este servicio?')) return;
       const cfg = this.getBotConfig();
-      const list = (cfg.serviceInsumosMap || []).filter(s => s.id !== id);
-      window.cashewSync.saveBotConfig({ serviceInsumosMap: list }, 'Mapeo de servicio eliminado');
-      this.toast('Servicio eliminado', 'delete');
-      this.renderMainView();
+      const s = (cfg.serviceInsumosMap || []).find(x => x.id === id);
+      if (!s) return;
+
+      const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
+        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
+        : (s.defaultInsumoName || 'Insumos');
+
+      this.confirmDeletionModal({
+        entityType: 'servicio técnico vinculado',
+        itemTitle: s.serviceName,
+        icon: 'build',
+        confirmBtnText: 'Sí, Eliminar Servicio',
+        details: [
+          { label: 'Nombre del Servicio', value: s.serviceName },
+          { label: 'Insumos que Consume', value: insumoItems },
+          { label: 'Tarifa Mano de Obra', value: `$${Number(s.defaultLaborPrice || 0).toFixed(2)}`, color: 'var(--cashew-income)' }
+        ],
+        onConfirm: () => {
+          const list = (cfg.serviceInsumosMap || []).filter(x => x.id !== id);
+          window.cashewSync.saveBotConfig({ serviceInsumosMap: list }, `Eliminó servicio "${s.serviceName}"`);
+          this.toast(`Servicio "${s.serviceName}" eliminado`, 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     /* ======================================================================
@@ -6961,6 +7024,89 @@
       document.querySelectorAll('.cashew-modal-overlay').forEach(el => el.remove());
     },
 
+    confirmDeletionModal({
+      entityType = 'Elemento',
+      itemTitle = '',
+      icon = 'delete_forever',
+      details = [],
+      onConfirm = null,
+      confirmBtnText = 'Sí, Confirmar y Eliminar'
+    }) {
+      const me = this.getCurrentProfile();
+      const authorTag = me ? `@${me.username} (${me.displayName || me.role || 'Socio'})` : `@${this.user || 'socio'}`;
+
+      const detailsHtml = details.map(d => `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--border-subtle); gap:12px; font-size:13px;">
+          <span style="color:var(--text-muted); font-weight:600; min-width:125px;">${this.escapeHtml(d.label)}:</span>
+          <span style="font-weight:700; text-align:right; color:${d.color || 'var(--text-main)'}; word-break:break-word;">
+            ${d.html || this.escapeHtml(String(d.value ?? ''))}
+          </span>
+        </div>
+      `).join('');
+
+      const bodyHtml = `
+        <div class="modal-head" style="margin-bottom:12px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:40px; height:40px; border-radius:12px; background:rgba(239,68,68,0.18); display:flex; align-items:center; justify-content:center; color:#ef4444; flex-shrink:0;">
+              <span class="material-symbols-rounded" style="font-size:24px;">${icon}</span>
+            </div>
+            <div>
+              <h2 class="modal-title" style="font-size:18px; margin:0; color:#ef4444;">Confirmar Eliminación</h2>
+              <div style="font-size:12px; color:var(--text-muted);">Revisa los datos antes de borrar permanentemente</div>
+            </div>
+          </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+
+        <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.22); border-radius:14px; padding:12px 14px; margin-bottom:14px;">
+          <div style="display:flex; align-items:center; gap:8px; color:#ef4444; font-weight:800; font-size:13px; margin-bottom:4px;">
+            <span class="material-symbols-rounded" style="font-size:18px;">warning</span>
+            <span>¿Estás seguro de que deseas eliminar este ${entityType}?</span>
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); line-height:1.4;">
+            Esta acción eliminará el registro de la base de datos de Doomlater.Corp para ambos socios.
+          </div>
+        </div>
+
+        <!-- Detailed Breakdown Box -->
+        <div style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:14px; padding:10px 16px; margin-bottom:14px;">
+          <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">
+            Información del registro a eliminar:
+          </div>
+          ${detailsHtml}
+        </div>
+
+        <!-- Partner Author Confirmation Badge -->
+        <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:10px 14px; margin-bottom:18px; font-size:12.5px;">
+          <span style="color:var(--text-muted);">Socio confirmando la eliminación:</span>
+          <strong style="color:var(--primary); font-family:var(--font-mono);">${this.escapeHtml(authorTag)}</strong>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+          <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">
+            Cancelar
+          </button>
+          <button type="button" id="btnConfirmRealDelete" class="btn-cashew btn-danger" style="background:#ef4444; border-color:#ef4444; color:#fff; font-weight:800; padding:10px 18px; border-radius:12px; display:flex; align-items:center; gap:6px;">
+            <span class="material-symbols-rounded" style="font-size:18px;">delete_forever</span>
+            <span>${confirmBtnText}</span>
+          </button>
+        </div>
+      `;
+
+      this.openModalHTML(bodyHtml, false);
+
+      const confirmBtn = document.getElementById('btnConfirmRealDelete');
+      if (confirmBtn && typeof onConfirm === 'function') {
+        confirmBtn.onclick = () => {
+          this.closeModal();
+          onConfirm();
+        };
+      }
+    },
+
     openQuickChatModal() {
       const partner = this.getPartnerProfile();
       const partnerOnline = partner ? window.cashewSync.isProfileOnline(partner.id) : false;
@@ -7502,15 +7648,39 @@
 
     deleteTransaction(id) {
       const it = this.activeList('transactions').find(x => x.id === id);
-      if (!this.canUserDirectlyMutate('transactions', id)) {
-        this.submitApprovalRequest('transactions', id, 'delete', null, `Eliminar transacción: ${it ? it.title : id}`);
-        this.closeModal();
-        this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
-        return;
-      }
-      window.cashewSync.deleteEntity('transactions', id, 'Transacción eliminada');
-      this.closeModal();
-      this.toast('Transacción eliminada', 'delete');
+      if (!it) return;
+
+      const wallet = this.getWalletById(it.walletId);
+      const isBs = it.currency === 'VES' || (wallet && wallet.currency === 'VES');
+      const curSymbol = isBs ? 'Bs.' : '$';
+      const typeLabel = it.type === 'expense' ? 'Gasto (-)' : 'Ingreso (+)';
+      const typeColor = it.type === 'expense' ? 'var(--cashew-expense)' : 'var(--cashew-income)';
+
+      this.confirmDeletionModal({
+        entityType: 'transacción financiera',
+        itemTitle: it.title || 'Transacción',
+        icon: 'receipt_long',
+        confirmBtnText: 'Sí, Eliminar Transacción',
+        details: [
+          { label: 'Concepto / Título', value: it.title || 'Sin título' },
+          { label: 'Monto', value: `${curSymbol} ${Number(it.amount || 0).toFixed(2)}`, color: typeColor },
+          { label: 'Tipo', value: typeLabel, color: typeColor },
+          { label: 'Cuenta / Billetera', value: wallet ? wallet.name : 'Caja Principal' },
+          { label: 'Fecha y Hora', value: `${it.date || ''} ${it.time ? 'a las ' + it.time : ''}` },
+          { label: 'Registrado por', value: `@${it.createdBy || it.updatedBy || 'socio'}` },
+          ...(it.note ? [{ label: 'Nota / Detalle', value: it.note }] : [])
+        ],
+        onConfirm: () => {
+          if (!this.canUserDirectlyMutate('transactions', id)) {
+            this.submitApprovalRequest('transactions', id, 'delete', null, `Eliminar transacción: ${it.title}`);
+            this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
+            return;
+          }
+          window.cashewSync.deleteEntity('transactions', id, `Eliminó transacción: ${it.title}`);
+          this.toast(`Transacción "${it.title}" eliminada`, 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     /* ======================================================================
@@ -8556,15 +8726,38 @@
 
     deleteStockItem(id) {
       const it = this.activeList('stockItems').find(x => x.id === id);
-      if (!this.canUserDirectlyMutate('stockItems', id)) {
-        this.submitApprovalRequest('stockItems', id, 'delete', null, `Eliminar producto: ${it ? it.name : id}`);
-        this.closeModal();
-        this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
-        return;
-      }
-      window.cashewSync.deleteEntity('stockItems', id, `Eliminó de stock: ${it ? it.name : ''}`);
-      this.closeModal();
-      this.toast('Artículo eliminado del inventario', 'delete');
+      if (!it) return;
+
+      const kindLabel = it.kind === 'insumo' ? 'Insumo de Taller' : (it.kind === 'en_preparacion' ? 'En Preparación' : 'Producto para la Venta');
+      const unitCost = (Number(it.purchaseCost) || 0) + (Number(it.extraCost) || 0);
+      const sale = Number(it.salePrice) || 0;
+
+      this.confirmDeletionModal({
+        entityType: 'artículo del inventario',
+        itemTitle: it.name,
+        icon: 'inventory_2',
+        confirmBtnText: 'Sí, Eliminar del Stock',
+        details: [
+          { label: 'Nombre del Producto', value: it.name },
+          { label: 'Clasificación', value: kindLabel },
+          { label: 'Categoría', value: it.category || 'General' },
+          { label: 'Stock Actual', value: `${it.stock || 0} unidades disponibles`, color: (Number(it.stock) || 0) <= 0 ? 'var(--cashew-expense)' : 'var(--cashew-income)' },
+          { label: 'Costo Unitario', value: `$${unitCost.toFixed(2)}` },
+          { label: 'Precio de Venta (PVP)', value: `$${sale.toFixed(2)}` },
+          ...(it.sku ? [{ label: 'Código SKU', value: it.sku }] : []),
+          ...(it.extraDetail ? [{ label: 'Detalle', value: it.extraDetail }] : [])
+        ],
+        onConfirm: () => {
+          if (!this.canUserDirectlyMutate('stockItems', id)) {
+            this.submitApprovalRequest('stockItems', id, 'delete', null, `Eliminar producto: ${it.name}`);
+            this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
+            return;
+          }
+          window.cashewSync.deleteEntity('stockItems', id, `Eliminó de stock: ${it.name}`);
+          this.toast(`Artículo "${it.name}" eliminado del inventario`, 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     openQuickSaleModal(stockId) {
@@ -9483,16 +9676,44 @@
     },
 
     deleteEntityAndClose(collection, id, msg) {
-      if (!this.canUserDirectlyMutate(collection, id)) {
-        const it = (this.activeList(collection) || []).find(x => x.id === id);
-        this.submitApprovalRequest(collection, id, 'delete', null, `Eliminar de ${collection}: ${it ? (it.name || it.title || id) : id}`);
-        this.closeModal();
-        this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
-        return;
+      const it = (this.activeList(collection) || []).find(x => x.id === id);
+      const name = it ? (it.name || it.title || 'este registro') : 'este registro';
+      const collectionNames = {
+        obligations: 'próximo / deuda',
+        goals: 'meta de ahorro',
+        budgets: 'presupuesto',
+        categories: 'categoría',
+        wallets: 'cuenta / billetera'
+      };
+      const entityLabel = collectionNames[collection] || 'registro';
+
+      const details = [
+        { label: 'Nombre / Concepto', value: name }
+      ];
+      if (it) {
+        if (it.amount != null) details.push({ label: 'Monto', value: this.fmtMoney(it.amount) });
+        if (it.targetAmount != null) details.push({ label: 'Monto Objetivo', value: this.fmtMoney(it.targetAmount) });
+        if (it.limit != null) details.push({ label: 'Límite Presupuestado', value: this.fmtMoney(it.limit) });
+        if (it.kind) details.push({ label: 'Tipo / Clasificación', value: it.kind });
       }
-      window.cashewSync.deleteEntity(collection, id, msg);
-      this.closeModal();
-      this.toast(msg, 'delete');
+
+      this.confirmDeletionModal({
+        entityType: entityLabel,
+        itemTitle: name,
+        icon: 'delete',
+        confirmBtnText: 'Sí, Confirmar y Eliminar',
+        details,
+        onConfirm: () => {
+          if (!this.canUserDirectlyMutate(collection, id)) {
+            this.submitApprovalRequest(collection, id, 'delete', null, `Eliminar de ${collection}: ${name}`);
+            this.toast('Solicitud enviada a tu compañero para confirmar la eliminación', 'hourglass_top');
+            return;
+          }
+          window.cashewSync.deleteEntity(collection, id, msg);
+          this.toast(msg, 'delete');
+          this.renderMainView();
+        }
+      });
     },
 
     /* ======================================================================

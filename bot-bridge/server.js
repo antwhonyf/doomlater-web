@@ -47,7 +47,7 @@ dotenv.config();
 /* --------------------------------------------------------------------------
    CONFIGURACIÓN
    -------------------------------------------------------------------------- */
-const SERVER_VERSION = '2.0.0';
+const SERVER_VERSION = '2.1.0';
 const PORT = process.env.PORT || 3000;
 const FIREBASE_DB_URL = (process.env.FIREBASE_DB_URL || 'https://ok-gogle-c018c-default-rtdb.firebaseio.com').replace(/\/+$/, '');
 const ROOT = 'cashew_doom_v1';
@@ -689,8 +689,8 @@ async function startWhatsApp() {
       if (waStopped || !isOwner) return;
 
       if (code === DisconnectReason.loggedOut) {
-        logger.warn('La sesión fue cerrada explícitamente desde el teléfono. Se limpiarán credenciales.');
-        await clearAuthEverywhere();
+        logger.warn('La sesión fue cerrada desde el teléfono.');
+        wipeLocalAuth();
         await setWaStatus({ state: 'logged_out', connected: false, qr: null, lastError: 'Sesión desvinculada desde el teléfono.' });
         scheduleWaRestart(3000);
       } else if (code === DisconnectReason.connectionReplaced) {

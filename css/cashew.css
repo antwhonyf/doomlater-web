@@ -1,0 +1,3397 @@
+/* ==========================================================================
+   CASHEW MATERIAL YOU DESIGN SYSTEM (Shameless Clone + Real-Time Stock)
+   Inspired directly by jameskokoska/Cashew (colors.dart & navigationFramework)
+   ========================================================================== */
+
+:root {
+  /* Dynamic Material You Tokens (Updated dynamically by JS seed engine) */
+  --seed-hex: #5f85c2;
+  --bg-main: #0f131a;
+  --bg-sidebar: #0d1117;
+  --bg-card: #171d27;
+  --bg-card-hover: #1e2633;
+  --bg-elevated: #212a38;
+  --bg-input: #131821;
+  --bg-chip: #1e2634;
+
+  --primary: #8cb4f5;
+  --on-primary: #082042;
+  --primary-container: #22385c;
+  --on-primary-container: #d6e4ff;
+  --secondary-container: #1d293b;
+  --on-secondary-container: #c7d6ec;
+
+  --text-main: #f1f4f9;
+  --text-muted: #93a0b4;
+  --text-faint: #5f6c80;
+
+  --border-subtle: rgba(255, 255, 255, 0.065);
+  --border-sidebar: #1d293b;
+  --divider: rgba(255, 255, 255, 0.07);
+  --shadow-card: 0 6px 24px rgba(0, 0, 0, 0.22);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.58);
+
+  /* Exact Cashew Semantic Colors from colors.dart */
+  --cashew-income: #62ca77;
+  --cashew-income-bg: rgba(98, 202, 119, 0.14);
+  --cashew-expense: #da7272;
+  --cashew-expense-bg: rgba(218, 114, 114, 0.14);
+  --cashew-upcoming: #7db6cc;
+  --cashew-upcoming-bg: rgba(125, 182, 204, 0.15);
+  --cashew-overdue: #8395ff;
+  --cashew-overdue-bg: rgba(131, 149, 255, 0.15);
+  --cashew-warning: #da9c72;
+  --cashew-warning-bg: rgba(218, 156, 114, 0.16);
+  --cashew-star: #ffd723;
+
+  /* Cashew Radii & Motion (Curves.easeInOutCubicEmphasized) */
+  --radius-xl: 24px;
+  --radius-lg: 20px;
+  --radius-md: 15px;
+  --radius-sm: 11px;
+  --radius-pill: 999px;
+  --ease-cashew: cubic-bezier(0.2, 0, 0, 1);
+
+  --sidebar-width: 266px;
+  --bottom-nav-height: 76px;
+  --font-sans: 'DM Sans', 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-x: hidden;
+  transition: background-color 0.35s var(--ease-cashew), color 0.25s ease;
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 160, 190, 0.22);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 160, 190, 0.38);
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+.material-symbols-rounded {
+  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.icon-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ==========================================================================
+   LOGIN / LOCK SCREEN (Cashew Onboarding & Biometric Lock Style)
+   ========================================================================== */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: radial-gradient(circle at 20% 15%, var(--primary-container), transparent 52%),
+              radial-gradient(circle at 82% 85%, var(--secondary-container), transparent 50%),
+              var(--bg-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  transition: opacity 0.35s var(--ease-cashew), transform 0.35s var(--ease-cashew);
+}
+
+.auth-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(1.03);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 28px;
+  padding: 32px 28px;
+  box-shadow: var(--shadow-modal);
+  animation: popIn 0.45s var(--ease-cashew);
+}
+
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.auth-logo-circle {
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  background: var(--primary-container);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.auth-logo-circle .material-symbols-rounded {
+  font-size: 36px;
+}
+
+.auth-title {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.auth-subtitle {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.profile-selector-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.profile-pick-card {
+  background: var(--bg-input);
+  border: 2px solid var(--border-subtle);
+  border-radius: 18px;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.22s var(--ease-cashew);
+}
+
+.profile-pick-card:hover {
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+}
+
+.profile-pick-card.active {
+  background: var(--primary-container);
+  border-color: var(--primary);
+  color: var(--on-primary-container);
+}
+
+.profile-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 16px;
+  background: var(--bg-elevated);
+  color: var(--primary);
+}
+
+.profile-pick-card.active .profile-avatar {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.profile-pick-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.profile-pick-role {
+  font-size: 11.5px;
+  opacity: 0.75;
+}
+
+.auth-error {
+  background: var(--cashew-expense-bg);
+  color: var(--cashew-expense);
+  padding: 10px 14px;
+  border-radius: 13px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-error.visible {
+  display: flex;
+  animation: shake 0.35s ease;
+}
+
+.auth-sync-note {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   APP SHELL LAYOUT (Cashew NavigationSidebar + Main Content)
+   ========================================================================== */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+}
+
+.app-shell.collapsed-sidebar {
+  --sidebar-width: 80px;
+}
+
+/* Left Sidebar (Exact Cashew navigationSidebar.dart proportions) */
+.cashew-sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--bg-sidebar);
+  border-right: 3px solid var(--border-sidebar);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 200;
+  padding: 16px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.35s var(--ease-cashew), background-color 0.35s var(--ease-cashew);
+}
+
+.sidebar-top-clock {
+  padding: 10px 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.clock-digits {
+  font-size: 27px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--text-main);
+}
+
+.clock-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-top: 2px;
+  text-transform: capitalize;
+}
+
+.sidebar-collapse-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.sidebar-collapse-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+}
+
+/* Live Sync Pill inside Sidebar */
+.sync-status-card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 11px 13px;
+  margin: 0 4px 14px;
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--cashew-income);
+  box-shadow: 0 0 0 0 rgba(98, 202, 119, 0.7);
+  animation: pulseGreen 2.2s infinite;
+  flex-shrink: 0;
+}
+
+.pulse-dot.syncing {
+  background: var(--primary);
+}
+
+.pulse-dot.offline {
+  background: var(--cashew-warning);
+  animation: none;
+}
+
+.sync-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.partner-presence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+
+.partner-presence-pill.online {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+/* Navigation Buttons (Cashew Rounded Pill Style) */
+.sidebar-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.nav-section-divider {
+  height: 1px;
+  background: var(--divider);
+  margin: 8px 10px;
+}
+
+.nav-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  transition: background-color 0.2s var(--ease-cashew), color 0.2s ease, transform 0.15s ease;
+  position: relative;
+}
+
+.nav-item-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+}
+
+.nav-item-btn:active {
+  transform: scale(0.98);
+}
+
+.nav-item-btn.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: 700;
+}
+
+.nav-item-btn.active .material-symbols-rounded {
+  color: var(--primary);
+}
+
+.nav-item-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.nav-item-badge.warn {
+  background: var(--cashew-warning);
+  color: #1a1108;
+}
+
+.sidebar-profile-footer {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.profile-mini-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.profile-mini-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--primary-container);
+  color: var(--primary);
+  font-weight: 800;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.profile-mini-name {
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-mini-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Collapsed sidebar adjustments */
+.app-shell.collapsed-sidebar .sidebar-brand-text,
+.app-shell.collapsed-sidebar .clock-text-wrap,
+.app-shell.collapsed-sidebar .sync-status-card,
+.app-shell.collapsed-sidebar .nav-label,
+.app-shell.collapsed-sidebar .nav-item-badge,
+.app-shell.collapsed-sidebar .profile-mini-text {
+  display: none;
+}
+
+.app-shell.collapsed-sidebar .sidebar-brand-header,
+.app-shell.collapsed-sidebar .sidebar-top-clock,
+.app-shell.collapsed-sidebar .nav-item-btn,
+.app-shell.collapsed-sidebar .sidebar-profile-footer {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Main Content Area */
+.cashew-main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-width: 0;
+  padding: 24px 28px 110px;
+  max-width: 1460px;
+  transition: margin-left 0.35s var(--ease-cashew);
+}
+
+/* ==========================================================================
+   CASHEW HEADER, GREETING & COMMON COMPONENTS
+   ========================================================================== */
+.cashew-greeting-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.greeting-small {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.greeting-username {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--on-primary-container);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-actions-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Swatch Dots Bar */
+.swatch-pill-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+}
+
+.swatch-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.swatch-dot:hover {
+  transform: scale(1.18);
+}
+
+.swatch-dot.active {
+  border-color: #ffffff;
+  transform: scale(1.15);
+}
+
+/* Cashew Buttons */
+.btn-cashew {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: 15px;
+  font-weight: 700;
+  font-size: 14px;
+  transition: all 0.2s var(--ease-cashew);
+  white-space: nowrap;
+}
+
+.btn-cashew:active {
+  transform: scale(0.96);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn-tonal {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.btn-tonal:hover {
+  filter: brightness(1.12);
+}
+
+.btn-surface {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-surface:hover {
+  background: var(--bg-card-hover);
+}
+
+.btn-income {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+.btn-income:hover {
+  background: var(--cashew-income);
+  color: #07210d;
+}
+
+.btn-danger {
+  background: var(--cashew-expense-bg);
+  color: var(--cashew-expense);
+}
+
+.btn-danger:hover {
+  background: var(--cashew-expense);
+  color: #260707;
+}
+
+.btn-sm {
+  padding: 7px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+}
+
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+}
+
+/* Cashew Cards & Containers */
+.cashew-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  border: 1px solid var(--border-subtle);
+  transition: background-color 0.25s ease, transform 0.2s var(--ease-cashew);
+}
+
+.cashew-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cashew-card-title {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cashew-card-subtitle {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   WALLETS CAROUSEL (HomePageWalletSwitcher)
+   ========================================================================== */
+.wallets-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
+  gap: 13px;
+  margin-bottom: 20px;
+}
+
+.wallet-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: all 0.22s var(--ease-cashew);
+  position: relative;
+  overflow: hidden;
+}
+
+.wallet-card:hover {
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+}
+
+.wallet-card.selected {
+  border-color: var(--primary);
+  background: linear-gradient(145deg, var(--primary-container), var(--bg-card));
+}
+
+.wallet-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.wallet-dot-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.wallet-currency-tag {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.wallet-balance {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.wallet-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.wallet-add-card {
+  border: 2px dashed var(--border-subtle);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  min-height: 122px;
+}
+
+.wallet-add-card:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--bg-card);
+}
+
+/* ==========================================================================
+   HOME GRID (Double Column Responsive Layout like Cashew FullScreen)
+   ========================================================================== */
+.cashew-home-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.cashew-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Cashflow / All Spending Summary Pills */
+.cashflow-duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.cashflow-pill-card {
+  background: var(--bg-elevated);
+  border-radius: 17px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cashflow-arrow {
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cashflow-arrow.inc {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+.cashflow-arrow.exp {
+  background: var(--cashew-expense-bg);
+  color: var(--cashew-expense);
+}
+
+.cashflow-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cashflow-val {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.cashflow-val.inc { color: var(--cashew-income); }
+.cashflow-val.exp { color: var(--cashew-expense); }
+
+/* ==========================================================================
+   CASHEW BUDGET PROGRESS BARS (With "Today" Pace Marker!)
+   ========================================================================== */
+.budget-card-item {
+  background: var(--bg-elevated);
+  border-radius: 18px;
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: transform 0.2s var(--ease-cashew), background-color 0.2s ease;
+}
+
+.budget-card-item:hover {
+  transform: translateY(-2px);
+  background: var(--bg-card-hover);
+}
+
+.budget-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.budget-name {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.budget-amounts {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.budget-track-wrap {
+  position: relative;
+  height: 22px;
+  background: var(--bg-input);
+  border-radius: 12px;
+  overflow: visible;
+  margin: 10px 0 12px;
+}
+
+.budget-track-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.budget-fill {
+  height: 100%;
+  border-radius: 12px;
+  transition: width 0.55s var(--ease-cashew);
+}
+
+.budget-today-tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  background: var(--text-main);
+  border-radius: 99px;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  z-index: 3;
+}
+
+.budget-today-label {
+  position: absolute;
+  top: -19px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.budget-foot-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   CASHEW TRANSACTIONS LIST (Sticky Date Dividers + Category Circle Icons)
+   ========================================================================== */
+.tx-date-group {
+  margin-bottom: 14px;
+}
+
+.tx-date-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--divider);
+  margin-bottom: 6px;
+}
+
+.tx-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 11px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.tx-row:hover {
+  background: var(--bg-card-hover);
+}
+
+.cat-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex-shrink: 0;
+  font-size: 21px;
+}
+
+.tx-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tx-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tx-title {
+  font-weight: 700;
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tx-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.author-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+
+.author-tag.doom1 {
+  background: rgba(140, 180, 245, 0.16);
+  color: #9ec2ff;
+}
+
+.author-tag.doom2 {
+  background: rgba(192, 132, 252, 0.16);
+  color: #d8b4fe;
+}
+
+.tx-amount {
+  font-weight: 800;
+  font-size: 15.5px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tx-amount.income { color: var(--cashew-income); }
+.tx-amount.expense { color: var(--cashew-expense); }
+.tx-amount.transfer { color: var(--cashew-upcoming); }
+
+/* ==========================================================================
+   STOCK Y VENTAS (CASHEW MATERIAL YOU INVENTORY MODULE)
+   ========================================================================== */
+.kpi-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 13px;
+  margin-bottom: 18px;
+}
+
+.kpi-cashew-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 17px 19px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.kpi-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kpi-big-val {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+.kpi-foot {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Cashew Sliding Segmented Filter Tabs */
+.segmented-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  padding: 6px;
+  border-radius: 17px;
+  border: 1px solid var(--border-subtle);
+  overflow-x: auto;
+}
+
+.seg-pill {
+  padding: 8px 15px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: all 0.2s var(--ease-cashew);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.seg-pill:hover {
+  color: var(--text-main);
+  background: var(--bg-card-hover);
+}
+
+.seg-pill.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+/* Search & Filter Toolbar */
+.toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 230px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 10px 15px;
+  transition: border-color 0.2s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--primary);
+}
+
+.search-box input {
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  font-size: 14px;
+}
+
+/* Stock Cards Grid */
+.stock-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 15px;
+}
+
+.stock-item-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: transform 0.22s var(--ease-cashew), border-color 0.22s ease, background-color 0.22s ease;
+  position: relative;
+}
+
+.stock-item-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(140, 180, 245, 0.28);
+}
+
+.stock-item-card.low-stock {
+  border-color: rgba(218, 156, 114, 0.42);
+}
+
+.stock-item-card.out-of-stock {
+  opacity: 0.78;
+  border-color: rgba(218, 114, 114, 0.35);
+}
+
+.stock-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+
+.stock-thumb {
+  width: 50px;
+  height: 50px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 24px;
+}
+
+.stock-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stock-head-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.stock-title {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-bottom: 4px;
+}
+
+.stock-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-chip {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2.5px 9px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-chip.available {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+.status-chip.prep {
+  background: var(--cashew-upcoming-bg);
+  color: var(--cashew-upcoming);
+}
+
+.status-chip.low {
+  background: var(--cashew-warning-bg);
+  color: var(--cashew-warning);
+}
+
+.status-chip.out {
+  background: var(--cashew-expense-bg);
+  color: var(--cashew-expense);
+}
+
+.status-chip.supply {
+  background: var(--cashew-overdue-bg);
+  color: var(--cashew-overdue);
+}
+
+/* Price & Margin Tonal Box */
+.stock-pricing-box {
+  background: var(--bg-elevated);
+  border-radius: 16px;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.price-col-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.price-col-val {
+  font-size: 16px;
+  font-weight: 800;
+  margin-top: 1px;
+}
+
+/* Stock Quantity & Stepper Bar */
+.stock-qty-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input);
+  padding: 4px 6px;
+  border-radius: 13px;
+  border: 1px solid var(--border-subtle);
+}
+
+.stepper-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  transition: background-color 0.15s ease;
+}
+
+.stepper-btn:hover {
+  background: var(--primary-container);
+  color: var(--primary);
+}
+
+.qty-num {
+  min-width: 34px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.stock-mini-progress {
+  height: 7px;
+  background: var(--bg-input);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.stock-mini-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.35s var(--ease-cashew);
+}
+
+.stock-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.stock-card-actions .btn-cashew {
+  flex: 1;
+}
+
+/* ==========================================================================
+   FLOATING ACTION BUTTON (Cashew Rounded-Square FAB) & MOBILE BOTTOM BAR
+   ========================================================================== */
+.cashew-fab {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 450;
+  width: 60px;
+  height: 60px;
+  border-radius: 20px;
+  background: var(--primary);
+  color: var(--on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  transition: transform 0.25s var(--ease-cashew), filter 0.2s ease;
+}
+
+.cashew-fab:hover {
+  transform: scale(1.07) rotate(90deg);
+  filter: brightness(1.06);
+}
+
+.cashew-fab .material-symbols-rounded {
+  font-size: 30px;
+}
+
+.mobile-bottom-nav {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--bottom-nav-height);
+  background: var(--bg-sidebar);
+  border-top: 2px solid var(--border-sidebar);
+  z-index: 400;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  justify-content: space-around;
+  align-items: center;
+}
+
+.mob-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 0;
+}
+
+.mob-nav-pill {
+  padding: 4px 16px;
+  border-radius: 99px;
+  transition: background-color 0.2s var(--ease-cashew);
+}
+
+.mob-nav-btn.active {
+  color: var(--text-main);
+}
+
+.mob-nav-btn.active .mob-nav-pill {
+  background: var(--primary-container);
+  color: var(--primary);
+}
+
+/* ==========================================================================
+   CASHEW BOTTOM-SHEET / POPUP MODALS & CALCULATOR NUMPAD
+   ========================================================================== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(5, 8, 14, 0.68);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-sheet {
+  width: 100%;
+  max-width: 540px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 26px;
+  padding: 24px;
+  box-shadow: var(--shadow-modal);
+  animation: slideUpSheet 0.3s var(--ease-cashew);
+}
+
+.modal-sheet.wide {
+  max-width: 660px;
+}
+
+.sheet-handle {
+  width: 42px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--divider);
+  margin: -8px auto 16px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.modal-title {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* Forms inside Cashew Sheets */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 13px;
+}
+
+.form-group.full {
+  grid-column: 1 / -1;
+}
+
+.form-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cashew-input, .cashew-select, .cashew-textarea {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 11px 14px;
+  font-size: 14.5px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.cashew-input:focus, .cashew-select:focus, .cashew-textarea:focus {
+  border-color: var(--primary);
+}
+
+/* Cashew Horizontal Selectable Chips (Categories & Wallets) */
+.chips-scroll-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.select-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 14px;
+  background: var(--bg-input);
+  border: 1.5px solid var(--border-subtle);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: all 0.18s ease;
+}
+
+.select-chip.active {
+  background: var(--primary-container);
+  border-color: var(--primary);
+  color: var(--on-primary-container);
+}
+
+.chip-mini-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 14px;
+}
+
+/* Cashew Signature Amount Display + Calculator Numpad */
+.cashew-amount-box {
+  background: var(--bg-input);
+  border-radius: 20px;
+  padding: 14px 18px;
+  text-align: center;
+  margin-bottom: 12px;
+  border: 1.5px solid var(--border-subtle);
+}
+
+.amount-expr-preview {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  min-height: 18px;
+  font-family: var(--font-mono);
+}
+
+.amount-big-input-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.amount-big-symbol {
+  font-size: 26px;
+  font-weight: 800;
+  opacity: 0.75;
+}
+
+.amount-big-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 36px;
+  font-weight: 800;
+  text-align: center;
+  width: 210px;
+  letter-spacing: -0.03em;
+}
+
+.cashew-numpad {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.numpad-key {
+  height: 46px;
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  font-size: 17px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.14s ease, transform 0.1s ease;
+}
+
+.numpad-key:hover {
+  background: var(--bg-card-hover);
+}
+
+.numpad-key:active {
+  transform: scale(0.94);
+}
+
+.numpad-key.op {
+  background: var(--secondary-container);
+  color: var(--primary);
+}
+
+/* ==========================================================================
+   TOAST NOTIFICATIONS (Cashew GlobalSnackbar Style)
+   ========================================================================== */
+.toast-stack {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 9500;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: none;
+}
+
+.cashew-toast {
+  pointer-events: auto;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--primary);
+  border-radius: 16px;
+  padding: 12px 16px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  max-width: 360px;
+  animation: popIn 0.28s var(--ease-cashew);
+}
+
+/* Empty state */
+.empty-cashew {
+  text-align: center;
+  padding: 36px 20px;
+  color: var(--text-muted);
+}
+
+.empty-cashew .material-symbols-rounded {
+  font-size: 44px;
+  opacity: 0.45;
+  margin-bottom: 8px;
+}
+
+/* SVG Charts Responsiveness */
+.chart-container {
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Icon & Color Pickers */
+.picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.icon-pick-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--bg-input);
+  border: 1.5px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-pick-btn.active {
+  background: var(--primary-container);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.color-pick-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+}
+
+.color-pick-btn.active {
+  border-color: #ffffff;
+  transform: scale(1.12);
+}
+
+/* Animations */
+@keyframes pulseGreen {
+  0% { box-shadow: 0 0 0 0 rgba(98, 202, 119, 0.65); }
+  70% { box-shadow: 0 0 0 8px rgba(98, 202, 119, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(98, 202, 119, 0); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUpSheet {
+  from { opacity: 0; transform: translateY(28px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+/* ==========================================================================
+   ADVANCED RESPONSIVE ENGINE (MOBILE PHONES, TABLETS & DESKTOP PC)
+   ========================================================================== */
+@media (max-width: 1120px) {
+  .cashew-home-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  /* Layout & Navigation */
+  .cashew-sidebar {
+    display: none !important;
+  }
+  .cashew-main {
+    margin-left: 0 !important;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 12px calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 24px) !important;
+    width: 100%;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box;
+  }
+  .mobile-bottom-nav {
+    display: flex !important;
+    background: rgba(14, 18, 26, 0.92) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-top: 1px solid var(--border-subtle) !important;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Floating Buttons */
+  .cashew-fab {
+    bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 16px) !important;
+    right: 16px !important;
+    width: 54px !important;
+    height: 54px !important;
+    border-radius: 18px !important;
+  }
+  .chat-fab-btn {
+    bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 82px) !important;
+    right: 18px !important;
+    width: 46px !important;
+    height: 46px !important;
+  }
+
+  /* Header & Greetings */
+  .cashew-greeting-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    margin-bottom: 16px !important;
+  }
+  .greeting-small {
+    font-size: 13.5px !important;
+  }
+  .greeting-username {
+    font-size: 26px !important;
+    line-height: 1.18 !important;
+  }
+  .header-actions-bar {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    overflow-x: auto !important;
+    padding-bottom: 4px !important;
+    gap: 8px !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+  }
+  .header-actions-bar::-webkit-scrollbar {
+    display: none !important;
+  }
+  .header-actions-bar .btn-cashew {
+    white-space: nowrap !important;
+    padding: 8px 13px !important;
+    font-size: 12.5px !important;
+  }
+
+  /* Wallets Horizontal Carousel Strip on Mobile */
+  .wallets-strip {
+    display: flex !important;
+    overflow-x: auto !important;
+    scroll-snap-type: x mandatory !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 11px !important;
+    padding-bottom: 6px !important;
+    margin-left: -12px !important;
+    margin-right: -12px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    scrollbar-width: none !important;
+  }
+  .wallets-strip::-webkit-scrollbar {
+    display: none !important;
+  }
+  .wallet-card {
+    flex: 0 0 240px !important;
+    min-width: 240px !important;
+    scroll-snap-align: start !important;
+    padding: 14px 15px !important;
+    border-radius: 18px !important;
+  }
+  .wallet-card .wallet-balance {
+    font-size: 21px !important;
+  }
+  .wallet-add-card {
+    flex: 0 0 130px !important;
+    min-width: 130px !important;
+    min-height: auto !important;
+  }
+
+  /* KPI Cards Grid on Mobile (Clean 2x2 Grid) */
+  .kpi-grid-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+    margin-bottom: 14px !important;
+  }
+  .kpi-cashew-card {
+    padding: 13px 14px !important;
+    border-radius: 16px !important;
+    gap: 6px !important;
+  }
+  .kpi-top {
+    font-size: 11px !important;
+  }
+  .kpi-icon-box {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 10px !important;
+  }
+  .kpi-icon-box .material-symbols-rounded {
+    font-size: 18px !important;
+  }
+  .kpi-big-val {
+    font-size: 19px !important;
+  }
+  .kpi-foot {
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Cashflow Duo Pills */
+  .cashflow-duo {
+    gap: 9px !important;
+  }
+  .cashflow-pill-card {
+    padding: 11px 12px !important;
+    border-radius: 15px !important;
+    gap: 8px !important;
+  }
+  .cashflow-arrow {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 10px !important;
+  }
+  .cashflow-val {
+    font-size: 17px !important;
+  }
+
+  /* Cards & Spacing */
+  .cashew-card {
+    border-radius: 20px !important;
+    padding: 16px 14px !important;
+  }
+  .cashew-card-header {
+    margin-bottom: 12px !important;
+    gap: 8px !important;
+  }
+  .cashew-card-title {
+    font-size: 16px !important;
+  }
+
+  /* Segmented Pills Scrollable */
+  .segmented-pills {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    padding-bottom: 2px !important;
+  }
+  .segmented-pills::-webkit-scrollbar {
+    display: none !important;
+  }
+  .seg-pill {
+    white-space: nowrap !important;
+    font-size: 12.5px !important;
+    padding: 6px 13px !important;
+  }
+
+  /* Toolbar Rows */
+  .toolbar-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 9px !important;
+  }
+  .toolbar-row > div {
+    width: 100% !important;
+  }
+  .search-box {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Forms & Inputs (Prevents iOS zoom with 16px font) */
+  .form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  .cashew-input, .cashew-select, .cashew-textarea {
+    font-size: 16px !important;
+    padding: 10px 12px !important;
+  }
+
+  /* Bottom-Sheet Modals on Mobile */
+  .modal-backdrop {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+  .modal-sheet {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 26px !important;
+    border-top-right-radius: 26px !important;
+    max-height: 90vh !important;
+    padding: 14px 16px calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55) !important;
+  }
+  .sheet-handle {
+    display: block !important;
+    width: 44px !important;
+    height: 5px !important;
+    border-radius: 99px !important;
+    background: var(--border-subtle) !important;
+    margin: -4px auto 14px !important;
+  }
+  .modal-title {
+    font-size: 18px !important;
+  }
+
+  /* Stock & Transaction Lists */
+  .tx-row {
+    padding: 10px 12px !important;
+    gap: 10px !important;
+  }
+  .tx-title {
+    font-size: 13.5px !important;
+  }
+  .tx-amount {
+    font-size: 15px !important;
+  }
+  .stock-pricing-box {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 6px !important;
+    padding: 10px !important;
+  }
+  .price-col-val {
+    font-size: 13.5px !important;
+  }
+
+  /* Chat Stream on Mobile */
+  .chat-panel-card {
+    height: calc(100vh - var(--bottom-nav-height) - env(safe-area-inset-bottom, 0px) - 170px) !important;
+    min-height: 420px !important;
+    border-radius: 18px !important;
+  }
+  .chat-messages-stream {
+    padding: 12px 10px !important;
+  }
+  .chat-msg-row {
+    max-width: 95% !important;
+  }
+  .chat-composer-bar {
+    padding: 8px 10px !important;
+    gap: 6px !important;
+  }
+  .chat-composer-bar .cashew-input {
+    font-size: 15px !important;
+    padding: 9px 12px !important;
+  }
+}
+
+/* Extra Compact Phones (iPhone SE, narrow Android < 380px) */
+@media (max-width: 380px) {
+  .kpi-grid-4 {
+    grid-template-columns: 1fr !important;
+  }
+  .cashflow-duo {
+    grid-template-columns: 1fr !important;
+  }
+  .wallet-card {
+    flex: 0 0 215px !important;
+    min-width: 215px !important;
+  }
+}
+
+
+/* ==========================================================================
+   OFFICIAL CASHEW ILLUSTRATED PNG ICONS & ICON PICKER
+   ========================================================================== */
+.cashew-png-icon {
+  object-fit: contain;
+  display: inline-block;
+  vertical-align: middle;
+  user-select: none;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18));
+}
+
+.icon-picker-scroll {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 8px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-input);
+  border-radius: 16px;
+  border: 1px solid var(--border-subtle);
+}
+
+.icon-pick-tile {
+  height: 46px;
+  border-radius: 13px;
+  background: var(--bg-card);
+  border: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.icon-pick-tile:hover {
+  transform: scale(1.07);
+  background: var(--bg-card-hover);
+}
+
+.icon-pick-tile.active {
+  border-color: var(--primary);
+  background: var(--primary-container);
+}
+
+/* ==========================================================================
+   CASHEW CALENDAR HEATMAP (Ported from homePageHeatmap.dart)
+   ========================================================================== */
+.cashew-heatmap-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cashew-heatmap-scroll {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+}
+
+.hm-weekdays-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  padding-right: 4px;
+}
+
+.hm-month-spacer {
+  height: 17px;
+}
+
+.hm-weekday-lbl {
+  height: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+.hm-weeks-row {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.hm-week-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hm-month-lbl {
+  height: 17px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.hm-cell {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1.5px solid transparent;
+  transition: transform 0.14s ease, filter 0.14s ease;
+  padding: 0;
+}
+
+.hm-cell:hover {
+  transform: scale(1.26);
+  z-index: 2;
+  border-color: var(--text-main);
+}
+
+.hm-empty {
+  background: var(--bg-input);
+  border-color: var(--border-subtle);
+}
+
+.hm-future {
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  opacity: 0.35;
+}
+
+.hm-neutral {
+  background: var(--secondary-container);
+}
+
+.hm-inc-1 { background: rgba(98, 202, 119, 0.26); }
+.hm-inc-2 { background: rgba(98, 202, 119, 0.48); }
+.hm-inc-3 { background: rgba(98, 202, 119, 0.72); }
+.hm-inc-4 { background: #62ca77; }
+
+.hm-exp-1 { background: rgba(218, 114, 114, 0.26); }
+.hm-exp-2 { background: rgba(218, 114, 114, 0.48); }
+.hm-exp-3 { background: rgba(218, 114, 114, 0.72); }
+.hm-exp-4 { background: #da7272; }
+
+.hm-today {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.hm-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hm-legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3.5px;
+  display: inline-block;
+}
+
+/* ==========================================================================
+   FULL TRANSACTION DETAILS, UPCOMING / OVERDUE & BALANCE CORRECTION PILLS
+   ========================================================================== */
+.tx-note-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(140, 160, 195, 0.08);
+  border-left: 2.5px solid var(--primary);
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-top: 4px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-time-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 1.5px 6px;
+  border-radius: 6px;
+}
+
+.tx-kind-pill {
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 1.5px 7px;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tx-kind-pill.inc {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+.tx-kind-pill.exp {
+  background: var(--cashew-expense-bg);
+  color: var(--cashew-expense);
+}
+
+.tx-kind-pill.trf {
+  background: var(--cashew-upcoming-bg);
+  color: var(--cashew-upcoming);
+}
+
+.tx-kind-pill.cor {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-muted);
+}
+
+.overdue-badge {
+  background: rgba(218, 114, 114, 0.2);
+  color: var(--cashew-expense);
+  border: 1px solid rgba(218, 114, 114, 0.45);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.upcoming-badge {
+  background: var(--cashew-upcoming-bg);
+  color: var(--cashew-upcoming);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.month-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+/* ==========================================================================
+   PERSISTENT REAL-TIME PARTNER CHAT (PAGE + FLOATING QUICK DRAWER)
+   ========================================================================== */
+.chat-fab-btn {
+  position: fixed;
+  right: 26px;
+  bottom: 98px;
+  z-index: 445;
+  width: 52px;
+  height: 52px;
+  border-radius: 17px;
+  background: var(--bg-elevated);
+  color: var(--primary);
+  border: 1.5px solid var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.36);
+  transition: transform 0.22s var(--ease-cashew), background-color 0.2s ease;
+}
+
+.chat-fab-btn:hover {
+  transform: scale(1.07);
+  background: var(--primary-container);
+}
+
+.chat-unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--cashew-expense);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.chat-panel-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  height: 540px;
+  max-height: 74vh;
+  overflow: hidden;
+}
+
+.chat-panel-head {
+  padding: 15px 18px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-messages-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-msg-row {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+}
+
+.chat-msg-row.mine {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-msg-row.theirs {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.chat-bubble {
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.42;
+  word-break: break-word;
+}
+
+.chat-msg-row.mine .chat-bubble {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-bottom-right-radius: 5px;
+  font-weight: 600;
+}
+
+.chat-msg-row.theirs .chat-bubble {
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-bottom-left-radius: 5px;
+}
+
+.chat-msg-meta {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Chat message actions (Edit within 1h, Delete within 24h) */
+.chat-bubble-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+.chat-bubble-action-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--primary);
+}
+.chat-bubble-delete-btn:hover {
+  color: var(--cashew-expense) !important;
+}
+.chat-bubble-action-btn .material-symbols-rounded {
+  font-size: 14px;
+}
+.chat-edited-badge {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Inline GIF container */
+.chat-inline-gif-box {
+  max-width: min(280px, 70vw);
+  max-height: 280px;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  background: rgba(127, 127, 127, 0.15);
+}
+.chat-inline-gif {
+  width: 100%;
+  height: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  display: block;
+}
+
+.chat-composer-bar {
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ---------- Chat images (30-day ephemeral) ---------- */
+.chat-attach-btn {
+  padding: 10px 11px !important;
+  flex-shrink: 0;
+}
+
+.chat-bubble.has-image {
+  padding: 4px;
+  overflow: hidden;
+}
+
+.chat-bubble-text {
+  white-space: pre-wrap;
+}
+
+.chat-bubble.has-image .chat-bubble-text {
+  padding: 7px 10px 6px;
+}
+
+.chat-img-box {
+  position: relative;
+  width: min(260px, 62vw);
+  max-height: 340px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(127, 127, 127, 0.18);
+  cursor: zoom-in;
+}
+
+.chat-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chat-img:not([src]) {
+  visibility: hidden;
+}
+
+.chat-img-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.chat-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 16px 40px;
+  cursor: zoom-out;
+}
+
+.chat-image-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 12px;
+  cursor: default;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.chat-image-viewer-bar {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-image-viewer-bar .icon-btn {
+  color: #fff;
+}
+
+.chat-image-viewer-note {
+  position: absolute;
+  bottom: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ==========================================================================
+   OMNICHANNEL BOT & MULTIPLATFORM INBOX (WHATSAPP, INSTAGRAM, MESSENGER)
+   ========================================================================== */
+
+/* Main Bot View Layout */
+.bot-page-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.bot-inbox-grid {
+  display: grid;
+  grid-template-columns: 330px 1fr;
+  gap: 16px;
+  height: calc(100vh - 210px);
+  min-height: 600px;
+  position: relative;
+}
+
+@media (max-width: 900px) {
+  .bot-inbox-grid {
+    grid-template-columns: 290px 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .bot-inbox-grid {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - 180px);
+  }
+
+  .bot-inbox-sidebar.hidden-mobile {
+    display: none !important;
+  }
+
+  .bot-chat-container.hidden-mobile {
+    display: none !important;
+  }
+}
+
+/* Left Sidebar: Filters & Conversation List */
+.bot-inbox-sidebar {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.bot-sidebar-header {
+  padding: 14px 14px 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-elevated);
+}
+
+.bot-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 7px 12px;
+}
+
+.bot-search-bar input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13.5px;
+  color: var(--text-main);
+  width: 100%;
+}
+
+.bot-channel-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.bot-channel-pills::-webkit-scrollbar { display: none; }
+
+.bot-channel-pill {
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.bot-channel-pill:hover {
+  background: var(--bg-elevated);
+  color: var(--text-main);
+}
+
+.bot-channel-pill.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.bot-channel-pill.active-amber {
+  background: #d49b4b;
+  color: #1a1a1a;
+  border-color: #d49b4b;
+}
+
+.bot-conv-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Conversation List Item */
+.bot-conv-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  position: relative;
+}
+
+.bot-conv-item:hover {
+  background: var(--bg-elevated);
+}
+
+.bot-conv-item.active {
+  background: var(--secondary-container);
+  border-color: var(--primary);
+}
+
+/* Yellow / Mustard Highlight for Chats Requiring Human Attention */
+.bot-conv-item.needs-attention {
+  background: rgba(212, 155, 75, 0.14) !important;
+  border: 1.5px solid #d49b4b !important;
+  box-shadow: 0 0 14px rgba(212, 155, 75, 0.28) !important;
+}
+
+.bot-conv-item.needs-attention:hover {
+  background: rgba(212, 155, 75, 0.22) !important;
+}
+
+.bot-attention-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #d49b4b;
+  background: rgba(212, 155, 75, 0.2);
+  padding: 2px 7px;
+  border-radius: 99px;
+  border: 1px solid rgba(212, 155, 75, 0.4);
+  animation: pulseAmberBadge 2s infinite ease-in-out;
+}
+
+@keyframes pulseAmberBadge {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.85; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Avatar with Bottom-Right Social Badge */
+.bot-avatar-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+
+.bot-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  background: var(--secondary-container);
+  color: var(--primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.social-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  font-size: 10px;
+}
+
+.social-badge.badge-wa {
+  background: #25d366;
+  color: #fff;
+}
+
+.social-badge.badge-ig {
+  background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+  color: #fff;
+}
+
+.social-badge.badge-fb {
+  background: linear-gradient(135deg, #00b2ff 0%, #006aff 100%);
+  color: #fff;
+}
+
+.bot-conv-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.bot-conv-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.bot-conv-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bot-conv-time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bot-conv-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bot-conv-unread {
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 99px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+/* Right Chat Container */
+.bot-chat-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+
+.bot-chat-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-elevated);
+  gap: 12px;
+}
+
+.bot-chat-header-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bot-chat-user-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.bot-chat-user-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bot-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cashew-income);
+}
+
+.bot-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Needs Attention Card at Top of Active Chat */
+.bot-attention-banner {
+  background: rgba(212, 155, 75, 0.16);
+  border-bottom: 1.5px solid #d49b4b;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.bot-attention-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #d49b4b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bot-attention-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Messages Stream */
+.bot-messages-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-surface);
+}
+
+.bot-msg-row {
+  display: flex;
+  flex-direction: column;
+  max-width: 78%;
+  gap: 3px;
+}
+
+.bot-msg-row.incoming {
+  align-self: flex-start;
+}
+
+.bot-msg-row.outgoing {
+  align-self: flex-end;
+}
+
+.bot-msg-sender-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.bot-msg-row.outgoing .bot-msg-sender-name {
+  margin-left: 0;
+  margin-right: 6px;
+  text-align: right;
+}
+
+.bot-bubble {
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  word-break: break-word;
+  position: relative;
+}
+
+.bot-msg-row.incoming .bot-bubble {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-bottom-left-radius: 4px;
+}
+
+.bot-msg-row.outgoing .bot-bubble {
+  background: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.bot-bubble-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 4px;
+}
+
+.bot-msg-row.incoming .bot-bubble-meta {
+  color: var(--text-muted);
+}
+
+/* Media in Bubbles (Photos, Videos, GIFs) */
+.bot-msg-media-box {
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  max-width: 280px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.bot-msg-media-box img {
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+  border-radius: 12px;
+}
+
+.bot-msg-media-box video {
+  width: 100%;
+  max-height: 240px;
+  display: block;
+  border-radius: 12px;
+}
+
+/* Realistic Typing Indicator */
+.bot-typing-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 8px 14px;
+  align-self: flex-start;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.bot-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bot-typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.bot-typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.bot-typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+/* Media Attachment Preview Tray */
+.bot-media-tray {
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bot-media-thumb-wrap {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.bot-media-thumb-wrap img,
+.bot-media-thumb-wrap video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bot-media-thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+/* Composer Bar */
+.bot-composer-bar {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bot-composer-input {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 9px 14px;
+  font-size: 13.5px;
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.bot-composer-input:focus {
+  border-color: var(--primary);
+}
+
+.bot-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bot-icon-btn:hover {
+  background: var(--bg-surface);
+  color: var(--text-main);
+}
+
+.bot-send-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.bot-send-btn:hover {
+  opacity: 0.9;
+}
+
+/* Sub-Tab Navigation Bar in Bot Page */
+.bot-subtabs-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 0;
+  margin-bottom: 6px;
+}
+.bot-subtabs-nav::-webkit-scrollbar { display: none; }
+
+.bot-subtab-btn {
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.bot-subtab-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-main);
+}
+
+.bot-subtab-btn.active {
+  background: var(--secondary-container);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+/* Modals & Configuration Cards */
+.bot-card-setting {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bot-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bot-card-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bot-channel-conn-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bot-channel-status-pill {
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bot-channel-status-pill.connected {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+}
+
+.bot-channel-status-pill.disconnected {
+  background: rgba(209, 102, 102, 0.15);
+  color: var(--cashew-expense);
+}
+
+.bot-qr-box {
+  background: #fff;
+  padding: 14px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.bot-qr-box img {
+  width: 190px;
+  height: 190px;
+  display: block;
+}
+
+/* Payment Verification Modal Layout */
+.verify-payment-summary-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.verify-payment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13.5px;
+}
+
+.verify-profit-pill {
+  background: var(--cashew-income-bg);
+  color: var(--cashew-income);
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+

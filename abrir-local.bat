@@ -1,0 +1,6 @@
+@echo off
+title Cashew Web + Stock en Tiempo Real (doom1 / doom2)
+echo Iniciando servidor web local en http://localhost:8080 ...
+start "" "http://localhost:8080"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$listener = New-Object System.Net.HttpListener; $listener.Prefixes.Add('http://localhost:8080/'); $listener.Start(); Write-Host 'Servidor activo en http://localhost:8080 - Cierra esta ventana para detenerlo.' -ForegroundColor Green; $root = (Get-Location).Path; $mime = @{'.html'='text/html; charset=utf-8';'.css'='text/css; charset=utf-8';'.js'='application/javascript; charset=utf-8';'.json'='application/json; charset=utf-8';'.svg'='image/svg+xml';'.png'='image/png';'.jpg'='image/jpeg'}; while ($listener.IsListening) { $ctx = $listener.GetContext(); $rel = $ctx.Request.Url.LocalPath.TrimStart('/'); if ([string]::IsNullOrEmpty($rel)) { $rel = 'index.html' }; $file = Join-Path $root $rel; if (Test-Path $file -PathType Leaf) { $ext = [System.IO.Path]::GetExtension($file).ToLower(); $ctx.Response.ContentType = if ($mime.ContainsKey($ext)) { $mime[$ext] } else { 'application/octet-stream' }; $bytes = [System.IO.File]::ReadAllBytes($file); $ctx.Response.ContentLength64 = $bytes.Length; $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length) } else { $ctx.Response.StatusCode = 404 }; $ctx.Response.OutputStream.Close() }"

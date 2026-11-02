@@ -1,0 +1,5 @@
+node_modules/
+baileys_auth/
+.env
+.DS_Store
+Thumbs.db

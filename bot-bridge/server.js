@@ -688,17 +688,17 @@ async function startWhatsApp() {
       waState = 'disconnected';
       if (waStopped || !isOwner) return;
 
-      if (code === DisconnectReason.loggedOut || code === DisconnectReason.badSession) {
-        logger.warn('La sesión fue cerrada desde el teléfono. Se generará un QR nuevo.');
+      if (code === DisconnectReason.loggedOut) {
+        logger.warn('La sesión fue cerrada explícitamente desde el teléfono. Se limpiarán credenciales.');
         await clearAuthEverywhere();
-        await setWaStatus({ state: 'logged_out', connected: false, qr: null, lastError: 'Sesión cerrada desde el teléfono. Generando QR nuevo...' });
-        scheduleWaRestart(2000);
+        await setWaStatus({ state: 'logged_out', connected: false, qr: null, lastError: 'Sesión desvinculada desde el teléfono.' });
+        scheduleWaRestart(3000);
       } else if (code === DisconnectReason.connectionReplaced) {
-        await setWaStatus({ state: 'replaced', connected: false, lastError: 'Otra copia del bot abrió esta misma sesión. Reintentando en 30 s.' });
-        scheduleWaRestart(30000);
+        await setWaStatus({ state: 'replaced', connected: false, lastError: 'Otra copia abrió esta sesión. Reintentando en 15 s.' });
+        scheduleWaRestart(15000);
       } else {
         await setWaStatus({ state: 'reconnecting', connected: false, lastError: `${code || ''} ${reason}`.trim() });
-        scheduleWaRestart(code === DisconnectReason.restartRequired ? 500 : 4000);
+        scheduleWaRestart(code === DisconnectReason.restartRequired ? 500 : 3000);
       }
     }
   });

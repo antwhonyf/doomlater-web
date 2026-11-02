@@ -270,7 +270,7 @@ async function restoreAuthIfNewer() {
 async function clearAuthEverywhere() {
   wipeLocalAuth();
   lastBackupHash = null;
-  if (isOwner) await fb('DELETE', AUTH_PATH);
+  await fb('DELETE', AUTH_PATH);
 }
 
 /* --------------------------------------------------------------------------
@@ -697,10 +697,10 @@ async function startWhatsApp() {
       if (waStopped || !isOwner) return;
 
       if (code === DisconnectReason.loggedOut) {
-        logger.warn('La sesión fue cerrada desde el teléfono.');
-        wipeLocalAuth();
-        await setWaStatus({ state: 'logged_out', connected: false, qr: null, lastError: 'Sesión desvinculada desde el teléfono.' });
-        scheduleWaRestart(3000);
+        logger.warn('La sesión fue cerrada desde el teléfono. Limpiando credenciales para generar nuevo QR/código.');
+        await clearAuthEverywhere();
+        await setWaStatus({ state: 'logged_out', connected: false, qr: null, pairingCode: null, lastError: 'Sesión desvinculada desde el teléfono.' });
+        scheduleWaRestart(2000);
       } else if (code === DisconnectReason.connectionReplaced) {
         await setWaStatus({ state: 'replaced', connected: false, lastError: 'Otra copia abrió esta sesión. Reintentando en 15 s.' });
         scheduleWaRestart(15000);
@@ -1010,6 +1010,28 @@ function dataUrlToBuffer(dataUrl) {
   return m ? { mime: m[1], buffer: Buffer.from(m[2], 'base64') } : null;
 }
 
+async function resolveMediaPayload(mediaUrl, text) {
+  if (!mediaUrl) return null;
+  const data = dataUrlToBuffer(mediaUrl);
+  if (data) {
+    const kind = data.mime.startsWith('video') ? 'video' : 'image';
+    return { [kind]: data.buffer, caption: text || undefined, mimetype: data.mime };
+  }
+  if (/^https?:/.test(mediaUrl)) {
+    try {
+      const res = await fetch(mediaUrl);
+      if (res.ok) {
+        const mime = res.headers.get('content-type') || 'image/jpeg';
+        const buf = Buffer.from(await res.arrayBuffer());
+        const kind = mime.startsWith('video') ? 'video' : 'image';
+        return { [kind]: buf, caption: text || undefined, mimetype: mime };
+      }
+    } catch (e) {}
+    return { image: { url: mediaUrl }, caption: text || undefined };
+  }
+  return null;
+}
+
 function resolveWaJids(item) {
   const jids = [];
   const rawPhone = item.phone || item.customerPhone || (item.to && !item.to.includes('@') ? item.to : '') || '';
@@ -1052,16 +1074,13 @@ async function processOutbox() {
       if (item.platform === 'whatsapp') {
         const candidateJids = resolveWaJids(item);
         if (candidateJids.length === 0) throw new Error('Destinatario de WhatsApp inválido (sin número ni JID).');
-        const media = dataUrlToBuffer(item.mediaUrl);
+        const mediaPayload = await resolveMediaPayload(item.mediaUrl, item.text);
         let sentOk = false;
         let lastErr = null;
         for (const targetJid of candidateJids) {
           try {
-            if (media) {
-              const kind = media.mime.startsWith('video') ? 'video' : 'image';
-              await waSend(targetJid, { [kind]: media.buffer, caption: item.text || undefined, mimetype: media.mime });
-            } else if (item.mediaUrl && /^https?:/.test(item.mediaUrl)) {
-              await waSend(targetJid, { image: { url: item.mediaUrl }, caption: item.text || undefined });
+            if (mediaPayload) {
+              await waSend(targetJid, mediaPayload);
             } else {
               await waSend(targetJid, { text: item.text || '' });
             }

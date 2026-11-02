@@ -1463,6 +1463,21 @@ async function processOutbox() {
   if (!items || typeof items !== 'object') return;
   for (const [key, item] of Object.entries(items)) {
     if (!item || outboxBusy.has(key)) continue;
+
+    if (item.type === 'delete_message') {
+      outboxBusy.add(key);
+      try {
+        if (item.whatsappKey && sock) {
+          await sock.sendMessage(item.to, { delete: item.whatsappKey });
+        }
+      } catch (delErr) {
+        logger.warn({ err: delErr.message }, 'No se pudo eliminar mensaje en WhatsApp remotamente');
+      }
+      await fb('DELETE', `${OUTBOX_PATH}/${key}`);
+      outboxBusy.delete(key);
+      continue;
+    }
+
     if (item.platform === 'whatsapp' && waState !== 'connected') {
       if (Date.now() - (Number(item.createdAt) || 0) < 10 * 60 * 1000) continue; // espera a que reconecte
     }

@@ -4758,10 +4758,88 @@
             <div class="bot-bubble-meta">
               <span>${timeStr}</span>
               ${statusIcon}
+              <button type="button" class="bot-msg-del-btn" title="Eliminar mensaje de la conversación" onclick="event.stopPropagation(); CashewApp.confirmDeleteBotMessage('${msg.id}')">
+                <span class="material-symbols-rounded">delete</span>
+              </button>
             </div>
           </div>
         </div>
       `;
+    },
+
+    confirmDeleteBotMessage(msgId) {
+      const msg = (this.activeList('botMessages') || []).find(x => x && x.id === msgId && !x.deleted);
+      if (!msg) {
+        this.toast('Mensaje no encontrado', 'error');
+        return;
+      }
+      const preview = (msg.text || (msg.mediaUrl ? '[Archivo adjunto]' : 'Mensaje')).slice(0, 60);
+
+      this.openModalHTML(`
+        <div class="modal-head">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px; height:36px; border-radius:10px; background:rgba(239,68,68,0.15); display:flex; align-items:center; justify-content:center; color:#ef4444;">
+              <span class="material-symbols-rounded" style="font-size:22px;">delete</span>
+            </div>
+            <div>
+              <div style="font-size:11.5px; color:var(--cashew-expense); font-weight:700;">Eliminar Mensaje del Chat</div>
+              <h2 class="modal-title" style="font-size:17.5px; margin:0;">¿Eliminar este mensaje?</h2>
+            </div>
+          </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+
+        <div style="background:var(--bg-elevated); border-radius:12px; padding:12px 14px; margin-bottom:14px; font-size:13px; color:var(--text-muted);">
+          <p style="margin:0 0 6px 0;">El mensaje será borrado directamente de la conversación web y la base de datos.</p>
+          <div style="font-style:italic; color:var(--text-main); font-size:12.5px; border-left:3px solid var(--border-subtle); padding-left:8px; margin-top:6px;">"${this.escapeHtml(preview)}"</div>
+        </div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">Cancelar</button>
+          <button type="button" class="btn-cashew" style="background:var(--cashew-expense); color:#fff; padding:9px 18px; border-radius:12px;"
+                  onclick="CashewApp.deleteBotMessage('${this.escapeHtml(msg.id)}')">
+            <span class="material-symbols-rounded" style="font-size:18px;">delete</span> Eliminar
+          </button>
+        </div>
+      `);
+    },
+
+    deleteBotMessage(msgId) {
+      const msg = (this.activeList('botMessages') || []).find(x => x && x.id === msgId && !x.deleted);
+      this.closeModal();
+      if (!msg) return;
+
+      const convId = msg.convId;
+      window.cashewSync.deleteEntity('botMessages', msgId, 'Eliminó mensaje del chat');
+
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (conv) {
+        const remaining = (this.activeList('botMessages') || [])
+          .filter(m => m.convId === convId && m.id !== msgId && !m.deleted)
+          .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        const last = remaining[remaining.length - 1];
+        window.cashewSync.upsertEntity('botConversations', {
+          ...conv,
+          lastMessage: last ? (last.text || (last.mediaUrl ? `[${(last.mediaType || 'MULTIMEDIA').toUpperCase()}]` : 'Mensaje')) : '',
+          lastMessageAt: last ? (last.createdAt || Date.now()) : conv.lastMessageAt
+        }, 'Actualizó último mensaje tras eliminar');
+
+        // Optional queue to outbox if WhatsApp key present
+        if (window.cashewSync && typeof window.cashewSync.queueBotOutbox === 'function') {
+          window.cashewSync.queueBotOutbox({
+            type: 'delete_message',
+            convId: conv.id,
+            msgId: msg.id,
+            to: conv.customerJid || conv.customerPhone || '',
+            whatsappKey: msg.whatsappKey || null
+          });
+        }
+      }
+
+      this.toast('Mensaje eliminado', 'delete');
+      this.renderMainView();
     },
 
     onBotMediaSelected(ev) {
@@ -4916,9 +4994,14 @@
               <span style="color:var(--text-muted);">Concepto reportado:</span>
               <span>${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')}</span>
             </div>
-            <div class="verify-payment-row" style="font-size:15px;">
-              <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado al Cliente:</span>
-              <strong style="color:var(--cashew-income); font-size:18px;">$${amount.toFixed(2)}</strong>
+            <div class="verify-payment-row" style="font-size:15px; align-items:center;">
+              <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado / Verificado ($):</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="color:var(--cashew-income); font-weight:800; font-size:16px;">$</span>
+                <input type="number" id="vpay_amount" step="0.5" min="0" value="${amount.toFixed(2)}" class="cashew-input"
+                       style="width:115px; font-weight:800; color:var(--cashew-income); font-size:16px; text-align:right;"
+                       oninput="CashewApp.updateVerifyPaymentBreakdown()" />
+              </div>
             </div>
           </div>
 
@@ -4939,7 +5022,7 @@
             <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:6px; display:block;">
               ¿Qué tipo de cobro es?
             </label>
-            <select id="vpay_operationType" class="cashew-input" style="width:100%; font-size:13.5px; font-weight:600;" onchange="CashewApp.onVerifyOperationTypeChange(this.value, ${amount})">
+            <select id="vpay_operationType" class="cashew-input" style="width:100%; font-size:13.5px; font-weight:600;" onchange="CashewApp.onVerifyOperationTypeChange(this.value)">
               <option value="venta" ${defaultType === 'venta' ? 'selected' : ''}>🛍️ Venta de Producto (Descuenta producto en vitrina / stock)</option>
               <option value="servicio" ${defaultType === 'servicio' ? 'selected' : ''}>🔧 Servicio Técnico (Descuenta repuesto o insumo de taller)</option>
               <option value="ninguno" ${defaultType === 'ninguno' ? 'selected' : ''}>💰 Ingreso Libre / Sin Stock (Mano de obra, abono o ganancia neta pura)</option>
@@ -4951,7 +5034,7 @@
             <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
               Producto vendido (se descontará del stock):
             </label>
-            <select id="vpay_productId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
+            <select id="vpay_productId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown()">
               ${sellables.length === 0 ? `
                 <option value="">(No hay productos para vender registrados - se registrará sin descuento)</option>
               ` : sellables.map(p => `
@@ -4963,7 +5046,7 @@
 
             <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
               <span style="font-size:12px; color:var(--text-muted);">Cantidad vendida:</span>
-              <input type="number" id="vpay_productQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
+              <input type="number" id="vpay_productQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown()" />
             </div>
           </div>
 
@@ -4972,7 +5055,7 @@
             <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
               Insumo de taller consumido (se descontará del stock):
             </label>
-            <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
+            <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown()">
               ${insumos.length === 0 ? `
                 <option value="">(No hay insumos registrados en stock - se registrará sin descuento)</option>
               ` : insumos.map(i => `
@@ -4984,7 +5067,7 @@
 
             <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
               <span style="font-size:12px; color:var(--text-muted);">Cantidad consumida:</span>
-              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
+              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" oninput="CashewApp.updateVerifyPaymentBreakdown()" />
             </div>
           </div>
 
@@ -5013,19 +5096,24 @@
       setTimeout(() => this.updateVerifyPaymentBreakdown(amount), 30);
     },
 
-    onVerifyOperationTypeChange(type, totalCharged) {
+    onVerifyOperationTypeChange(type) {
       const prodSec = document.getElementById('vpay_productSection');
       const insumoSec = document.getElementById('vpay_insumoSection');
       if (prodSec) prodSec.style.display = type === 'venta' ? 'block' : 'none';
       if (insumoSec) insumoSec.style.display = type === 'servicio' ? 'block' : 'none';
-      this.updateVerifyPaymentBreakdown(totalCharged);
+      this.updateVerifyPaymentBreakdown();
     },
 
-    updateVerifyPaymentBreakdown(totalCharged) {
+    updateVerifyPaymentBreakdown(totalCharged = null) {
       const typeSel = document.getElementById('vpay_operationType');
       const type = typeSel ? typeSel.value : 'venta';
       const profitEl = document.getElementById('vpay_netProfitVal');
       if (!profitEl) return;
+
+      const amtInput = document.getElementById('vpay_amount');
+      const currentTotal = (amtInput && !isNaN(parseFloat(amtInput.value)))
+        ? parseFloat(amtInput.value)
+        : (totalCharged != null ? Number(totalCharged) : 0);
 
       let costBasis = 0;
       let label = '';
@@ -5052,7 +5140,7 @@
         }
       }
 
-      const netProfit = Math.max(0, totalCharged - costBasis);
+      const netProfit = Math.max(0, currentTotal - costBasis);
       if (costBasis > 0) {
         profitEl.textContent = `+$${netProfit.toFixed(2)} (${label})`;
       } else {
@@ -5066,7 +5154,10 @@
 
       const walletId = document.getElementById('vpay_walletId').value;
       const operationType = document.getElementById('vpay_operationType') ? document.getElementById('vpay_operationType').value : 'venta';
-      const amount = Number(conv.pendingPaymentAmount) || 40.00;
+      const amtInput = document.getElementById('vpay_amount');
+      const amount = (amtInput && !isNaN(parseFloat(amtInput.value)) && parseFloat(amtInput.value) >= 0)
+        ? parseFloat(amtInput.value)
+        : (Number(conv.pendingPaymentAmount) || 40.00);
       const now = Date.now();
       const ops = [];
 
@@ -5320,35 +5411,34 @@
       const cfg = this.getBotConfig();
       const existing = (cfg.paymentMethods || []).find(p => p.id === pmId) || { id: '', name: '', details: '' };
 
-      const html = `
-        <div class="cashew-modal-overlay" id="editPmModalOverlay" onclick="if(event.target===this) CashewApp.closeModal('editPmModalOverlay')">
-          <div class="cashew-modal-sheet" style="max-width:440px;">
-            <div class="modal-sheet-header">
-              <h2 style="font-size:17px; font-weight:800; margin:0;">${pmId ? 'Editar' : 'Agregar'} Método de Pago</h2>
-              <button class="icon-btn" onclick="CashewApp.closeModal('editPmModalOverlay')">
-                <span class="material-symbols-rounded">close</span>
-              </button>
+      const bodyHtml = `
+        <div class="modal-head">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px; height:36px; border-radius:10px; background:rgba(76,175,80,0.15); display:flex; align-items:center; justify-content:center; color:var(--cashew-income);">
+              <span class="material-symbols-rounded" style="font-size:22px;">account_balance_wallet</span>
             </div>
-            <form onsubmit="event.preventDefault(); CashewApp.savePaymentMethod('${pmId}');">
-              <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Método (ej. Pago Móvil / Binance)</label>
-                <input type="text" id="pm_name" class="cashew-input" style="width:100%;" value="${this.escapeHtml(existing.name)}" required />
-              </div>
-              <div class="form-group" style="margin-bottom:16px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Datos / Detalles de Cuenta</label>
-                <textarea id="pm_details" class="cashew-input" style="width:100%; height:75px;" required>${this.escapeHtml(existing.details)}</textarea>
-              </div>
-              <div style="display:flex; justify-content:flex-end; gap:8px;">
-                <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal('editPmModalOverlay')">Cancelar</button>
-                <button type="submit" class="btn-cashew btn-primary">Guardar Método</button>
-              </div>
-            </form>
+            <h2 class="modal-title" style="font-size:17.5px; margin:0;">${pmId ? 'Editar' : 'Agregar'} Método de Pago</h2>
           </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
         </div>
+        <form onsubmit="event.preventDefault(); CashewApp.savePaymentMethod('${pmId}');">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Método (ej. Pago Móvil / Binance)</label>
+            <input type="text" id="pm_name" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${this.escapeHtml(existing.name)}" required />
+          </div>
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Datos / Detalles de Cuenta</label>
+            <textarea id="pm_details" class="cashew-input" style="width:100%; height:80px; box-sizing:border-box;" required>${this.escapeHtml(existing.details)}</textarea>
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px;">
+            <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">Cancelar</button>
+            <button type="submit" class="btn-cashew btn-primary">Guardar Método</button>
+          </div>
+        </form>
       `;
-      const ex = document.getElementById('editPmModalOverlay');
-      if (ex) ex.remove();
-      document.body.insertAdjacentHTML('beforeend', html);
+      this.openModalHTML(bodyHtml, false);
     },
 
     savePaymentMethod(pmId) {
@@ -5366,7 +5456,7 @@
       }
 
       window.cashewSync.saveBotConfig({ paymentMethods: list }, 'Método de pago guardado');
-      this.closeModal('editPmModalOverlay');
+      this.closeModal();
       this.toast('Método de pago actualizado', 'verified');
       this.renderMainView();
     },
@@ -5384,35 +5474,34 @@
       const cfg = this.getBotConfig();
       const existing = (cfg.knowledgeBaseFaq || []).find(f => f.id === faqId) || { id: '', question: '', answer: '' };
 
-      const html = `
-        <div class="cashew-modal-overlay" id="editFaqModalOverlay" onclick="if(event.target===this) CashewApp.closeModal('editFaqModalOverlay')">
-          <div class="cashew-modal-sheet" style="max-width:480px;">
-            <div class="modal-sheet-header">
-              <h2 style="font-size:17px; font-weight:800; margin:0;">${faqId ? 'Editar' : 'Agregar'} Pregunta Frecuente (FAQ)</h2>
-              <button class="icon-btn" onclick="CashewApp.closeModal('editFaqModalOverlay')">
-                <span class="material-symbols-rounded">close</span>
-              </button>
+      const bodyHtml = `
+        <div class="modal-head">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px; height:36px; border-radius:10px; background:rgba(59,130,246,0.15); display:flex; align-items:center; justify-content:center; color:var(--primary);">
+              <span class="material-symbols-rounded" style="font-size:22px;">psychology</span>
             </div>
-            <form onsubmit="event.preventDefault(); CashewApp.saveFaqItem('${faqId}');">
-              <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Pregunta del Cliente (ej. ¿Hacen delivery?)</label>
-                <input type="text" id="faq_q" class="cashew-input" style="width:100%;" value="${this.escapeHtml(existing.question)}" required />
-              </div>
-              <div class="form-group" style="margin-bottom:16px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Respuesta que dará la IA</label>
-                <textarea id="faq_a" class="cashew-input" style="width:100%; height:90px;" required>${this.escapeHtml(existing.answer)}</textarea>
-              </div>
-              <div style="display:flex; justify-content:flex-end; gap:8px;">
-                <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal('editFaqModalOverlay')">Cancelar</button>
-                <button type="submit" class="btn-cashew btn-primary">Guardar Pregunta</button>
-              </div>
-            </form>
+            <h2 class="modal-title" style="font-size:17.5px; margin:0;">${faqId ? 'Editar' : 'Agregar'} Pregunta Frecuente (FAQ)</h2>
           </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
         </div>
+        <form onsubmit="event.preventDefault(); CashewApp.saveFaqItem('${faqId}');">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Pregunta del Cliente (ej. ¿Hacen delivery?)</label>
+            <input type="text" id="faq_q" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${this.escapeHtml(existing.question)}" required />
+          </div>
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Respuesta que dará la IA</label>
+            <textarea id="faq_a" class="cashew-input" style="width:100%; height:95px; box-sizing:border-box;" required>${this.escapeHtml(existing.answer)}</textarea>
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px;">
+            <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">Cancelar</button>
+            <button type="submit" class="btn-cashew btn-primary">Guardar Pregunta</button>
+          </div>
+        </form>
       `;
-      const ex = document.getElementById('editFaqModalOverlay');
-      if (ex) ex.remove();
-      document.body.insertAdjacentHTML('beforeend', html);
+      this.openModalHTML(bodyHtml, false);
     },
 
     saveFaqItem(faqId) {
@@ -5430,7 +5519,7 @@
       }
 
       window.cashewSync.saveBotConfig({ knowledgeBaseFaq: list }, 'FAQ del bot guardado');
-      this.closeModal('editFaqModalOverlay');
+      this.closeModal();
       this.toast('Pregunta frecuente guardada', 'psychology');
       this.renderMainView();
     },
@@ -5492,42 +5581,41 @@
     openAddServiceMappingModal() {
       const insumos = (this.activeList('stockItems') || []).filter(i => i.kind === 'insumo');
 
-      const html = `
-        <div class="cashew-modal-overlay" id="addSrvModalOverlay" onclick="if(event.target===this) CashewApp.closeModal('addSrvModalOverlay')">
-          <div class="cashew-modal-sheet" style="max-width:440px;">
-            <div class="modal-sheet-header">
-              <h2 style="font-size:17px; font-weight:800; margin:0;">Vincular Servicio a Insumo</h2>
-              <button class="icon-btn" onclick="CashewApp.closeModal('addSrvModalOverlay')">
-                <span class="material-symbols-rounded">close</span>
-              </button>
+      const bodyHtml = `
+        <div class="modal-head">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px; height:36px; border-radius:10px; background:rgba(212,155,75,0.18); display:flex; align-items:center; justify-content:center; color:#d49b4b;">
+              <span class="material-symbols-rounded" style="font-size:22px;">build</span>
             </div>
-            <form onsubmit="event.preventDefault(); CashewApp.saveServiceMapping();">
-              <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Servicio (ej. Mantenimiento PS5 / Cambio Pantalla)</label>
-                <input type="text" id="srv_name" class="cashew-input" style="width:100%;" required />
-              </div>
-              <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Insumo de taller que consume</label>
-                <select id="srv_insumo" class="cashew-input" style="width:100%;">
-                  ${insumos.map(i => `<option value="${i.name}">${i.name}</option>`).join('')}
-                  <option value="Insumo genérico">Otro / Insumo genérico</option>
-                </select>
-              </div>
-              <div class="form-group" style="margin-bottom:16px;">
-                <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Precio sugerido de venta ($)</label>
-                <input type="number" step="0.5" id="srv_price" class="cashew-input" style="width:100%;" value="40" required />
-              </div>
-              <div style="display:flex; justify-content:flex-end; gap:8px;">
-                <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal('addSrvModalOverlay')">Cancelar</button>
-                <button type="submit" class="btn-cashew btn-primary">Guardar</button>
-              </div>
-            </form>
+            <h2 class="modal-title" style="font-size:17.5px; margin:0;">Vincular Servicio a Insumo</h2>
           </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
         </div>
+        <form onsubmit="event.preventDefault(); CashewApp.saveServiceMapping();">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Servicio (ej. Mantenimiento PS5 / Cambio Pantalla)</label>
+            <input type="text" id="srv_name" class="cashew-input" style="width:100%; box-sizing:border-box;" required />
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Insumo de taller que consume</label>
+            <select id="srv_insumo" class="cashew-input" style="width:100%; box-sizing:border-box;">
+              ${insumos.map(i => `<option value="${this.escapeHtml(i.name)}">${this.escapeHtml(i.name)}</option>`).join('')}
+              <option value="Insumo genérico">Otro / Insumo genérico</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Precio sugerido de venta ($)</label>
+            <input type="number" step="0.5" id="srv_price" class="cashew-input" style="width:100%; box-sizing:border-box;" value="40" required />
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px;">
+            <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">Cancelar</button>
+            <button type="submit" class="btn-cashew btn-primary">Guardar</button>
+          </div>
+        </form>
       `;
-      const ex = document.getElementById('addSrvModalOverlay');
-      if (ex) ex.remove();
-      document.body.insertAdjacentHTML('beforeend', html);
+      this.openModalHTML(bodyHtml, false);
     },
 
     saveServiceMapping() {
@@ -5546,7 +5634,7 @@
       });
 
       window.cashewSync.saveBotConfig({ serviceInsumosMap: list }, 'Mapeo de servicio guardado');
-      this.closeModal('addSrvModalOverlay');
+      this.closeModal();
       this.toast('Servicio técnico vinculado', 'build');
       this.renderMainView();
     },
@@ -6176,15 +6264,20 @@
       document.body.appendChild(wrap);
     },
 
-    closeModal() {
+    closeModal(overlayId = null) {
       this._quickChatOpen = false;
       if (typeof this._modalCloseCb === 'function') {
         const cb = this._modalCloseCb;
         this._modalCloseCb = null;
         try { cb(); } catch (e) {}
       }
+      if (overlayId && typeof overlayId === 'string') {
+        const specific = document.getElementById(overlayId);
+        if (specific) specific.remove();
+      }
       const existing = document.getElementById('cashewModalBackdrop');
       if (existing) existing.remove();
+      document.querySelectorAll('.cashew-modal-overlay').forEach(el => el.remove());
     },
 
     openQuickChatModal() {

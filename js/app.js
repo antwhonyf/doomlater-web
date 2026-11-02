@@ -1154,6 +1154,9 @@
       if (this.activePage === 'profile') {
         this.scrollChatToBottom('pageChatStream');
       }
+      if (this.activePage === 'bot') {
+        this.scrollChatToBottom('botMessagesStream');
+      }
 
       if (focusId) {
         const restored = document.getElementById(focusId);
@@ -1249,6 +1252,7 @@
           break;
         case 'bot':
           container.innerHTML = this.buildBotPage();
+          this.scrollChatToBottom('botMessagesStream');
           break;
         case 'settings':
           container.innerHTML = this.buildSettingsPage();
@@ -3526,10 +3530,13 @@
     },
 
     scrollChatToBottom(containerId) {
-      setTimeout(() => {
+      const doScroll = () => {
         const el = document.getElementById(containerId);
         if (el) el.scrollTop = el.scrollHeight;
-      }, 30);
+      };
+      doScroll();
+      requestAnimationFrame(doScroll);
+      setTimeout(doScroll, 40);
     },
 
     sendChatMessageText(rawText) {
@@ -4224,6 +4231,70 @@
 
     setBotSearchQuery(query) {
       this.botSearchQuery = query;
+      const listEl = document.getElementById('botConversationsList');
+      const inputEl = document.getElementById('botSearchInput');
+      if (inputEl && inputEl.value !== query) {
+        inputEl.value = query;
+      }
+      const clearBtn = document.getElementById('botSearchClearBtn');
+      if (clearBtn) {
+        clearBtn.style.display = query ? 'inline-flex' : 'none';
+      }
+      if (listEl) {
+        listEl.innerHTML = this.renderBotConvListHTML();
+        return;
+      }
+      this.renderAppPreservingFocus();
+    },
+
+    getFilteredBotConversations() {
+      const allConvs = this.getVisibleBotConversations();
+      return allConvs.filter(c => {
+        if (this.botChannelFilter === 'whatsapp' && c.platform !== 'whatsapp') return false;
+        if (this.botChannelFilter === 'instagram' && c.platform !== 'instagram') return false;
+        if (this.botChannelFilter === 'messenger' && c.platform !== 'messenger') return false;
+        if (this.botChannelFilter === 'attention' && !c.needsAttention) return false;
+
+        if (this.botSearchQuery && this.botSearchQuery.trim()) {
+          const q = this.botSearchQuery.toLowerCase().trim();
+          const hay = `${c.customerName || ''} ${c.customerPhone || ''} ${c.lastMessage || ''}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      }).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
+    },
+
+    renderBotConvListHTML() {
+      const filtered = this.getFilteredBotConversations();
+      if (filtered.length === 0) {
+        return `
+          <div style="text-align:center; padding:32px 16px; color:var(--text-muted); font-size:13px;">
+            <span class="material-symbols-rounded" style="font-size:32px; opacity:0.5; margin-bottom:8px;">chat_bubble_outline</span>
+            <div>${this.botSearchQuery ? `No hay resultados para "${this.escapeHtml(this.botSearchQuery)}"` : 'No hay conversaciones en este filtro.'}</div>
+          </div>
+        `;
+      }
+      return filtered.map(c => this.renderBotConvItemHTML(c)).join('');
+    },
+
+    deleteBotConversation(convId) {
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (!conv) return;
+      const name = conv.customerName || conv.customerPhone || 'este cliente';
+      if (!confirm(`¿Eliminar la conversación con ${name}? Ya no aparecerá en tu bandeja de entrada.`)) {
+        return;
+      }
+
+      window.cashewSync.upsertEntity('botConversations', {
+        ...conv,
+        deleted: true,
+        deletedAt: Date.now()
+      }, `Eliminó conversación con ${name}`);
+
+      if (this.botActiveConvId === convId) {
+        this.botActiveConvId = null;
+      }
+      this.toast(`Conversación con ${name} eliminada`, 'delete');
       this.renderMainView();
     },
 
@@ -4237,11 +4308,7 @@
         }, 'Mensajes leídos');
       }
       this.renderMainView();
-      // On mobile, auto scroll to chat pane
-      setTimeout(() => {
-        const stream = document.getElementById('botMessagesStream');
-        if (stream) stream.scrollTop = stream.scrollHeight;
-      }, 50);
+      this.scrollChatToBottom('botMessagesStream');
     },
 
     toggleBotAutoReply(convId) {
@@ -4362,21 +4429,7 @@
        ====================================================================== */
     buildBotInboxHTML() {
       const allConvs = this.getVisibleBotConversations();
-
-      // Filter by channel/attention
-      const filtered = allConvs.filter(c => {
-        if (this.botChannelFilter === 'whatsapp' && c.platform !== 'whatsapp') return false;
-        if (this.botChannelFilter === 'instagram' && c.platform !== 'instagram') return false;
-        if (this.botChannelFilter === 'messenger' && c.platform !== 'messenger') return false;
-        if (this.botChannelFilter === 'attention' && !c.needsAttention) return false;
-
-        if (this.botSearchQuery.trim()) {
-          const q = this.botSearchQuery.toLowerCase();
-          const hay = `${c.customerName || ''} ${c.customerPhone || ''} ${c.lastMessage || ''}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      }).sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
+      const filtered = this.getFilteredBotConversations();
 
       // Auto-select first conversation if none selected
       if (!this.botActiveConvId && filtered.length > 0) {
@@ -4397,14 +4450,12 @@
             <div class="bot-sidebar-header">
               <div class="bot-search-bar">
                 <span class="material-symbols-rounded" style="font-size:18px; color:var(--text-muted);">search</span>
-                <input type="text" placeholder="Buscar cliente o mensaje..."
-                       value="${this.botSearchQuery}"
+                <input type="text" id="botSearchInput" placeholder="Buscar cliente o mensaje..."
+                       value="${this.escapeHtml(this.botSearchQuery || '')}"
                        oninput="CashewApp.setBotSearchQuery(this.value)" />
-                ${this.botSearchQuery ? `
-                  <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;" onclick="CashewApp.setBotSearchQuery('')">
-                    <span class="material-symbols-rounded" style="font-size:16px;">close</span>
-                  </button>
-                ` : ''}
+                <button id="botSearchClearBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer; display:${this.botSearchQuery ? 'inline-flex' : 'none'}; align-items:center;" onclick="CashewApp.setBotSearchQuery(''); const inp = document.getElementById('botSearchInput'); if (inp) { inp.value = ''; inp.focus(); }">
+                  <span class="material-symbols-rounded" style="font-size:16px;">close</span>
+                </button>
               </div>
 
               <!-- Channel Pills -->
@@ -4428,13 +4479,8 @@
             </div>
 
             <!-- Conversation Items List -->
-            <div class="bot-conv-list">
-              ${filtered.length === 0 ? `
-                <div style="text-align:center; padding:32px 16px; color:var(--text-muted); font-size:13px;">
-                  <span class="material-symbols-rounded" style="font-size:32px; opacity:0.5; margin-bottom:8px;">chat_bubble_outline</span>
-                  <div>No hay conversaciones en este filtro.</div>
-                </div>
-              ` : filtered.map(c => this.renderBotConvItemHTML(c)).join('')}
+            <div class="bot-conv-list" id="botConversationsList">
+              ${this.renderBotConvListHTML()}
             </div>
           </div>
 
@@ -4542,14 +4588,14 @@
               <span>${botActive ? 'Bot IA: Activo' : 'Modo Manual (IA Pausada)'}</span>
             </button>
 
-            ${conv.pendingPayment ? `
-              <button class="btn-cashew"
-                      style="background:#d49b4b; color:#1a1a1a; font-weight:800; font-size:12px; padding:6px 12px;"
-                      onclick="CashewApp.openVerifyPaymentModal('${conv.id}')">
-                <span class="material-symbols-rounded" style="font-size:17px;">check_circle</span>
-                Verificar Pago ($${conv.pendingPaymentAmount || 0})
-              </button>
-            ` : ''}
+            <!-- Delete Conversation Button -->
+            <button class="btn-cashew btn-surface"
+                    style="font-size:12px; padding:6px 10px; color:#ef4444; border-color:rgba(239,68,68,0.25);"
+                    title="Eliminar conversación de la lista"
+                    onclick="CashewApp.deleteBotConversation('${conv.id}')">
+              <span class="material-symbols-rounded" style="font-size:17px; color:#ef4444;">delete</span>
+              <span>Borrar Chat</span>
+            </button>
 
             ${conv.needsAttention && !conv.pendingPayment ? `
               <button class="btn-cashew btn-surface"
@@ -4562,29 +4608,20 @@
           </div>
         </div>
 
-        <!-- Prominent Attention Alert Banner at Top of Chat -->
-        ${conv.needsAttention ? `
+        <!-- Attention Alert Banner at Top of Chat (ONLY for operator assistance, NOT payments) -->
+        ${conv.needsAttention && !conv.pendingPayment ? `
           <div class="bot-attention-banner">
             <div class="bot-attention-banner-text">
               <span class="material-symbols-rounded" style="font-size:24px;">warning</span>
               <div>
                 <strong>Atención requerida para responder:</strong>
-                <div>${conv.attentionReason || 'El cliente solicitó verificación de pago o realizó una pregunta fuera de stock.'}</div>
+                <div>${this.escapeHtml(conv.attentionReason || 'El cliente solicitó asistencia de un operador humano.')}</div>
               </div>
             </div>
             <div class="bot-attention-banner-actions">
-              ${conv.pendingPayment ? `
-                <button class="btn-cashew"
-                        style="background:#d49b4b; color:#1a1a1a; font-weight:800;"
-                        onclick="CashewApp.openVerifyPaymentModal('${conv.id}')">
-                  <span class="material-symbols-rounded">payments</span>
-                  Verificar Pago Ahora
-                </button>
-              ` : `
-                <button class="btn-cashew btn-surface" onclick="CashewApp.markBotAttentionResolved('${conv.id}')">
-                  Marcar Atendido
-                </button>
-              `}
+              <button class="btn-cashew btn-surface" onclick="CashewApp.markBotAttentionResolved('${conv.id}')">
+                Marcar Atendido
+              </button>
             </div>
           </div>
         ` : ''}
@@ -4604,6 +4641,31 @@
             </div>
           ` : ''}
         </div>
+
+        <!-- Pending Payment Verification Card (ONLY at bottom of chat with the customer) -->
+        ${conv.pendingPayment ? `
+          <div class="bot-payment-bottom-card">
+            <div class="bot-payment-bottom-content">
+              <div class="bot-payment-bottom-icon">
+                <span class="material-symbols-rounded">receipt_long</span>
+              </div>
+              <div class="bot-payment-bottom-details">
+                <div class="bot-payment-bottom-title">
+                  <span>Pago por verificar:</span>
+                  <span class="bot-payment-bottom-badge">$${Number(conv.pendingPaymentAmount || 0).toFixed(2)}</span>
+                </div>
+                <div class="bot-payment-bottom-sub">
+                  ${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')} • Clic para verificar y registrar en caja
+                </div>
+              </div>
+            </div>
+            <button class="btn-cashew bot-payment-bottom-btn"
+                    onclick="CashewApp.openVerifyPaymentModal('${conv.id}')">
+              <span class="material-symbols-rounded" style="font-size:18px;">verified</span>
+              Verificar Pago
+            </button>
+          </div>
+        ` : ''}
 
         <!-- Media Attachment Preview Tray (if file selected) -->
         ${this.botSelectedMedia ? `
@@ -4775,10 +4837,9 @@
       }
 
       this.renderMainView();
-      setTimeout(() => {
-        const stream = document.getElementById('botMessagesStream');
-        if (stream) stream.scrollTop = stream.scrollHeight;
-      }, 50);
+      this.scrollChatToBottom('botMessagesStream');
+      const refreshedInput = document.getElementById('botMessageInput');
+      if (refreshedInput) refreshedInput.focus();
     },
 
     sendBotPresetReply(type) {
@@ -4823,106 +4884,102 @@
       const amount = Number(conv.pendingPaymentAmount) || 40.00;
       const defaultInsumo = insumos[0] || null;
 
-      const html = `
-        <div class="cashew-modal-overlay" id="verifyPaymentModalOverlay" onclick="if(event.target===this) CashewApp.closeModal('verifyPaymentModalOverlay')">
-          <div class="cashew-modal-sheet" style="max-width:520px;">
-            <div class="modal-sheet-header">
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span class="material-symbols-rounded" style="color:#d49b4b; font-size:26px;">verified</span>
-                <div>
-                  <h2 style="font-size:18px; font-weight:800; margin:0;">Verificar y Registrar Pago</h2>
-                  <div style="font-size:12px; color:var(--text-muted);">Acredita el ingreso y descuenta insumos de taller</div>
-                </div>
-              </div>
-              <button class="icon-btn" onclick="CashewApp.closeModal('verifyPaymentModalOverlay')">
-                <span class="material-symbols-rounded">close</span>
-              </button>
+      const bodyHtml = `
+        <div class="modal-head">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:38px; height:38px; border-radius:12px; background:rgba(212,155,75,0.18); display:flex; align-items:center; justify-content:center; color:#d49b4b;">
+              <span class="material-symbols-rounded" style="font-size:24px;">verified</span>
+            </div>
+            <div>
+              <h2 class="modal-title" style="font-size:18px; margin:0;">Verificar y Registrar Pago</h2>
+              <div style="font-size:12px; color:var(--text-muted);">Acredita el ingreso a caja y descuenta insumos de taller</div>
+            </div>
+          </div>
+          <button class="icon-btn" onclick="CashewApp.closeModal()">
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+
+        <form id="verifyPaymentForm" onsubmit="event.preventDefault(); CashewApp.executeVerifyPayment('${conv.id}');">
+          <!-- Summary Box -->
+          <div class="verify-payment-summary-box">
+            <div class="verify-payment-row">
+              <span style="color:var(--text-muted);">Cliente:</span>
+              <strong>${this.escapeHtml(conv.customerName)} (${(conv.platform || 'whatsapp').toUpperCase()})</strong>
+            </div>
+            <div class="verify-payment-row">
+              <span style="color:var(--text-muted);">Concepto / Detalle:</span>
+              <span>${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')}</span>
+            </div>
+            <div class="verify-payment-row" style="font-size:15px;">
+              <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado al Cliente:</span>
+              <strong style="color:var(--cashew-income); font-size:18px;">$${amount.toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <!-- Destination Wallet Selector -->
+          <div class="form-group" style="margin-bottom:14px;">
+            <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:block;">
+              ¿En qué cuenta o billetera cayó el pago?
+            </label>
+            <select id="vpay_walletId" class="cashew-input" style="width:100%; font-size:13.5px;" required>
+              ${wallets.map(w => `
+                <option value="${w.id}">${this.escapeHtml(w.name)} (${w.currency || 'USD'})</option>
+              `).join('')}
+            </select>
+          </div>
+
+          <!-- Service vs Direct Sale Toggle -->
+          <div class="form-group" style="margin-bottom:14px;">
+            <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="vpay_isService" checked onchange="CashewApp.onVerifyServiceToggleChange(this.checked)" />
+              <span>Es un Servicio Técnico (Requiere descontar repuesto / insumo)</span>
+            </label>
+          </div>
+
+          <!-- Insumo Selection section -->
+          <div id="vpay_insumoSection" style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
+            <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
+              Insumo de stock consumido en el taller:
+            </label>
+            <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
+              ${insumos.length === 0 ? `
+                <option value="">(No hay insumos registrados en stock - se registrará sin descuento)</option>
+              ` : insumos.map(i => `
+                <option value="${i.id}" data-cost="${Number(i.purchaseCost) || 0}" data-stock="${Number(i.stock) || 0}">
+                  ${this.escapeHtml(i.name)} (Stock: ${i.stock} un. • Costo compra: $${Number(i.purchaseCost || 0).toFixed(2)})
+                </option>
+              `).join('')}
+            </select>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
+              <span style="font-size:12px; color:var(--text-muted);">Cantidad consumida:</span>
+              <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
             </div>
 
-            <form id="verifyPaymentForm" onsubmit="event.preventDefault(); CashewApp.executeVerifyPayment('${conv.id}');">
-              <!-- Summary Box -->
-              <div class="verify-payment-summary-box">
-                <div class="verify-payment-row">
-                  <span style="color:var(--text-muted);">Cliente:</span>
-                  <strong>${conv.customerName} (${conv.platform.toUpperCase()})</strong>
-                </div>
-                <div class="verify-payment-row">
-                  <span style="color:var(--text-muted);">Concepto / Detalle:</span>
-                  <span>${conv.pendingPaymentItem || 'Servicio Técnico / Venta'}</span>
-                </div>
-                <div class="verify-payment-row" style="font-size:15px;">
-                  <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado al Cliente:</span>
-                  <strong style="color:var(--cashew-income); font-size:17px;">$${amount.toFixed(2)}</strong>
-                </div>
+            <!-- Financial Net Profit Breakdown -->
+            <div id="vpay_breakdownBox" style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-subtle); font-size:12.5px;">
+              <div class="verify-profit-pill">
+                <span>Ganancia Neta Estimada:</span>
+                <strong id="vpay_netProfitVal">+$${defaultInsumo ? Math.max(0, amount - (Number(defaultInsumo.purchaseCost) || 0)).toFixed(2) : amount.toFixed(2)}</strong>
               </div>
-
-              <!-- Destination Wallet Selector -->
-              <div class="form-group" style="margin-bottom:14px;">
-                <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:block;">
-                  ¿En qué cuenta o billetera cayó el pago?
-                </label>
-                <select id="vpay_walletId" class="cashew-input" style="width:100%; font-size:13.5px;" required>
-                  ${wallets.map(w => `
-                    <option value="${w.id}">${w.name} (${w.currency || 'USD'})</option>
-                  `).join('')}
-                </select>
-              </div>
-
-              <!-- Service vs Direct Sale Toggle -->
-              <div class="form-group" style="margin-bottom:14px;">
-                <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:flex; align-items:center; gap:8px;">
-                  <input type="checkbox" id="vpay_isService" checked onchange="CashewApp.onVerifyServiceToggleChange(this.checked)" />
-                  <span>Es un Servicio Técnico (Requiere descontar repuesto / insumo)</span>
-                </label>
-              </div>
-
-              <!-- Insumo Selection section -->
-              <div id="vpay_insumoSection" style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:12px; padding:12px; margin-bottom:14px;">
-                <label class="form-label" style="font-weight:700; font-size:12.5px; margin-bottom:6px; display:block;">
-                  Insumo de stock consumido en el taller:
-                </label>
-                <select id="vpay_insumoId" class="cashew-input" style="width:100%; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})">
-                  ${insumos.length === 0 ? `
-                    <option value="">(No hay insumos registrados en stock - se registrará sin descuento)</option>
-                  ` : insumos.map(i => `
-                    <option value="${i.id}" data-cost="${Number(i.purchaseCost) || 0}" data-stock="${Number(i.stock) || 0}">
-                      ${i.name} (Stock: ${i.stock} un. • Costo compra: $${Number(i.purchaseCost || 0).toFixed(2)})
-                    </option>
-                  `).join('')}
-                </select>
-
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
-                  <span style="font-size:12px; color:var(--text-muted);">Cantidad consumida:</span>
-                  <input type="number" id="vpay_insumoQty" value="1" min="1" max="100" class="cashew-input" style="width:70px; text-align:center; padding:4px 8px; font-size:13px;" onchange="CashewApp.updateVerifyPaymentBreakdown(${amount})" />
-                </div>
-
-                <!-- Financial Net Profit Breakdown -->
-                <div id="vpay_breakdownBox" style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-subtle); font-size:12.5px;">
-                  <div class="verify-profit-pill">
-                    <span>Ganancia Neta Estimada:</span>
-                    <strong id="vpay_netProfitVal">+$${defaultInsumo ? Math.max(0, amount - (Number(defaultInsumo.purchaseCost) || 0)).toFixed(2) : amount.toFixed(2)}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Modal Actions -->
-              <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
-                <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal('verifyPaymentModalOverlay')">
-                  Cancelar
-                </button>
-                <button type="submit" class="btn-cashew btn-primary" style="background:#d49b4b; border-color:#d49b4b; color:#1a1a1a; font-weight:800;">
-                  <span class="material-symbols-rounded">check</span>
-                  Confirmar y Sumar Ganancias
-                </button>
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
+
+          <!-- Modal Actions -->
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+            <button type="button" class="btn-cashew btn-surface" onclick="CashewApp.closeModal()">
+              Cancelar
+            </button>
+            <button type="submit" class="btn-cashew btn-primary" style="background:#d49b4b; border-color:#d49b4b; color:#1a1a1a; font-weight:800;">
+              <span class="material-symbols-rounded">check</span>
+              Confirmar y Sumar Ganancias
+            </button>
+          </div>
+        </form>
       `;
 
-      const existing = document.getElementById('verifyPaymentModalOverlay');
-      if (existing) existing.remove();
-      document.body.insertAdjacentHTML('beforeend', html);
+      this.openModalHTML(bodyHtml, false);
     },
 
     onVerifyServiceToggleChange(isChecked) {
@@ -5031,23 +5088,39 @@
       ops.push({ collection: 'botConversations', item: updatedConv });
 
       // 4. Send Confirmation Message to customer
+      const confMsg = {
+        id: 'bmsg_vpay_conf_' + now.toString(36),
+        convId: conv.id,
+        direction: 'out',
+        text: `✅ ¡Tu pago de $${amount.toFixed(2)} ha sido verificado con éxito por @${this.user || 'socio'}! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater.Corp! ✨`,
+        sentBy: this.user || 'doom1',
+        createdAt: now + 100
+      };
       ops.push({
         collection: 'botMessages',
-        item: {
-          id: 'bmsg_vpay_conf_' + now.toString(36),
-          convId: conv.id,
-          direction: 'out',
-          text: `✅ ¡Tu pago de $${amount.toFixed(2)} ha sido verificado con éxito por @${this.user || 'socio'}! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater.Corp! ✨`,
-          sentBy: this.user || 'doom1',
-          createdAt: now + 100
-        }
+        item: confMsg
       });
 
       window.cashewSync.batchUpsert(ops, `Pago verificado: $${amount.toFixed(2)} de ${conv.customerName}`);
 
-      this.closeModal('verifyPaymentModalOverlay');
+      // Dispatch confirmation message to WhatsApp outbox so the client gets it
+      if (window.cashewSync && typeof window.cashewSync.queueBotOutbox === 'function') {
+        window.cashewSync.queueBotOutbox({
+          msgId: confMsg.id,
+          convId: conv.id,
+          platform: conv.platform,
+          to: conv.customerJid || conv.customerPhone || conv.customerPlatformId || '',
+          phone: conv.customerPhone || '',
+          jid: conv.customerJid || '',
+          text: confMsg.text,
+          createdAt: confMsg.createdAt
+        });
+      }
+
+      this.closeModal();
       this.toast(`¡Pago de $${amount.toFixed(2)} verificado! Ganancias e insumos actualizados.`, 'verified');
       this.renderMainView();
+      this.scrollChatToBottom('botMessagesStream');
     },
 
     /* ======================================================================

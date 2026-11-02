@@ -1010,6 +1010,7 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
  * Borradores en memoria para recopilación paso a paso de transacciones de socios.
  */
 const partnerTxDrafts = new Map();
+const partnerDeleteDrafts = new Map();
 
 /**
  * Extractor inteligente de datos de transacción con Gemini 3.5 Flash.
@@ -1391,6 +1392,69 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     return `❌ *Registro de transacción cancelado.* Cuando desees agregar una nueva transacción al dashboard, solo dímelo por aquí.`;
   }
 
+  // 0.0. CONFIRMACIÓN O CANCELACIÓN DE ELIMINACIÓN DE TRANSACCIÓN PENDIENTE
+  if (partnerDeleteDrafts.has(partnerName)) {
+    const pendingDel = partnerDeleteDrafts.get(partnerName);
+    if (Date.now() - (pendingDel.startedAt || 0) > 10 * 60 * 1000) {
+      partnerDeleteDrafts.delete(partnerName);
+    } else if (/(?:cancelar|olv[ií]dalo|no\s*importa|deja\s*eso|ya\s*no|no\s*la\s*borres|no)/i.test(lower)) {
+      partnerDeleteDrafts.delete(partnerName);
+      return `❌ *Eliminación cancelada.* La transacción *"${pendingDel.tx.title}"* se mantiene intacta en el Dashboard.`;
+    } else if (/(?:s[ií]|confirm(?:ar|o)?|elimina(?:r)?|borra(?:r)?|dale|procede|hazlo)/i.test(lower)) {
+      partnerDeleteDrafts.delete(partnerName);
+      const isAnthony = partnerName === 'Anthony';
+      const profileUser = isAnthony ? 'doom1' : 'doom2';
+      const tx = pendingDel.tx;
+
+      const patchUpdates = {
+        [`transactions/${tx.id}/deleted`]: true,
+        [`transactions/${tx.id}/deletedAt`]: Date.now(),
+        [`transactions/${tx.id}/deletedBy`]: profileUser,
+        'meta/updatedAt': Date.now(),
+        'meta/rev': Date.now(),
+        'meta/lastLabel': `Transacción "${tx.title}" eliminada por @${profileUser}`,
+        'meta/lastClientId': 'bot_bridge',
+        'meta/updatedBy': profileUser
+      };
+
+      // Si la transacción tenía stock vinculado, restaurar el inventario (+1)
+      let restoredStockMsg = '';
+      if (tx.stockId) {
+        const stockItemsRaw = await fb('GET', ws('stockItems'));
+        const stockItem = stockItemsRaw ? stockItemsRaw[tx.stockId] : null;
+        if (stockItem && !stockItem.deleted) {
+          const restoredStock = (Number(stockItem.stock) || 0) + 1;
+          patchUpdates[`stockItems/${stockItem.id}/stock`] = restoredStock;
+          patchUpdates[`stockItems/${stockItem.id}/updatedAt`] = Date.now();
+          restoredStockMsg = `\n📦 *Stock restaurado:* Se devolvió 1 ud a *${stockItem.name}* (Quedan: ${restoredStock} uds).`;
+        }
+      }
+
+      await fb('PATCH', ROOT, patchUpdates);
+
+      // Notificar al otro socio
+      const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
+      const otherAlert = `🗑️ *DOOMLATER: Transacción Eliminada en Dashboard*\n\n` +
+        `Tu socio *${partnerName}* (@${profileUser}) acaba de confirmar la eliminación de la transacción:\n` +
+        `• *Concepto:* ${tx.title}\n` +
+        `• *Monto:* $${Number(tx.amount || 0).toFixed(2)}\n` +
+        `• *Fecha:* ${tx.date} a las ${tx.time || 'actual'}${restoredStockMsg}\n\n` +
+        `🌐 _Actualizado en tiempo real en la Web._`;
+      notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+
+      return `🗑️ *¡Transacción Eliminada con Éxito!* ✅\n\n` +
+        `• *Concepto:* *${tx.title}*\n` +
+        `• *Monto:* $${Number(tx.amount || 0).toFixed(2)}\n` +
+        `• *Eliminada por:* @${profileUser} (${partnerName})${restoredStockMsg}\n\n` +
+        `🌐 _El Dashboard de la Web se actualizó al instante en vivo._`;
+    } else {
+      return `⚠️ *Tienes una eliminación pendiente de confirmación:*\n\n` +
+        `• *Transacción:* *${pendingDel.tx.title}* ($${Number(pendingDel.tx.amount || 0).toFixed(2)})\n\n` +
+        `👉 Para confirmar y borrarla de la Web, responde: *"CONFIRMAR"* o *"ELIMINAR"*\n` +
+        `👉 Para no borrarla, responde: *"CANCELAR"*`;
+    }
+  }
+
   // 0.A. SIMULACIÓN DE PRUEBA DE VERIFICACIÓN DE PAGO (SOLICITADA POR SOCIO)
   if (/(?:prob(?:ar|emos)?|simul(?:ar|a)?|test(?:ear)?)\s*(?:el)?\s*(?:verificar\s*pago|pago|verificaci[oó]n)/i.test(lower) ||
       /(?:vamos\s*a\s*probar|prueba|hazme\s*una\s*prueba\s*de)\s*(?:el)?\s*(?:verificar\s*pago|pago|verificaci[oó]n)/i.test(lower)) {
@@ -1732,6 +1796,76 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `• *Stock anterior:* ${curStock} uds\n` +
       `• *Nuevo stock disponible:* *${newStock}* unidades\n\n` +
       `🌐 _Actualizado en tiempo real en la Web y registrado en el Kardex._`;
+  }
+
+  // 0.E. SOLICITAR ELIMINACIÓN DE TRANSACCIÓN ("eliminar transacción", "borra la última transacción", etc.)
+  const isDeleteTxIntent = /(?:elimina(?:r)?|borra(?:r)?|anula(?:r)?)\s+(?:la\s+)?(?:[uú]ltima\s+)?(?:transacci[oó]n|venta|gasto|ingreso|cobro)/i.test(lower) ||
+                           /(?:elimina(?:r)?|borra(?:r)?|anula(?:r)?)\s+(?:la\s+transacci[oó]n|el\s+pago|el\s+cobro|el\s+ingreso|el\s+gasto)/i.test(lower);
+
+  if (isDeleteTxIntent && !partnerTxDrafts.has(partnerName)) {
+    const isAnthony = partnerName === 'Anthony';
+    const profileUser = isAnthony ? 'doom1' : 'doom2';
+
+    // Obtener transacciones activas de Firebase
+    const txsRaw = await fb('GET', ws('transactions'));
+    const allTxs = txsRaw ? Object.values(txsRaw).filter(t => t && !t.deleted) : [];
+
+    if (allTxs.length === 0) {
+      return `⚠️ No hay transacciones activas registradas en el Dashboard para eliminar.`;
+    }
+
+    // Ordenar de más reciente a más antigua
+    allTxs.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+    let targetTx = null;
+
+    // Si el socio especificó un monto (ej: "elimina la de 45$")
+    const amtMatch = text.match(/\b(\d+(?:[.,]\d+)?)\s*(?:\$|usd|usdt|bs\.?)?/i);
+    if (amtMatch && amtMatch[1]) {
+      const seekAmt = parseFloat(amtMatch[1].replace(',', '.'));
+      targetTx = allTxs.find(t => Math.abs(Number(t.amount || 0) - seekAmt) < 0.05);
+    }
+
+    // Si no encontró por monto o no se indicó monto, buscar por palabras clave en título
+    if (!targetTx) {
+      const cleanWords = lower
+        .replace(/(?:elimina(?:r)?|borra(?:r)?|anula(?:r)?|la|el|de|del|por|favor|porfa|transacci[oó]n|dashboard|\$)/gi, '')
+        .trim().split(/\s+/).filter(w => w.length >= 3);
+
+      if (cleanWords.length > 0 && !cleanWords.includes('ultima') && !cleanWords.includes('ultimo')) {
+        targetTx = allTxs.find(t => {
+          const title = String(t.title || '').toLowerCase();
+          return cleanWords.every(w => title.includes(w));
+        });
+      }
+    }
+
+    // Si no se especificó o es "última", seleccionar la más reciente
+    if (!targetTx) targetTx = allTxs[0];
+
+    // Cargar billeteras para mostrar el nombre real
+    const walletsRaw = await fb('GET', ws('wallets'));
+    const wallets = walletsRaw ? Object.values(walletsRaw).filter(w => w && !w.deleted) : [];
+    const w = wallets.find(x => x.id === targetTx.walletId);
+    const walletName = w ? w.name : 'Caja Principal';
+    const curSymbol = (targetTx.currency === 'VES' || (w && w.currency === 'VES')) ? 'Bs.' : '$';
+
+    partnerDeleteDrafts.set(partnerName, {
+      tx: targetTx,
+      startedAt: Date.now()
+    });
+
+    return `⚠️ *Confirmación para Eliminar Transacción* 🗑️\n\n` +
+      `¿Estás seguro de que deseas eliminar esta transacción del Dashboard?\n\n` +
+      `• *Concepto / Título:* *${targetTx.title}*\n` +
+      `• *Monto:* ${curSymbol} ${Number(targetTx.amount || 0).toFixed(2)}\n` +
+      `• *Tipo:* ${targetTx.type === 'expense' ? 'Gasto 🔴' : 'Ingreso 🟢'}\n` +
+      `• *Cuenta / Billetera:* ${walletName}\n` +
+      `• *Fecha y Hora:* ${targetTx.date} a las ${targetTx.time || '00:00'}\n` +
+      `• *Registrado originalmente por:* @${targetTx.createdBy || 'socio'}\n` +
+      `• *Socio que solicita borrar:* @${profileUser} (${partnerName})\n\n` +
+      `⚠️ *Para confirmar la eliminación definitiva, responde:* 👉 *"CONFIRMAR"* o *"ELIMINAR"*\n` +
+      `_(O responde *"CANCELAR"* si no deseas borrarla)_`;
   }
 
   // 1. REGISTRAR O AGREGAR TRANSACCIONES AL DASHBOARD EN TIEMPO REAL

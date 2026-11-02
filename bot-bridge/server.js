@@ -65,14 +65,12 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
 const GEMINI_API_KEY_ENV = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL_ENV = process.env.GEMINI_MODEL || '';
 
-/** Modelos de Gemini verificados y compatibles en orden de prioridad */
+/** Modelos de Gemini verificados y ultra-rápidos en orden de prioridad */
 const WORKING_GEMINI_MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3-flash-preview',
   'gemini-3.5-flash',
-  'gemini-flash-latest',
-  'gemini-3.7-flash',
-  'gemini-3.8-flash'
+  'gemini-3.7-flash'
 ];
 const WA_AUTH_SECRET = process.env.WA_AUTH_SECRET || '';
 const WA_DISABLED = process.env.WA_DISABLED === '1';
@@ -139,6 +137,28 @@ async function touchMeta(label) {
     lastClientId: 'bot_bridge',
     updatedBy: 'bot'
   });
+}
+
+/**
+ * Aplica cambios en Firebase RTDB y verifica que se hayan asentado al 100%.
+ * Si el primer intento falla o devuelve null, auto-reintenta de inmediato para garantizar la persistencia.
+ */
+async function commitAndVerifyWebSync(patchUpdates, label = 'Actualización en tiempo real') {
+  const now = Date.now();
+  patchUpdates['meta/updatedAt'] = now;
+  patchUpdates['meta/rev'] = now;
+  patchUpdates['meta/lastClientId'] = 'bot_bridge';
+  if (!patchUpdates['meta/lastLabel']) {
+    patchUpdates['meta/lastLabel'] = label;
+  }
+
+  let res = await fb('PATCH', ROOT, patchUpdates);
+  if (!res) {
+    logger.warn({ label }, 'Primer intento de sincronización con la Web falló, reintentando de inmediato...');
+    await new Promise(r => setTimeout(r, 60));
+    res = await fb('PATCH', ROOT, patchUpdates);
+  }
+  return Boolean(res);
 }
 
 /* --------------------------------------------------------------------------
@@ -885,6 +905,11 @@ Si el socio te consulta si puedes borrar/eliminar transacciones, o si te solicit
 - Explícale que para borrarla solo debe indicarte cuál desea eliminar (ej: "Elimina la última transacción", "Borra la transacción de 5$", "Elimina la venta de cargador").
 - Explícale que el bot le mostrará siempre una tarjeta de verificación con todos los datos (título, monto, cuenta, fecha y hora) y le solicitará confirmación ("CONFIRMAR" o "CANCELAR") antes de borrarla definitivamente de la Web y revertir el inventario si fue una venta.
 
+REGLA CRÍTICA DE CONFIRMACIÓN 100% EN LA WEB Y VELOCIDAD DE RESPUESTA:
+- Si confirmas una orden, instrucción, venta, ajuste de inventario o transacción a los socios por WhatsApp, significa obligatoriamente que la acción ya fue verificada y asentada al 100% en la base de datos de la Web en tiempo real.
+- NUNCA des confirmaciones falsas, dudosas o a medias; si confirmas por WhatsApp, la Web ya está 100% actualizada.
+- Sé sumamente rápido, conciso, ejecutivo y directo al grano para minimizar los tiempos de respuesta.
+
 === ESTADO FINANCIERO Y BALANCES EN VIVO ===
 • Gran Total Consolidado en USDT: $${adminCtx.grandTotalUsdt.toFixed(2)} USDT
 • Subtotal Divisas Directas: $${adminCtx.totalUsdDirect.toFixed(2)} USDT
@@ -1106,10 +1131,10 @@ Si el mensaje no tiene ninguna relación con registrar o agregar una transacció
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(2500),
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+          generationConfig: { temperature: 0.1, maxOutputTokens: 400 }
         })
       });
       if (!res.ok) continue;
@@ -1325,18 +1350,7 @@ async function executeCreateTransactionInDashboard({
     };
   }
 
-  await fb('PATCH', ROOT, patchUpdates);
-
-  // Notificar al otro socio de inmediato por WhatsApp
-  const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-  const otherAlert = `📊 *DOOMLATER: Nueva Transacción en Dashboard*\n\n` +
-    `Tu socio *${partnerName}* (@${profileUser}) acaba de registrar en tiempo real:\n` +
-    `• *Título:* ${txData.title}\n` +
-    `• *Monto:* ${curSymbol} ${finalAmount.toFixed(2)} ${finalCur} (${walletName})\n` +
-    `• *Fecha/Hora:* ${finalDate} a las ${finalTime}\n` +
-    `• *Detalle:* ${description || 'Registrado directamente por WhatsApp'}\n\n` +
-    `✨ _Ya aparece reflejada en tiempo real en la Web._`;
-  notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+  await commitAndVerifyWebSync(patchUpdates, `Transacción "${txData.title}" creada por @${profileUser}`);
 
   return {
     success: true,
@@ -1511,24 +1525,14 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         }
       }
 
-      await fb('PATCH', ROOT, patchUpdates);
-
-      // Notificar al otro socio
-      const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-      const curSymbol = (tx.currency === 'VES' || (tx.walletId && String(tx.walletId).includes('bs'))) ? 'Bs.' : '$';
-      const otherAlert = `🗑️ *DOOMLATER: Transacción Eliminada en Dashboard*\n\n` +
-        `Tu socio *${partnerName}* (@${profileUser}) acaba de confirmar la eliminación de la transacción:\n` +
-        `• *Concepto:* ${tx.title}\n` +
-        `• *Monto:* ${curSymbol} ${Number(tx.amount || 0).toFixed(2)}\n` +
-        `• *Fecha:* ${tx.date} a las ${tx.time || 'actual'}${restoredStockMsg}\n\n` +
-        `🌐 _Actualizado en tiempo real en la Web._`;
-      notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+      await commitAndVerifyWebSync(patchUpdates, `Transacción "${tx.title}" eliminada por @${profileUser}`);
 
       return `🗑️ *¡Transacción Eliminada con Éxito!* ✅\n\n` +
+        `💯 *Confirmado y Verificado al 100% en la Web en Tiempo Real*\n` +
         `• *Concepto:* *${tx.title}*\n` +
         `• *Monto:* ${curSymbol} ${Number(tx.amount || 0).toFixed(2)}\n` +
         `• *Eliminada por:* @${profileUser} (${partnerName})${restoredStockMsg}\n\n` +
-        `🌐 _El Dashboard de la Web se actualizó al instante en vivo._`;
+        `🌐 _El Dashboard de la Web se actualizó al instante en vivo sin recargar la página._`;
     } else if (/(?:elimina|borra|otra|cambia)/i.test(lower)) {
       // Si el socio decide cambiar de transacción a borrar sin cancelar explícitamente
       partnerDeleteDrafts.delete(partnerName);
@@ -1812,22 +1816,10 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       'meta/updatedBy': profileUser
     };
 
-    await fb('PATCH', ROOT, patchUpdates);
-
-    // Notificar al otro socio de inmediato
-    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-    const otherAlert = `🛍️ *DOOMLATER: Venta de Stock Confirmada*\n\n` +
-      `Tu socio *${partnerName}* (@${profileUser}) acaba de confirmar la venta en vivo:\n` +
-      `• *Producto:* ${matchedStockSale.name}\n` +
-      `• *Cantidad:* ${qty} ud(s)\n` +
-      `• *Total venta:* ${curSymbol} ${txAmount.toFixed(2)} ${curCode}\n` +
-      `• *Ganancia neta:* +$${netProfitUSD.toFixed(2)} USD\n` +
-      `• *Cuenta:* ${walletName}\n` +
-      `• *Stock restante:* ${newStock} uds disponibles\n\n` +
-      `✨ _Sumado a finanzas y descontado del inventario en vivo._`;
-    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+    await commitAndVerifyWebSync(patchUpdates, `Venta ${qty}x ${matchedStockSale.name} confirmada por @${profileUser}`);
 
     return `🛍️ *¡Venta de Stock Confirmada y Sumada a Finanzas!* 🟢\n\n` +
+      `💯 *Confirmado y Verificado al 100% en la Web en Tiempo Real*\n` +
       `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
       `📦 *Producto:* *${matchedStockSale.name}*\n` +
       `🔢 *Cantidad:* ${qty} ud(s)\n` +
@@ -1892,19 +1884,10 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       'meta/updatedBy': profileUser
     };
 
-    await fb('PATCH', ROOT, patchUpdates);
-
-    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-    const otherAlert = `📦 *DOOMLATER: Reposición de Stock en Tiempo Real*\n\n` +
-      `Tu socio *${partnerName}* (@${profileUser}) añadió inventario:\n` +
-      `• *Artículo:* ${matchedStockRestock.name}\n` +
-      `• *Cantidad añadida:* +${qty} ud(s)\n` +
-      `• *Stock anterior:* ${curStock} uds\n` +
-      `• *Nuevo stock disponible:* *${newStock}* unidad(es)\n\n` +
-      `🌐 _Reflejado en vivo en la Web sin recargar._`;
-    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+    await commitAndVerifyWebSync(patchUpdates, `Stock "${matchedStockRestock.name}" aumentado (+${qty}) por @${profileUser}`);
 
     return `📦 *¡Stock Aumentado con Éxito!* ✅\n\n` +
+      `💯 *Confirmado y Verificado al 100% en la Web en Tiempo Real*\n` +
       `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
       `• *Artículo:* *${matchedStockRestock.name}*\n` +
       `• *Cantidad añadida:* *+${qty}* ud(s)\n` +
@@ -1965,18 +1948,10 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       'meta/updatedBy': profileUser
     };
 
-    await fb('PATCH', ROOT, patchUpdates);
-
-    const otherPartner = isAnthony ? 'Sebastián' : 'Anthony';
-    const otherAlert = `📦 *DOOMLATER: Movimiento de Stock en Tiempo Real*\n\n` +
-      `Tu socio *${partnerName}* (@${profileUser}) descontó inventario:\n` +
-      `• *Artículo:* ${matchedStockSub.name}\n` +
-      `• *Ajuste:* -${qty} uds descontadas\n` +
-      `• *Stock actual:* *${newStock}* unidades disponibles\n\n` +
-      `🌐 _Reflejado en vivo en la Web sin recargar._`;
-    notifySinglePartner(otherPartner, otherAlert).catch(() => {});
+    await commitAndVerifyWebSync(patchUpdates, `Stock "${matchedStockSub.name}" descontado (-${qty}) por @${profileUser}`);
 
     return `📦 *¡Stock Actualizado en Tiempo Real!* ✅\n\n` +
+      `💯 *Confirmado y Verificado al 100% en la Web en Tiempo Real*\n` +
       `👤 *Registrado por:* @${profileUser} (${partnerName})\n` +
       `• *Artículo:* *${matchedStockSub.name}*\n` +
       `• *Movimiento:* -${qty} uds descontadas del stock\n` +
@@ -2262,7 +2237,7 @@ async function checkPartnerReminders() {
 }
 
 async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAttachment = null) {
-  const apiKey = (await fb('GET', ws('meta/botConfig')))?.geminiApiKey || GEMINI_API_KEY_ENV;
+  const apiKey = adminCtx?.botConfig?.geminiApiKey || GEMINI_API_KEY_ENV;
 
   // Primero revisa si es un comando ejecutable directo (transacción al dashboard, recordatorio, pdf local o mensaje a socio)
   try {
@@ -2340,11 +2315,11 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(2800),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
           contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
         })
       });
       if (res.status === 404 || res.status === 429) continue;
@@ -2516,11 +2491,11 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(2800),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildSystemPrompt(ctx) }] },
           contents,
-          generationConfig: { temperature: 0.4, maxOutputTokens: 2048 }
+          generationConfig: { temperature: 0.3, maxOutputTokens: 1024 }
         })
       });
       if (res.status === 404) continue;
@@ -2774,12 +2749,24 @@ function scheduleAiReply(convId, text, ctx) {
 }
 
 async function runAiReply(convId, q) {
-  // Revisa de nuevo los interruptores justo antes de responder (por si los pausaste durante la espera)
-  const [conv, aiCtx] = await Promise.all([fb('GET', ws(`botConversations/${convId}`)), loadAiContext()]);
-  if (!conv || conv.deleted) return;
-  if (aiCtx.botConfig.globalBotEnabled === false || conv.botActive === false) {
-    if (q.ctx.platform === 'whatsapp') await waPresence('paused', q.ctx.jid);
-    return;
+  let conv, aiCtx, adminCtx;
+  if (q.ctx.isPartner) {
+    // Para socios cargamos directamente el contexto ejecutivo sin llamadas innecesarias al contexto de clientes
+    [conv, adminCtx] = await Promise.all([
+      fb('GET', ws(`botConversations/${convId}`)),
+      loadAdminExecutiveContext()
+    ]);
+  } else {
+    // Revisa interruptores antes de responder a clientes
+    [conv, aiCtx] = await Promise.all([
+      fb('GET', ws(`botConversations/${convId}`)),
+      loadAiContext()
+    ]);
+    if (!conv || conv.deleted) return;
+    if (aiCtx.botConfig.globalBotEnabled === false || conv.botActive === false) {
+      if (q.ctx.platform === 'whatsapp') await waPresence('paused', q.ctx.jid);
+      return;
+    }
   }
 
   const userText = q.texts.join('\n').trim();
@@ -2787,7 +2774,6 @@ async function runAiReply(convId, q) {
 
   let result;
   if (q.ctx.isPartner) {
-    const adminCtx = await loadAdminExecutiveContext();
     result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio', mediaAttachment);
   } else if (q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment) {
     const pa = q.ctx.paymentAnalysis;

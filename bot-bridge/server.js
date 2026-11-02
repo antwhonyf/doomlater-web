@@ -1075,6 +1075,7 @@ Si el mensaje no tiene ninguna relación con registrar o agregar una transacció
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
@@ -1316,10 +1317,23 @@ async function executeCreateTransactionInDashboard({
   };
 }
 
+function wordsMatch(w1, w2) {
+  if (!w1 || !w2) return false;
+  if (w1 === w2) return true;
+  if (w1.length >= 3 && w2.length >= 3) {
+    if (w1.startsWith(w2) || w2.startsWith(w1)) return true;
+    if (w1.endsWith('s') && w1.slice(0, -1) === w2) return true;
+    if (w2.endsWith('s') && w2.slice(0, -1) === w1) return true;
+    if (w1.endsWith('es') && w1.slice(0, -2) === w2) return true;
+    if (w2.endsWith('es') && w2.slice(0, -2) === w1) return true;
+  }
+  return false;
+}
+
 /**
  * Localiza con máxima precisión un artículo en el inventario/stock según el texto del socio.
  * Tolera singular/plural (cargador/cargadores, memoria/memorias), acentos, modelos (3ds, oled, hwfly, ps5)
- * y frases completas como "mira se vendió un cargador de 3ds del stock".
+ * y frases como "se vendio un cargador del Stock".
  */
 function findMatchingStockItem(rawText, stockList) {
   if (!rawText || !Array.isArray(stockList) || stockList.length === 0) return null;
@@ -1351,27 +1365,17 @@ function findMatchingStockItem(rawText, stockList) {
     let score = 0;
 
     for (const w of rawWords) {
-      if (itWords.includes(w)) {
-        score += 5;
-        if (['3ds', 'dsi', 'ds', 'oled', 'switch', 'ps5', 'ps4', 'hwfly', 'rpi', 'adata', 'microsd', 'sd'].includes(w)) {
-          score += 4;
-        }
-      } else {
-        const matchPartial = itWords.some(iw => {
-          if (iw.startsWith(w) || w.startsWith(iw)) return true;
-          if (w.endsWith('s') && iw === w.slice(0, -1)) return true;
-          if (iw.endsWith('s') && w === iw.slice(0, -1)) return true;
-          if (w.endsWith('es') && iw === w.slice(0, -2)) return true;
-          if (iw.endsWith('es') && w === iw.slice(0, -2)) return true;
-          return false;
-        });
-        if (matchPartial) {
-          score += 3;
+      for (const iw of itWords) {
+        if (wordsMatch(w, iw)) {
+          score += 10;
+          if (['3ds', 'dsi', 'ds', 'oled', 'switch', 'ps5', 'ps4', 'hwfly', 'rpi', 'adata', 'microsd', 'sd'].includes(w)) {
+            score += 5;
+          }
         }
       }
     }
 
-    if (itClean.includes(clean)) score += 10;
+    if (itClean.includes(clean)) score += 20;
 
     if (score > bestScore) {
       bestScore = score;
@@ -1379,14 +1383,22 @@ function findMatchingStockItem(rawText, stockList) {
     }
   }
 
-  return bestScore >= 4 ? bestItem : null;
+  return bestScore >= 5 ? bestItem : null;
 }
 
 async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = null) {
   const text = String(userText || '').trim();
   const lower = text.toLowerCase();
 
-  // 0. CANCELAR TRANSACCIÓN EN CURSO SI EL SOCIO LO SOLICITA
+  // 0. CANCELAR TRANSACCIÓN EN CURSO SI EL SOCIO LO SOLICITA O EJECUTA COMANDO DIRECTO DE STOCK
+  const isDirectStockCmd = /(?:vend[ií]|se\s*vendi[oó]|vendimos|sali[oó]|despach|consegu(?:imos|í)|traj(?:e|imos)|lleg(?:aron|ó)|compr(?:é|amos)|resta|quita|descuenta)\b/i.test(lower);
+  if (partnerTxDrafts.has(partnerName)) {
+    const draft = partnerTxDrafts.get(partnerName);
+    if (isDirectStockCmd || (draft && Date.now() - (draft.startedAt || 0) > 3 * 60 * 1000)) {
+      partnerTxDrafts.delete(partnerName);
+    }
+  }
+
   if (partnerTxDrafts.has(partnerName) && /(cancelar|olv[ií]dalo|no\s*importa|deja\s*eso|ya\s*no)/i.test(lower)) {
     partnerTxDrafts.delete(partnerName);
     return `❌ *Registro de transacción cancelado.* Cuando desees agregar una nueva transacción al dashboard, solo dímelo por aquí.`;
@@ -1564,9 +1576,9 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     const txAmount = isBs ? Math.round(totalSaleUSD * rate * 100) / 100 : totalSaleUSD;
     const costBasis = isBs ? Math.round(totalCostUSD * rate * 100) / 100 : totalCostUSD;
     const curSymbol = isBs ? 'Bs.' : '$';
-    const curCode = isBs ? 'VES' : (isUsdt ? 'USDT' : 'USD');
+    const curCode = isBs ? 'VES' : (chosenWallet ? chosenWallet.currency : 'USDT');
     const walletName = chosenWallet ? chosenWallet.name : (isBs ? 'Cuenta Bs' : 'Binance (USDT)');
-    const walletId = chosenWallet ? chosenWallet.id : (isBs ? (isAnthony ? 'w_bs_anthony' : 'w_bs_socio') : 'w_binance');
+    const walletId = chosenWallet ? chosenWallet.id : (isBs ? (isAnthony ? 'wal_mvyqjfw2_qtw8' : 'w_banco') : 'w_binance');
 
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
@@ -1646,11 +1658,11 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `🔢 *Cantidad:* ${qty} ud(s)\n` +
       `💰 *Total Cobrado:* *${curSymbol} ${txAmount.toFixed(2)} ${curCode}*\n` +
       `🏷️ *Costo Insumo (Reinversión):* $${totalCostUSD.toFixed(2)} USD\n` +
-      `📈 *Ganancia Neta:* *+$${netProfitUSD.toFixed(2)} USD*\n` +
-      `🏦 *Cuenta destino:* ${walletName}\n` +
+      `📈 *Ganancia Neta:* *+$${netProfitUSD.toFixed(2)} ${curCode}*\n` +
+      `🏦 *Cuenta acreditada:* *${walletName}*\n` +
       `📊 *Stock restante:* *${newStock}* unidad(es) disponible(s)\n` +
       `📅 *Fecha y Hora:* ${dateStr} a las ${timeStr}\n\n` +
-      `✨ _Simulación idéntica al botón [Confirmar Venta y Sumar a Finanzas]. El inventario, Kardex y la transacción de ingreso ya están reflejados en vivo en la Web._`;
+      `✨ _Simulación idéntica al botón [Confirmar Venta y Sumar a Finanzas]. Se sumaron +${curSymbol}${txAmount.toFixed(2)} ${curCode} a tu cuenta y se descontó de stock en vivo sin recargar._`;
   }
 
   // 0.C. REPOSICIÓN / AUMENTO DE STOCK ("conseguimos", "traje", "llegaron", "compré", "entran", "agrega al stock", "suma al stock")
@@ -2222,6 +2234,7 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
           contents,
@@ -2397,6 +2410,7 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildSystemPrompt(ctx) }] },
           contents,
@@ -2461,6 +2475,7 @@ async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -2509,6 +2524,7 @@ async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -3141,7 +3157,7 @@ async function handleWaMessage(msg, type) {
       paymentAnalysis: paymentAnalysis && paymentAnalysis.isPayment ? paymentAnalysis : null,
       destWalletId,
       destWalletName,
-      delayMs: partner ? 800 : typingDelayMs(botConfig),
+      delayMs: partner ? 150 : typingDelayMs(botConfig),
       isPartner: Boolean(partner),
       partnerName: partner ? partner.name : null
     });

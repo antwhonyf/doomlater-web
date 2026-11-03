@@ -3768,8 +3768,8 @@ async function heartbeat() {
 }
 
 async function decideOwnershipAtStartup() {
-  if (WA_DISABLED) {
-    logger.warn('WA_DISABLED=1: esta copia solo atiende Instagram/Messenger.');
+  if (process.env.VERCEL || process.env.NOW_BUILDER || WA_DISABLED) {
+    logger.warn('Entorno Vercel Serverless: no toma control de WhatsApp.');
     return;
   }
   const st = await fb('GET', STATUS_PATH);

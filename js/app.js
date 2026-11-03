@@ -421,11 +421,11 @@
     getAppLogoHTML(size = 34) {
       const url = this.getAppLogoUrl();
       if (url && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url) || /^\.\//.test(url))) {
-        return `<img src="${this.escapeHtml(url)}" alt="Doomlater.Corp Logo"
+        return `<img src="${this.escapeHtml(url)}" alt="Doomlate Logo"
                      style="width:${size}px; height:${size}px; object-fit:contain; border-radius:${Math.round(size * 0.28)}px;"
                      onerror="this.onerror=null; this.src='./logo.jpg';" />`;
       }
-      return `<img src="./logo.jpg" alt="Doomlater.Corp Logo"
+      return `<img src="./logo.jpg" alt="Doomlate Logo"
                    style="width:${size}px; height:${size}px; object-fit:contain; border-radius:${Math.round(size * 0.28)}px;" />`;
     },
 
@@ -497,7 +497,7 @@
       this.onAppLogoPreview(defaultUrl);
       this.applyAppLogoToDom(defaultUrl);
       this.renderAll();
-      this.toast('Logo predeterminado de Doomlater.Corp restaurado', 'restart_alt');
+      this.toast('Logo predeterminado de Doomlate restaurado', 'restart_alt');
     },
 
     renderLoginProfiles() {
@@ -3067,7 +3067,7 @@
         return ephemeralNotice + `
           <div class="empty-cashew" style="margin:auto;">
             <span class="material-symbols-rounded">forum</span>
-            <div style="font-weight:800; color:var(--text-main); margin-bottom:4px;">Chat Privado • Doomlater.Corp</div>
+            <div style="font-weight:800; color:var(--text-main); margin-bottom:4px;">Chat Privado • Doomlate</div>
             <div style="font-size:13px;">Escribe el primer mensaje para <strong>${this.escapeHtml(partner.displayName || partner.username)}</strong>. Los mensajes se borran automáticamente tras 30 días para no saturar la base de datos.</div>
           </div>
         `;
@@ -3776,7 +3776,7 @@
             <div>
               <div class="cashew-card-title">
                 <span class="material-symbols-rounded" style="color:var(--primary);">image</span>
-                Logo de Doomlater.Corp (Pestaña Web y Login)
+                Logo de Doomlate (Pestaña Web y Login)
               </div>
               <div class="cashew-card-subtitle">
                 Cambia el logo mostrado en la pantalla de inicio y en la pestaña del navegador para ambos socios
@@ -3789,7 +3789,7 @@
               ${this.getAppLogoHTML(46)}
             </div>
             <div style="flex:1; min-width:0;">
-              <div style="font-weight:800; font-size:14.5px;">Logo Actual de Doomlater.Corp</div>
+              <div style="font-weight:800; font-size:14.5px;">Logo Actual de Doomlate</div>
               <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
                 Se aplica en tiempo real en la pantalla de login, la barra lateral y el icono (favicon) de la pestaña.
               </div>
@@ -3973,7 +3973,7 @@
         instagramConnected: Boolean(cfg.instagramConnected),
         messengerDoom1Connected: Boolean(cfg.messengerDoom1Connected),
         messengerDoom2Connected: Boolean(cfg.messengerDoom2Connected),
-        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlater.Corp 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
         paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods : [
           { id: 'pm_1', name: 'Pago Móvil / Banco', details: 'Banco Banesco (0134) • C.I: 12.345.678 • Tlf: 0412-1234567' },
           { id: 'pm_2', name: 'Binance Pay / USDT', details: 'Pay ID: 123456789 • Red TRC20 / Binance Pay' },
@@ -4116,7 +4116,7 @@
           profileId: 'profile_1',
           customerName: 'Roberto Díaz (Facebook)',
           customerAvatar: '',
-          lastMessage: '¡Hola! Gracias por contactarnos en Doomlater.Corp 📱. Para brindarte atención...',
+          lastMessage: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención...',
           lastMessageAt: now - 14400000,
           unreadCount: 0,
           needsAttention: false,
@@ -4136,7 +4136,7 @@
           profileId: 'profile_2',
           customerName: 'Andrés Suárez (Facebook)',
           customerAvatar: '',
-          lastMessage: '¡Hola! Gracias por contactarnos en Doomlater.Corp 📱. Para brindarte atención...',
+          lastMessage: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención...',
           lastMessageAt: now - 18000000,
           unreadCount: 0,
           needsAttention: false,
@@ -4230,7 +4230,7 @@
           id: 'bmsg_fb1_2',
           convId: 'conv_fb_doom1_roberto',
           direction: 'out',
-          text: '¡Hola! Gracias por contactarnos en Doomlater.Corp 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+          text: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
           createdAt: now - 14400000,
           sentBy: 'bot'
         },
@@ -4246,7 +4246,7 @@
           id: 'bmsg_fb2_2',
           convId: 'conv_fb_doom2_andres',
           direction: 'out',
-          text: '¡Hola! Gracias por contactarnos en Doomlater.Corp 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+          text: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
           createdAt: now - 18000000,
           sentBy: 'bot'
         }
@@ -5189,7 +5189,7 @@
       if (type === 'payment') {
         const cfg = this.getBotConfig();
         const pms = cfg.paymentMethods || [];
-        const text = 'Nuestros datos de pago verificados en Doomlater.Corp son:\n\n' +
+        const text = 'Nuestros datos de pago verificados en Doomlate son:\n\n' +
           pms.map(p => `• ${p.name}: ${p.details}`).join('\n\n') +
           '\n\nPor favor envíanos el comprobante por acá una vez realizada la transferencia para procesar tu pedido de inmediato.';
         const input = document.getElementById('botMessageInput');
@@ -5950,7 +5950,7 @@
         id: 'bmsg_vpay_conf_' + now.toString(36),
         convId: conv.id,
         direction: 'out',
-        text: `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater.Corp! ✨`,
+        text: `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlate! ✨`,
         sentBy: this.user || 'doom1',
         createdAt: now + 100
       };
@@ -6029,7 +6029,7 @@
           <div style="padding:14px 18px; background:rgba(56,189,248,0.08); border:1.5px solid rgba(56,189,248,0.3); border-radius:16px; display:flex; align-items:center; gap:12px;">
             <span class="material-symbols-rounded" style="color:#38bdf8; font-size:26px;">verified_user</span>
             <div>
-              <div style="font-weight:800; font-size:14px; color:#f8fafc;">Información Oficial y Base de Conocimiento de Doomlater.Corp</div>
+              <div style="font-weight:800; font-size:14px; color:#f8fafc;">Información Oficial y Base de Conocimiento de Doomlate</div>
               <div style="font-size:12.5px; color:#cbd5e1; margin-top:2px;">
                 Esta es la <strong>ÚNICA información de la empresa</strong> que el Asistente IA tiene autorizada para contestar a los clientes sobre servicios, presupuestos de mano de obra, insumos de taller, métodos de pago y preguntas frecuentes.
               </div>
@@ -6812,7 +6812,7 @@
     },
 
     restoreDefaultRules() {
-      if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlater.Corp?')) return;
+      if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlate?')) return;
       window.cashewSync.saveBotConfig({ customAiRules: this.DEFAULT_CUSTOM_RULES_TEXT }, 'Reglas IA restauradas');
       this.toast('Reglas recomendadas restauradas', 'verified');
       this.renderMainView();
@@ -7413,7 +7413,7 @@
             <span>¿Estás seguro de que deseas eliminar este ${entityType}?</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); line-height:1.4;">
-            Esta acción eliminará el registro de la base de datos de Doomlater.Corp para ambos socios.
+            Esta acción eliminará el registro de la base de datos de Doomlate para ambos socios.
           </div>
         </div>
 

@@ -421,11 +421,11 @@
     getAppLogoHTML(size = 34) {
       const url = this.getAppLogoUrl();
       if (url && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url) || /^\.\//.test(url))) {
-        return `<img src="${this.escapeHtml(url)}" alt="Doomlate Logo"
+        return `<img src="${this.escapeHtml(url)}" alt="Doomlater Logo"
                      style="width:${size}px; height:${size}px; object-fit:contain; border-radius:${Math.round(size * 0.28)}px;"
                      onerror="this.onerror=null; this.src='./logo.jpg';" />`;
       }
-      return `<img src="./logo.jpg" alt="Doomlate Logo"
+      return `<img src="./logo.jpg" alt="Doomlater Logo"
                    style="width:${size}px; height:${size}px; object-fit:contain; border-radius:${Math.round(size * 0.28)}px;" />`;
     },
 
@@ -497,7 +497,7 @@
       this.onAppLogoPreview(defaultUrl);
       this.applyAppLogoToDom(defaultUrl);
       this.renderAll();
-      this.toast('Logo predeterminado de Doomlate restaurado', 'restart_alt');
+      this.toast('Logo predeterminado de Doomlater restaurado', 'restart_alt');
     },
 
     renderLoginProfiles() {
@@ -3067,7 +3067,7 @@
         return ephemeralNotice + `
           <div class="empty-cashew" style="margin:auto;">
             <span class="material-symbols-rounded">forum</span>
-            <div style="font-weight:800; color:var(--text-main); margin-bottom:4px;">Chat Privado • Doomlate</div>
+            <div style="font-weight:800; color:var(--text-main); margin-bottom:4px;">Chat Privado • Doomlater</div>
             <div style="font-size:13px;">Escribe el primer mensaje para <strong>${this.escapeHtml(partner.displayName || partner.username)}</strong>. Los mensajes se borran automáticamente tras 30 días para no saturar la base de datos.</div>
           </div>
         `;
@@ -3776,7 +3776,7 @@
             <div>
               <div class="cashew-card-title">
                 <span class="material-symbols-rounded" style="color:var(--primary);">image</span>
-                Logo de Doomlate (Pestaña Web y Login)
+                Logo de Doomlater (Pestaña Web y Login)
               </div>
               <div class="cashew-card-subtitle">
                 Cambia el logo mostrado en la pantalla de inicio y en la pestaña del navegador para ambos socios
@@ -3789,7 +3789,7 @@
               ${this.getAppLogoHTML(46)}
             </div>
             <div style="flex:1; min-width:0;">
-              <div style="font-weight:800; font-size:14.5px;">Logo Actual de Doomlate</div>
+              <div style="font-weight:800; font-size:14.5px;">Logo Actual de Doomlater</div>
               <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
                 Se aplica en tiempo real en la pantalla de login, la barra lateral y el icono (favicon) de la pestaña.
               </div>
@@ -3962,10 +3962,11 @@
 
       return {
         globalBotEnabled: cfg.globalBotEnabled !== false,
-        typingDelaySec: cfg.typingDelaySec !== undefined ? Number(cfg.typingDelaySec) : 3.5,
+        typingDelaySec: cfg.typingDelaySec !== undefined ? Number(cfg.typingDelaySec) : 2.5,
         showTypingIndicator: cfg.showTypingIndicator !== false,
         showOnlinePresence: cfg.showOnlinePresence !== false,
         paymentReceiptReplyMessage: cfg.paymentReceiptReplyMessage || '¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌',
+        unknownQuestionFallbackMessage: cfg.unknownQuestionFallbackMessage || 'Con gusto, voy a consultar ese detalle directamente con nuestro equipo para darte la respuesta exacta en unos momentos 🙌',
         customAiRules: rules,
         geminiApiKey: cfg.geminiApiKey || '',
         whatsappConnected: Boolean(cfg.whatsappConnected),
@@ -3973,7 +3974,7 @@
         instagramConnected: Boolean(cfg.instagramConnected),
         messengerDoom1Connected: Boolean(cfg.messengerDoom1Connected),
         messengerDoom2Connected: Boolean(cfg.messengerDoom2Connected),
-        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
         paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods : [
           { id: 'pm_1', name: 'Pago Móvil / Banco', details: 'Banco Banesco (0134) • C.I: 12.345.678 • Tlf: 0412-1234567' },
           { id: 'pm_2', name: 'Binance Pay / USDT', details: 'Pay ID: 123456789 • Red TRC20 / Binance Pay' },
@@ -4116,7 +4117,7 @@
           profileId: 'profile_1',
           customerName: 'Roberto Díaz (Facebook)',
           customerAvatar: '',
-          lastMessage: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención...',
+          lastMessage: '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención...',
           lastMessageAt: now - 14400000,
           unreadCount: 0,
           needsAttention: false,
@@ -4136,7 +4137,7 @@
           profileId: 'profile_2',
           customerName: 'Andrés Suárez (Facebook)',
           customerAvatar: '',
-          lastMessage: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención...',
+          lastMessage: '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención...',
           lastMessageAt: now - 18000000,
           unreadCount: 0,
           needsAttention: false,
@@ -4230,7 +4231,7 @@
           id: 'bmsg_fb1_2',
           convId: 'conv_fb_doom1_roberto',
           direction: 'out',
-          text: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+          text: '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
           createdAt: now - 14400000,
           sentBy: 'bot'
         },
@@ -4246,7 +4247,7 @@
           id: 'bmsg_fb2_2',
           convId: 'conv_fb_doom2_andres',
           direction: 'out',
-          text: '¡Hola! Gracias por contactarnos en Doomlate 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+          text: '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
           createdAt: now - 18000000,
           sentBy: 'bot'
         }
@@ -4408,6 +4409,20 @@
       this.renderMainView();
     },
 
+    markDeliveryCompleted(convId) {
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (!conv) return;
+      window.cashewSync.upsertEntity('botConversations', {
+        ...conv,
+        needsAttention: false,
+        deliveryStatus: 'delivered',
+        attentionReason: ''
+      }, `Marcó entrega de ${conv.customerName || 'Cliente'} como completada`);
+      this.toast('🚚 Pedido y entrega marcados como entregados', 'task_alt');
+      this.updateNavBotBadge();
+      this.renderMainView();
+    },
+
     toggleGlobalBot() {
       const cfg = this.getBotConfig();
       const next = cfg.globalBotEnabled === false ? true : false;
@@ -4457,9 +4472,13 @@
             <span class="material-symbols-rounded" style="font-size:18px;">chat</span>
             Inbox Multicanal
           </button>
+          <button class="bot-subtab-btn ${this.botSubTab === 'services' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('services')">
+            <span class="material-symbols-rounded" style="font-size:18px;">home_repair_service</span>
+            Servicios
+          </button>
           <button class="bot-subtab-btn ${this.botSubTab === 'knowledge' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('knowledge')">
-            <span class="material-symbols-rounded" style="font-size:18px;">auto_stories</span>
-            Servicios, Pagos & FAQ
+            <span class="material-symbols-rounded" style="font-size:18px;">payments</span>
+            Pagos & FAQ
           </button>
           <button class="bot-subtab-btn ${this.botSubTab === 'rules' ? 'active' : ''}" onclick="CashewApp.setBotSubTab('rules')">
             <span class="material-symbols-rounded" style="font-size:18px;">gavel</span>
@@ -4479,6 +4498,9 @@
     renderBotCurrentSubTabHTML() {
       if (this.botSubTab === 'connect') {
         return this.buildBotConnectHTML();
+      }
+      if (this.botSubTab === 'services') {
+        return this.buildBotServicesHTML();
       }
       if (this.botSubTab === 'knowledge') {
         return this.buildBotKnowledgeHTML();
@@ -4755,6 +4777,7 @@
             <div class="bot-conv-top-row">
               <span class="bot-conv-name">${this.escapeHtml(c.customerName || 'Cliente')}</span>
               <div style="display:flex; align-items:center; gap:5px;">
+                ${c.deliveryStatus === 'pending_delivery' ? `<span class="bot-badge-alert-mustard" style="background:rgba(56,189,248,0.18); color:#38bdf8; border-color:rgba(56,189,248,0.4);">🚚 Entrega</span>` : ''}
                 ${c.needsAttention ? `<span class="bot-badge-alert-mustard">⚠️ Alerta</span>` : ''}
                 ${c.pendingPayment ? `<span class="bot-badge-payment-mustard">💰 Pago</span>` : ''}
                 <span class="bot-conv-time">${timeStr}</span>
@@ -4819,6 +4842,17 @@
               </span>
               <span>${conv.botActive !== false ? 'Bot: Activo' : 'Bot: Pausado'}</span>
             </button>
+
+            <!-- Marcar como Entregado Button -->
+            ${conv.deliveryStatus === 'pending_delivery' ? `
+              <button class="btn-cashew btn-tonal"
+                      style="color:#38bdf8; border-color:#38bdf8; background:rgba(56,189,248,0.18); font-size:12px; padding:6px 12px; font-weight:800;"
+                      title="Marcar pedido y entrega como completada al cliente"
+                      onclick="CashewApp.markDeliveryCompleted('${conv.id}')">
+                <span class="material-symbols-rounded" style="font-size:17px; color:#38bdf8;">task_alt</span>
+                <span>Marcar Entregado</span>
+              </button>
+            ` : ''}
 
             <!-- Toggle Alert Button -->
             <button class="btn-cashew ${conv.needsAttention ? 'btn-tonal' : 'btn-surface'}"
@@ -5189,7 +5223,7 @@
       if (type === 'payment') {
         const cfg = this.getBotConfig();
         const pms = cfg.paymentMethods || [];
-        const text = 'Nuestros datos de pago verificados en Doomlate son:\n\n' +
+        const text = 'Nuestros datos de pago verificados en Doomlater son:\n\n' +
           pms.map(p => `• ${p.name}: ${p.details}`).join('\n\n') +
           '\n\nPor favor envíanos el comprobante por acá una vez realizada la transferencia para procesar tu pedido de inmediato.';
         const input = document.getElementById('botMessageInput');
@@ -5950,7 +5984,7 @@
         id: 'bmsg_vpay_conf_' + now.toString(36),
         convId: conv.id,
         direction: 'out',
-        text: `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlate! ✨`,
+        text: `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater! ✨`,
         sentBy: this.user || 'doom1',
         createdAt: now + 100
       };
@@ -6015,11 +6049,10 @@
     },
 
     /* ======================================================================
-       SUB-TAB 2: INFORMACIÓN DEL NEGOCIO (SERVICIOS, PAGOS & FAQ)
+       SUB-TAB 3: INFORMACIÓN DEL NEGOCIO (PAGOS & FAQ)
        ====================================================================== */
     buildBotKnowledgeHTML() {
       const cfg = this.getBotConfig();
-      const maps = cfg.serviceInsumosMap || [];
       const pms = cfg.paymentMethods || [];
       const faqs = cfg.knowledgeBaseFaq || [];
 
@@ -6029,60 +6062,10 @@
           <div style="padding:14px 18px; background:rgba(56,189,248,0.08); border:1.5px solid rgba(56,189,248,0.3); border-radius:16px; display:flex; align-items:center; gap:12px;">
             <span class="material-symbols-rounded" style="color:#38bdf8; font-size:26px;">verified_user</span>
             <div>
-              <div style="font-weight:800; font-size:14px; color:#f8fafc;">Información Oficial y Base de Conocimiento de Doomlate</div>
+              <div style="font-weight:800; font-size:14px; color:#f8fafc;">Información Oficial y Base de Conocimiento de Doomlater</div>
               <div style="font-size:12.5px; color:#cbd5e1; margin-top:2px;">
-                Esta es la <strong>ÚNICA información de la empresa</strong> que el Asistente IA tiene autorizada para contestar a los clientes sobre servicios, presupuestos de mano de obra, insumos de taller, métodos de pago y preguntas frecuentes.
+                Esta es la <strong>información oficial de la empresa</strong> que el Asistente IA tiene autorizada para contestar a los clientes sobre métodos de pago y preguntas frecuentes.
               </div>
-            </div>
-          </div>
-
-          <!-- SECCIÓN 1: Servicios Técnicos Vinculados a Insumos -->
-          <div class="bot-card-setting">
-            <div class="bot-card-header">
-              <div class="bot-card-title">
-                <span class="material-symbols-rounded" style="color:var(--primary);">build</span>
-                Servicios Técnicos Vinculados a Insumos
-              </div>
-              <button class="btn-cashew btn-primary" style="font-size:12px; padding:6px 14px;" onclick="CashewApp.openAddServiceMappingModal()">
-                <span class="material-symbols-rounded" style="font-size:18px;">add</span>
-                Vincular Servicio
-              </button>
-            </div>
-            <p style="font-size:13px; color:var(--text-muted); margin:0;">
-              Cuando un cliente paga por uno de estos servicios, el bot sugiere automáticamente descontar el o los insumos de taller vinculados para calcular la ganancia neta.
-            </p>
-
-            <div style="display:flex; flex-direction:column; gap:10px;">
-              ${maps.length === 0 ? `
-                <div style="text-align:center; padding:30px; color:var(--text-muted); font-size:13px;">
-                  No hay servicios vinculados todavía. Haz clic en "Vincular Servicio" para asociar uno o más insumos a una tarifa de mano de obra.
-                </div>
-              ` : maps.map(s => {
-                const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
-                  ? s.insumos
-                  : [{ name: s.defaultInsumoName || 'Insumo de taller', qty: 1 }];
-                return `
-                  <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-elevated); padding:14px 16px; border-radius:14px; border:1px solid var(--border-subtle); gap:12px;">
-                    <div>
-                      <div style="font-weight:800; font-size:14.5px; color:var(--text-main);">${this.escapeHtml(s.serviceName)}</div>
-                      <div style="font-size:12.5px; color:var(--text-muted); margin-top:5px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <span style="color:var(--text-muted); font-weight:700;">Insumos requeridos:</span>
-                        ${insumoItems.map(i => `
-                          <span style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:6px; padding:2px 8px; font-weight:700; color:var(--text-main); font-size:12px;">
-                            ${i.qty}x ${this.escapeHtml(i.name)}
-                          </span>
-                        `).join('')}
-                        <span style="margin-left:6px;">• Mano de obra sugerida: <strong style="color:var(--cashew-income);">$${Number(s.defaultLaborPrice || 0).toFixed(2)}</strong></span>
-                      </div>
-                    </div>
-                    <div style="display:flex; gap:6px;">
-                      <button class="bot-icon-btn" style="color:var(--cashew-expense);" onclick="CashewApp.deleteServiceMapping('${s.id}')" title="Eliminar servicio">
-                        <span class="material-symbols-rounded" style="font-size:18px;">delete</span>
-                      </button>
-                    </div>
-                  </div>
-                `;
-              }).join('')}
             </div>
           </div>
 
@@ -6343,86 +6326,145 @@
     },
 
     /* ======================================================================
-       SUB-TAB 3: SERVICIOS E INSUMOS
+       SUB-TAB 2: SERVICIOS TÉCNICOS & BASE DE SERVICIOS
        ====================================================================== */
     buildBotServicesHTML() {
       const cfg = this.getBotConfig();
       const maps = cfg.serviceInsumosMap || [];
+      const stockList = (this.activeList('stockItems') || []).filter(i => !i.deleted);
 
       return `
         <div style="display:flex; flex-direction:column; gap:20px; max-width:960px;">
-          <div class="bot-card-setting">
-            <div class="bot-card-header">
-              <div class="bot-card-title">
-                <span class="material-symbols-rounded" style="color:var(--primary);">build</span>
-                Servicios Técnicos Vinculados a Insumos
+          <!-- Banner Servicios Técnicos Oficiales -->
+          <div style="padding:16px 20px; background:rgba(99,102,241,0.08); border:1.5px solid rgba(99,102,241,0.3); border-radius:16px; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:14px; flex:1; min-width:280px;">
+              <div style="width:44px; height:44px; border-radius:12px; background:rgba(99,102,241,0.18); display:flex; align-items:center; justify-content:center; color:#818cf8; flex-shrink:0;">
+                <span class="material-symbols-rounded" style="font-size:26px;">home_repair_service</span>
               </div>
-              <button class="btn-cashew btn-primary" style="font-size:12px; padding:6px 14px;" onclick="CashewApp.openAddServiceMappingModal()">
-                <span class="material-symbols-rounded" style="font-size:18px;">add</span>
-                Vincular Servicio
-              </button>
-            </div>
-            <p style="font-size:13px; color:var(--text-muted); margin:0;">
-              Cuando un cliente paga por uno de estos servicios, el bot sugiere automáticamente descontar el o los insumos de taller vinculados para calcular la ganancia neta.
-            </p>
-
-            <div style="display:flex; flex-direction:column; gap:10px;">
-              ${maps.length === 0 ? `
-                <div style="text-align:center; padding:30px; color:var(--text-muted); font-size:13px;">
-                  No hay servicios vinculados todavía. Haz clic en "Vincular Servicio" para asociar uno o más insumos a una tarifa de mano de obra.
+              <div>
+                <div style="font-weight:800; font-size:15.5px; color:#f8fafc;">Catálogo Oficial de Servicios Técnicos de Doomlater</div>
+                <div style="font-size:12.5px; color:#cbd5e1; margin-top:2px;">
+                  Define mano de obra, insumos consumibles del stock, costos operativos y el <strong>mensaje personalizado</strong> que el bot enviará con calma cuando pregunten por cada servicio.
                 </div>
-              ` : maps.map(s => {
-                const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
-                  ? s.insumos
-                  : [{ name: s.defaultInsumoName || 'Insumo de taller', qty: 1 }];
-                return `
-                  <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-elevated); padding:14px 16px; border-radius:14px; border:1px solid var(--border-subtle); gap:12px;">
+              </div>
+            </div>
+            <button class="btn-cashew btn-primary" style="font-size:13px; padding:9px 18px; font-weight:800; white-space:nowrap;" onclick="CashewApp.openAddServiceMappingModal()">
+              <span class="material-symbols-rounded" style="font-size:19px;">add</span>
+              + Nuevo Servicio
+            </button>
+          </div>
+
+          <!-- Listado de Servicios -->
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            ${maps.length === 0 ? `
+              <div class="bot-card-setting" style="text-align:center; padding:45px 20px; color:var(--text-muted); font-size:13.5px;">
+                <span class="material-symbols-rounded" style="font-size:46px; color:var(--text-muted); margin-bottom:10px; display:block;">build</span>
+                No hay servicios creados todavía.<br/>
+                Haz clic en el botón <strong>"+ Nuevo Servicio"</strong> para configurar tu primer servicio técnico con mano de obra, insumos de stock y mensaje automático.
+              </div>
+            ` : maps.map(s => {
+              const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
+                ? s.insumos
+                : (s.defaultInsumoName ? [{ name: s.defaultInsumoName, qty: 1, unitCost: 0 }] : []);
+
+              let insumosCostTotal = 0;
+              insumoItems.forEach(item => {
+                const stockItem = stockList.find(st => st.name.toLowerCase() === item.name.toLowerCase());
+                const unitCost = Number(item.unitCost !== undefined ? item.unitCost : (stockItem ? stockItem.purchaseCost : 0)) || 0;
+                insumosCostTotal += unitCost * (Number(item.qty) || 1);
+              });
+
+              const laborPrice = Number(s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0));
+              const opCost = Number(s.operatingCost || 0);
+              const opCur = s.operatingCostCurrency || 'USD';
+              const totalCost = Number(s.totalCost !== undefined ? s.totalCost : (laborPrice + insumosCostTotal + (opCur === 'USD' || opCur === 'USDT' ? opCost : 0)));
+
+              return `
+                <div class="bot-card-setting" style="display:flex; flex-direction:column; gap:12px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:16px; padding:18px 20px;">
+                  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
                     <div>
-                      <div style="font-weight:800; font-size:14.5px; color:var(--text-main);">${this.escapeHtml(s.serviceName)}</div>
-                      <div style="font-size:12.5px; color:var(--text-muted); margin-top:5px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <span style="color:var(--text-muted); font-weight:700;">Insumos requeridos:</span>
-                        ${insumoItems.map(i => `
-                          <span style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:6px; padding:2px 8px; font-weight:700; color:var(--text-main); font-size:12px;">
-                            ${i.qty}x ${this.escapeHtml(i.name)}
-                          </span>
-                        `).join('')}
-                        <span style="margin-left:6px;">• Mano de obra sugerida: <strong style="color:var(--cashew-income);">$${Number(s.defaultLaborPrice || 0).toFixed(2)}</strong></span>
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="material-symbols-rounded" style="color:var(--primary); font-size:22px;">precision_manufacturing</span>
+                        <span style="font-weight:800; font-size:16px; color:var(--text-main);">${this.escapeHtml(s.serviceName)}</span>
+                      </div>
+                      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; font-size:12.5px;">
+                        <span style="background:rgba(34,197,94,0.12); color:#22c55e; border:1px solid rgba(34,197,94,0.3); border-radius:8px; padding:3px 10px; font-weight:700;">
+                          Mano de Obra: $${laborPrice.toFixed(2)}
+                        </span>
+                        <span style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); border-radius:8px; padding:3px 10px; font-weight:700;">
+                          Insumos: $${insumosCostTotal.toFixed(2)}
+                        </span>
+                        <span style="background:rgba(234,179,8,0.12); color:#eab308; border:1px solid rgba(234,179,8,0.3); border-radius:8px; padding:3px 10px; font-weight:700;">
+                          Costos Operativos: ${opCur === 'VES' ? 'Bs.' : '$'} ${opCost.toFixed(2)} ${opCur}
+                        </span>
+                        <span style="background:rgba(99,102,241,0.18); color:#818cf8; border:1.5px solid rgba(99,102,241,0.5); border-radius:8px; padding:3px 12px; font-weight:800; font-size:13px;">
+                          Costo Total: $${totalCost.toFixed(2)} USD
+                        </span>
                       </div>
                     </div>
-                    <div style="display:flex; gap:6px;">
-                      <button class="bot-icon-btn" style="color:var(--cashew-expense);" onclick="CashewApp.deleteServiceMapping('${s.id}')" title="Eliminar servicio">
-                        <span class="material-symbols-rounded" style="font-size:18px;">delete</span>
+                    <div style="display:flex; gap:8px;">
+                      <button class="btn-cashew btn-tonal btn-sm" onclick="CashewApp.openAddServiceMappingModal('${s.id}')" title="Editar Servicio">
+                        <span class="material-symbols-rounded" style="font-size:17px;">edit</span> Editar
+                      </button>
+                      <button class="bot-icon-btn" style="color:var(--cashew-expense);" onclick="CashewApp.deleteServiceMapping('${s.id}')" title="Eliminar Servicio">
+                        <span class="material-symbols-rounded" style="font-size:19px;">delete</span>
                       </button>
                     </div>
                   </div>
-                `;
-              }).join('')}
-            </div>
+
+                  <!-- Insumos vinculados -->
+                  <div style="font-size:12.5px; color:var(--text-muted); background:var(--bg-card); border-radius:10px; padding:8px 12px; border:1px solid var(--border-subtle); display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                    <strong style="color:var(--text-main);">Insumos/Consumibles de Stock vinculados:</strong>
+                    ${insumoItems.length === 0 ? '<span style="font-style:italic;">Ninguno (Solo mano de obra)</span>' : insumoItems.map(i => `
+                      <span style="background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:6px; padding:2px 8px; font-weight:700; color:var(--text-main); font-size:12px;">
+                        ${i.qty}x ${this.escapeHtml(i.name)}
+                      </span>
+                    `).join('')}
+                  </div>
+
+                  <!-- Mensaje personalizado que el bot envía -->
+                  <div style="margin-top:2px;">
+                    <div style="font-size:12px; font-weight:700; color:var(--primary); margin-bottom:4px; display:flex; align-items:center; gap:5px;">
+                      <span class="material-symbols-rounded" style="font-size:16px;">forum</span>
+                      Mensaje personalizado que el bot enviará al cliente cuando pregunten por este servicio:
+                    </div>
+                    <div style="font-size:13px; line-height:1.45; color:var(--text-main); background:rgba(255,255,255,0.03); border-left:3px solid var(--primary); padding:8px 12px; border-radius:0 8px 8px 0;">
+                      ${s.customMessage ? this.escapeHtml(s.customMessage) : `<span style="color:var(--text-muted); font-style:italic;">(Sin mensaje personalizado. El bot calculará el presupuesto automáticamente: $${laborPrice.toFixed(2)} USD mano de obra + insumos).</span>`}
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
           </div>
         </div>
       `;
     },
 
     openAddServiceMappingModal(editId = null) {
-      const insumos = (this.activeList('stockItems') || []).filter(i => !i.deleted && i.kind === 'insumo');
       const allStock = (this.activeList('stockItems') || []).filter(i => !i.deleted);
+      const insumos = allStock.filter(i => i.kind === 'insumo');
       const availableItems = insumos.length > 0 ? insumos : allStock;
 
       const cfg = this.getBotConfig();
       const existing = editId ? (cfg.serviceInsumosMap || []).find(s => s.id === editId) : null;
       const initialInsumos = (existing && Array.isArray(existing.insumos) && existing.insumos.length > 0)
         ? existing.insumos
-        : (existing && existing.defaultInsumoName ? [{ name: existing.defaultInsumoName, qty: 1 }] : [{ name: availableItems[0]?.name || 'Insumo de taller', qty: 1 }]);
+        : (existing && existing.defaultInsumoName ? [{ name: existing.defaultInsumoName, qty: 1, unitCost: 0 }] : []);
+
+      const laborPrice = existing ? Number(existing.laborPrice !== undefined ? existing.laborPrice : (existing.defaultLaborPrice || 0)) : 30;
+      const opCost = existing ? Number(existing.operatingCost || 0) : 0;
+      const opCur = existing ? (existing.operatingCostCurrency || 'USD') : 'USD';
+      const customMsg = existing ? (existing.customMessage || '') : '';
 
       const bodyHtml = `
         <div class="modal-head">
           <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:36px; height:36px; border-radius:10px; background:rgba(212,155,75,0.18); display:flex; align-items:center; justify-content:center; color:#d49b4b;">
-              <span class="material-symbols-rounded" style="font-size:22px;">build</span>
+            <div style="width:38px; height:38px; border-radius:10px; background:rgba(99,102,241,0.18); display:flex; align-items:center; justify-content:center; color:#818cf8;">
+              <span class="material-symbols-rounded" style="font-size:24px;">home_repair_service</span>
             </div>
             <div>
-              <h2 class="modal-title" style="font-size:17.5px; margin:0;">${existing ? 'Editar Servicio e Insumos' : 'Vincular Servicio a Insumos'}</h2>
-              <div style="font-size:12px; color:var(--text-muted);">Define 1 o más insumos que consume este servicio técnico</div>
+              <h2 class="modal-title" style="font-size:17.5px; margin:0;">${existing ? 'Editar Servicio Técnico' : 'Nuevo Servicio Técnico'}</h2>
+              <div style="font-size:12px; color:var(--text-muted);">Mano de obra, consumibles del stock, costos operativos y mensaje para el bot</div>
             </div>
           </div>
           <button class="icon-btn" onclick="CashewApp.closeModal()">
@@ -6431,45 +6473,94 @@
         </div>
         <form onsubmit="event.preventDefault(); CashewApp.saveServiceMapping('${existing ? existing.id : ''}');">
           <div class="form-group" style="margin-bottom:12px;">
-            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Servicio (ej. Instalación Magia Switch OLED / Mantenimiento PS5)</label>
-            <input type="text" id="srv_name" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${this.escapeHtml(existing?.serviceName || '')}" placeholder="Ej: Instalación Magia Switch OLED" required />
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Nombre del Servicio (ej. Mantenimiento PS5 / Instalación Magia Switch OLED)</label>
+            <input type="text" id="srv_name" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${this.escapeHtml(existing?.serviceName || '')}" placeholder="Ej: Mantenimiento Preventivo PS5" required />
           </div>
 
           <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Precio Mano de Obra ($ USD)</label>
+            <input type="number" step="0.5" id="srv_labor_price" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${laborPrice}" oninput="CashewApp.recalcServiceModalTotal()" required />
+          </div>
+
+          <!-- Insumos o Consumibles de Stock vinculados -->
+          <div class="form-group" style="margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label class="form-label" style="font-size:12.5px; font-weight:700; margin:0; display:block;">
-                Insumos de taller que consume (1 o más):
+                Consumibles / Insumos del Stock que se usan en la reparación:
               </label>
               <button type="button" class="btn-cashew btn-surface btn-sm" style="font-size:11.5px; padding:3px 9px;" onclick="CashewApp.addSrvInsumoRow()">
-                <span class="material-symbols-rounded" style="font-size:15px;">add</span> + Agregar otro insumo
+                <span class="material-symbols-rounded" style="font-size:15px;">add</span> + Agregar Insumo de Stock
               </button>
             </div>
             <div id="srv_insumos_container" style="display:flex; flex-direction:column; gap:8px;">
-              ${initialInsumos.map(item => `
-                <div class="srv-insumo-row" style="display:flex; gap:8px; align-items:center; background:var(--bg-elevated); padding:8px 10px; border-radius:10px; border:1px solid var(--border-subtle);">
-                  <select class="cashew-input srv-insumo-select" style="flex:1; font-size:13px;">
-                    ${availableItems.map(i => `
-                      <option value="${this.escapeHtml(i.name)}" ${i.name === item.name ? 'selected' : ''}>
-                        ${this.escapeHtml(i.name)} (Stock: ${i.stock} un.)
-                      </option>
-                    `).join('')}
-                    <option value="Insumo genérico" ${!availableItems.some(i => i.name === item.name) ? 'selected' : ''}>Otro / Insumo genérico</option>
-                  </select>
-                  <div style="display:flex; align-items:center; gap:4px;">
-                    <span style="font-size:11px; color:var(--text-muted); font-weight:700;">Cant:</span>
-                    <input type="number" class="cashew-input srv-insumo-qty" value="${Number(item.qty) || 1}" min="1" max="100" style="width:60px; text-align:center; padding:4px 6px; font-size:13px;" />
+              ${initialInsumos.map(item => {
+                const stItem = allStock.find(st => st.name.toLowerCase() === item.name.toLowerCase());
+                const unitCost = Number(item.unitCost !== undefined ? item.unitCost : (stItem ? stItem.purchaseCost : 0)) || 0;
+                return `
+                  <div class="srv-insumo-row" style="display:flex; gap:8px; align-items:center; background:var(--bg-elevated); padding:8px 10px; border-radius:10px; border:1px solid var(--border-subtle);">
+                    <select class="cashew-input srv-insumo-select" style="flex:1; font-size:13px;" onchange="CashewApp.onServiceInsumoSelectChange(this)">
+                      ${availableItems.map(i => `
+                        <option value="${this.escapeHtml(i.name)}" data-cost="${Number(i.purchaseCost || 0)}" ${i.name === item.name ? 'selected' : ''}>
+                          ${this.escapeHtml(i.name)} (Stock: ${i.stock} un. | Costo: $${Number(i.purchaseCost || 0).toFixed(2)})
+                        </option>
+                      `).join('')}
+                      <option value="Insumo genérico" data-cost="0" ${!availableItems.some(i => i.name === item.name) ? 'selected' : ''}>Otro / Insumo genérico</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                      <span style="font-size:11px; color:var(--text-muted); font-weight:700;">Cant:</span>
+                      <input type="number" class="cashew-input srv-insumo-qty" value="${Number(item.qty) || 1}" min="1" max="100" style="width:55px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.recalcServiceModalTotal()" />
+                    </div>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                      <span style="font-size:11px; color:var(--text-muted); font-weight:700;">Costo $:</span>
+                      <input type="number" step="0.1" class="cashew-input srv-insumo-cost" value="${unitCost}" style="width:65px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.recalcServiceModalTotal()" />
+                    </div>
+                    <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:4px;" onclick="CashewApp.removeSrvInsumoRow(this)" title="Quitar insumo">
+                      <span class="material-symbols-rounded" style="font-size:18px;">close</span>
+                    </button>
                   </div>
-                  <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:4px;" onclick="CashewApp.removeSrvInsumoRow(this)" title="Quitar insumo">
-                    <span class="material-symbols-rounded" style="font-size:18px;">close</span>
-                  </button>
-                </div>
-              `).join('')}
+                `;
+              }).join('')}
             </div>
+            ${initialInsumos.length === 0 ? `<div id="srv_no_insumos_msg" style="font-size:12px; color:var(--text-muted); font-style:italic; padding:6px 0;">(Sin insumos vinculados todavía. Toca "+ Agregar Insumo de Stock" si este servicio requiere piezas o consumibles).</div>` : ''}
           </div>
 
+          <!-- Costos Operativos del Servicio -->
+          <div class="form-group" style="margin-bottom:12px; background:rgba(234,179,8,0.06); border:1px solid rgba(234,179,8,0.25); border-radius:12px; padding:12px 14px;">
+            <label class="form-label" style="font-size:13px; font-weight:700; color:#eab308; margin-bottom:6px; display:block;">
+              Costos Operativos del Servicio
+            </label>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <input type="number" step="0.5" id="srv_operating_cost" class="cashew-input" style="flex:1;" value="${opCost}" placeholder="0.00" oninput="CashewApp.recalcServiceModalTotal()" />
+              <select id="srv_operating_currency" class="cashew-input" style="width:110px;" onchange="CashewApp.recalcServiceModalTotal()">
+                <option value="USD" ${opCur === 'USD' ? 'selected' : ''}>USD ($)</option>
+                <option value="USDT" ${opCur === 'USDT' ? 'selected' : ''}>USDT</option>
+                <option value="VES" ${opCur === 'VES' ? 'selected' : ''}>VES (Bs)</option>
+              </select>
+            </div>
+            <span style="font-size:11.5px; color:var(--text-muted); display:block; margin-top:4px;">
+              Gastos adicionales como traslados, electricidad, calibración o insumos menores no inventariados.
+            </span>
+          </div>
+
+          <!-- Recuadro de Costo Total Calculado en Tiempo Real -->
+          <div style="background:rgba(99,102,241,0.12); border:1.5px solid rgba(99,102,241,0.35); border-radius:12px; padding:12px 16px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Costo Total del Servicio:</div>
+              <div style="font-size:11.5px; color:var(--text-muted);">Mano de obra + Insumos de stock + Costos operativos</div>
+            </div>
+            <div id="srv_total_cost_display" style="font-size:20px; font-weight:800; color:#818cf8;">$0.00 USD</div>
+          </div>
+
+          <!-- Mensaje Personalizado del Servicio para el Bot -->
           <div class="form-group" style="margin-bottom:16px;">
-            <label class="form-label" style="font-size:12.5px; font-weight:700; margin-bottom:4px; display:block;">Precio sugerido de venta / mano de obra ($)</label>
-            <input type="number" step="0.5" id="srv_price" class="cashew-input" style="width:100%; box-sizing:border-box;" value="${existing ? Number(existing.defaultLaborPrice || 0) : 40}" required />
+            <label class="form-label" style="font-size:13px; font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+              <span class="material-symbols-rounded" style="color:var(--primary); font-size:18px;">chat</span>
+              Mensaje Personalizado del Servicio (cuando pregunten por este servicio):
+            </label>
+            <textarea id="srv_custom_message" class="cashew-input" style="width:100%; height:90px; box-sizing:border-box; font-size:13px; line-height:1.45;" placeholder="¡Hola! Con gusto te atendemos con este servicio. Incluye mano de obra calificada e insumos garantizados. El total es de $40 USD y se entrega listo previa cita 🙌">${this.escapeHtml(customMsg)}</textarea>
+            <span style="font-size:11.5px; color:var(--text-muted); display:block; margin-top:4px;">
+              Cuando el cliente consulte por este servicio, el bot tomará este mensaje personalizado exacto y lo enviará calmadamente.
+            </span>
           </div>
 
           <div style="display:flex; justify-content:flex-end; gap:8px;">
@@ -6479,93 +6570,145 @@
         </form>
       `;
       this.openModalHTML(bodyHtml, false);
+      this.recalcServiceModalTotal();
+    },
+
+    onServiceInsumoSelectChange(selectElem) {
+      const opt = selectElem.options[selectElem.selectedIndex];
+      const cost = opt?.getAttribute('data-cost');
+      const row = selectElem.closest('.srv-insumo-row');
+      if (row && cost !== null && cost !== undefined) {
+        const costInp = row.querySelector('.srv-insumo-cost');
+        if (costInp) costInp.value = Number(cost) || 0;
+      }
+      this.recalcServiceModalTotal();
+    },
+
+    recalcServiceModalTotal() {
+      const labor = Number(document.getElementById('srv_labor_price')?.value) || 0;
+      const opCost = Number(document.getElementById('srv_operating_cost')?.value) || 0;
+      const opCur = document.getElementById('srv_operating_currency')?.value || 'USD';
+
+      let insumosCost = 0;
+      const rows = document.querySelectorAll('#srv_insumos_container .srv-insumo-row');
+      rows.forEach(r => {
+        const qty = Number(r.querySelector('.srv-insumo-qty')?.value) || 1;
+        const cost = Number(r.querySelector('.srv-insumo-cost')?.value) || 0;
+        insumosCost += qty * cost;
+      });
+
+      // Si opCur es VES, no sumarlo directamente en USD
+      const opInUsd = (opCur === 'USD' || opCur === 'USDT') ? opCost : 0;
+      const total = labor + insumosCost + opInUsd;
+
+      const disp = document.getElementById('srv_total_cost_display');
+      if (disp) {
+        disp.textContent = `$${total.toFixed(2)} USD${opCur === 'VES' && opCost > 0 ? ` + Bs. ${opCost.toFixed(2)}` : ''}`;
+      }
     },
 
     addSrvInsumoRow() {
       const container = document.getElementById('srv_insumos_container');
       if (!container) return;
-      const insumos = (this.activeList('stockItems') || []).filter(i => !i.deleted && i.kind === 'insumo');
+      const noMsg = document.getElementById('srv_no_insumos_msg');
+      if (noMsg) noMsg.remove();
+
       const allStock = (this.activeList('stockItems') || []).filter(i => !i.deleted);
+      const insumos = allStock.filter(i => i.kind === 'insumo');
       const availableItems = insumos.length > 0 ? insumos : allStock;
+      const firstItem = availableItems[0];
+      const defaultCost = Number(firstItem ? firstItem.purchaseCost : 0) || 0;
 
       const row = document.createElement('div');
       row.className = 'srv-insumo-row';
       row.style.cssText = 'display:flex; gap:8px; align-items:center; background:var(--bg-elevated); padding:8px 10px; border-radius:10px; border:1px solid var(--border-subtle); animation:fadeIn 0.2s ease;';
       row.innerHTML = `
-        <select class="cashew-input srv-insumo-select" style="flex:1; font-size:13px;">
+        <select class="cashew-input srv-insumo-select" style="flex:1; font-size:13px;" onchange="CashewApp.onServiceInsumoSelectChange(this)">
           ${availableItems.map(i => `
-            <option value="${this.escapeHtml(i.name)}">${this.escapeHtml(i.name)} (Stock: ${i.stock} un.)</option>
+            <option value="${this.escapeHtml(i.name)}" data-cost="${Number(i.purchaseCost || 0)}">${this.escapeHtml(i.name)} (Stock: ${i.stock} un. | Costo: $${Number(i.purchaseCost || 0).toFixed(2)})</option>
           `).join('')}
-          <option value="Insumo genérico">Otro / Insumo genérico</option>
+          <option value="Insumo genérico" data-cost="0">Otro / Insumo genérico</option>
         </select>
         <div style="display:flex; align-items:center; gap:4px;">
           <span style="font-size:11px; color:var(--text-muted); font-weight:700;">Cant:</span>
-          <input type="number" class="cashew-input srv-insumo-qty" value="1" min="1" max="100" style="width:60px; text-align:center; padding:4px 6px; font-size:13px;" />
+          <input type="number" class="cashew-input srv-insumo-qty" value="1" min="1" max="100" style="width:55px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.recalcServiceModalTotal()" />
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:11px; color:var(--text-muted); font-weight:700;">Costo $:</span>
+          <input type="number" step="0.1" class="cashew-input srv-insumo-cost" value="${defaultCost}" style="width:65px; text-align:center; padding:4px 6px; font-size:13px;" oninput="CashewApp.recalcServiceModalTotal()" />
         </div>
         <button type="button" class="icon-btn" style="color:var(--cashew-expense); padding:4px;" onclick="CashewApp.removeSrvInsumoRow(this)" title="Quitar insumo">
           <span class="material-symbols-rounded" style="font-size:18px;">close</span>
         </button>
       `;
       container.appendChild(row);
+      this.recalcServiceModalTotal();
     },
 
     removeSrvInsumoRow(btn) {
-      const container = document.getElementById('srv_insumos_container');
-      if (!container) return;
-      const rows = container.querySelectorAll('.srv-insumo-row');
-      if (rows.length > 1) {
-        btn.closest('.srv-insumo-row').remove();
-      } else {
-        this.toast('Debe haber al menos 1 insumo vinculado', 'warning');
-      }
+      const row = btn.closest('.srv-insumo-row');
+      if (row) row.remove();
+      this.recalcServiceModalTotal();
     },
 
     saveServiceMapping(existingId = null) {
-      const name = document.getElementById('srv_name').value.trim();
-      const price = Number(document.getElementById('srv_price').value) || 0;
-      if (!name) return;
+      const name = document.getElementById('srv_name')?.value?.trim();
+      const laborPrice = Number(document.getElementById('srv_labor_price')?.value) || 0;
+      const opCost = Number(document.getElementById('srv_operating_cost')?.value) || 0;
+      const opCur = document.getElementById('srv_operating_currency')?.value || 'USD';
+      const customMsg = document.getElementById('srv_custom_message')?.value?.trim() || '';
+
+      if (!name) {
+        this.toast('Por favor ingresa el nombre del servicio', 'warning');
+        return;
+      }
 
       const rows = document.querySelectorAll('#srv_insumos_container .srv-insumo-row');
       const insumosList = [];
+      let insumosCostTotal = 0;
+
       rows.forEach(r => {
         const sel = r.querySelector('.srv-insumo-select');
         const qtyInp = r.querySelector('.srv-insumo-qty');
+        const costInp = r.querySelector('.srv-insumo-cost');
         const inName = sel ? sel.value.trim() : '';
         const inQty = qtyInp ? (Number(qtyInp.value) || 1) : 1;
+        const inCost = costInp ? (Number(costInp.value) || 0) : 0;
         if (inName) {
-          insumosList.push({ name: inName, qty: inQty });
+          insumosList.push({ name: inName, qty: inQty, unitCost: inCost });
+          insumosCostTotal += inQty * inCost;
         }
       });
 
-      if (insumosList.length === 0) {
-        insumosList.push({ name: 'Insumo de taller', qty: 1 });
-      }
-
+      const opInUsd = (opCur === 'USD' || opCur === 'USDT') ? opCost : 0;
+      const totalCost = laborPrice + insumosCostTotal + opInUsd;
       const defaultInsumoName = insumosList.map(i => `${i.qty > 1 ? i.qty + 'x ' : ''}${i.name}`).join(' + ');
 
       const cfg = this.getBotConfig();
       let list = [...(cfg.serviceInsumosMap || [])];
+
+      const srvData = {
+        id: existingId || ('srv_' + Date.now().toString(36)),
+        serviceName: name,
+        laborPrice: laborPrice,
+        defaultLaborPrice: laborPrice,
+        insumos: insumosList,
+        defaultInsumoName: defaultInsumoName || 'Solo mano de obra',
+        operatingCost: opCost,
+        operatingCostCurrency: opCur,
+        totalCost: totalCost,
+        customMessage: customMsg
+      };
+
       if (existingId) {
-        list = list.map(s => s.id === existingId ? {
-          ...s,
-          serviceName: name,
-          insumos: insumosList,
-          defaultInsumoName,
-          defaultLaborPrice: price
-        } : s);
+        list = list.map(s => s.id === existingId ? { ...s, ...srvData } : s);
       } else {
-        list.push({
-          id: 'srv_' + Date.now().toString(36),
-          serviceName: name,
-          insumos: insumosList,
-          defaultInsumoName,
-          defaultLaborPrice: price
-        });
+        list.push(srvData);
       }
 
-      window.cashewSync.saveBotConfig({ serviceInsumosMap: list }, 'Mapeo de servicio guardado');
+      window.cashewSync.saveBotConfig({ serviceInsumosMap: list }, `Servicio "${name}" guardado`);
       this.closeModal();
-      this.toast('Servicio técnico vinculado con sus insumos', 'build');
+      this.toast(`Servicio "${name}" actualizado en tiempo real`, 'home_repair_service');
       this.renderMainView();
     },
 
@@ -6576,17 +6719,18 @@
 
       const insumoItems = Array.isArray(s.insumos) && s.insumos.length > 0
         ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
-        : (s.defaultInsumoName || 'Insumos');
+        : (s.defaultInsumoName || 'Solo mano de obra');
 
       this.confirmDeletionModal({
-        entityType: 'servicio técnico vinculado',
+        entityType: 'servicio técnico',
         itemTitle: s.serviceName,
-        icon: 'build',
+        icon: 'home_repair_service',
         confirmBtnText: 'Sí, Eliminar Servicio',
         details: [
           { label: 'Nombre del Servicio', value: s.serviceName },
           { label: 'Insumos que Consume', value: insumoItems },
-          { label: 'Tarifa Mano de Obra', value: `$${Number(s.defaultLaborPrice || 0).toFixed(2)}`, color: 'var(--cashew-income)' }
+          { label: 'Mano de Obra', value: `$${Number(s.laborPrice || s.defaultLaborPrice || 0).toFixed(2)}`, color: 'var(--cashew-income)' },
+          { label: 'Costo Total', value: `$${Number(s.totalCost || 0).toFixed(2)} USD`, color: '#818cf8' }
         ],
         onConfirm: () => {
           const list = (cfg.serviceInsumosMap || []).filter(x => x.id !== id);
@@ -6729,6 +6873,18 @@
                 </span>
               </div>
 
+              <!-- Mensaje Personalizado cuando el Bot NO sepa responder a una Pregunta -->
+              <div style="margin-top:14px; background:rgba(234,179,8,0.06); border:1.5px solid rgba(234,179,8,0.3); border-radius:14px; padding:14px 16px;">
+                <label style="font-weight:700; font-size:13.5px; color:#eab308; display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                  <span class="material-symbols-rounded" style="font-size:20px;">help_outline</span>
+                  Mensaje Personalizado cuando el Bot NO sepa qué responder a una pregunta:
+                </label>
+                <textarea id="cfg_unknownQuestionFallbackMessage" class="cashew-input" style="width:100%; height:75px; font-size:13px; line-height:1.45; box-sizing:border-box;" placeholder="Con gusto, voy a consultar ese detalle directamente con nuestro equipo para darte la respuesta exacta en unos momentos 🙌">${this.escapeHtml(cfg.unknownQuestionFallbackMessage || 'Con gusto, voy a consultar ese detalle directamente con nuestro equipo para darte la respuesta exacta en unos momentos 🙌')}</textarea>
+                <span style="font-size:12px; color:var(--text-muted); display:block; margin-top:4px;">
+                  Cuando un cliente haga una pregunta cuya respuesta no esté en la base de datos oficial, el bot enviará exactamente este texto personalizado y marcará el chat en <strong>Alerta</strong> (amarillo) en la Web.
+                </span>
+              </div>
+
               <!-- Gemini API Key -->
               <div style="margin-top:14px;">
                 <label style="font-weight:700; font-size:13.5px; color:var(--text-main); display:block; margin-bottom:5px;">
@@ -6752,13 +6908,14 @@
     },
 
     saveBotConfigFromForm() {
-      const delay = Number(document.getElementById('cfg_delay')?.value) || 3.5;
+      const delay = Number(document.getElementById('cfg_delay')?.value) || 2.5;
       const showTyping = Boolean(document.getElementById('cfg_showTyping')?.checked);
       const showOnline = Boolean(document.getElementById('cfg_showOnline')?.checked);
       const customAiRules = document.getElementById('cfg_customAiRules')?.value?.trim() || '';
       const messengerMsg = document.getElementById('cfg_messengerMsg')?.value?.trim();
       const geminiKey = document.getElementById('cfg_geminiKey')?.value?.trim();
       const payReceiptMsg = document.getElementById('cfg_paymentReceiptReplyMessage')?.value?.trim();
+      const unknownMsg = document.getElementById('cfg_unknownQuestionFallbackMessage')?.value?.trim();
 
       const patch = {
         typingDelaySec: delay,
@@ -6769,6 +6926,7 @@
       if (messengerMsg !== undefined) patch.messengerRedirectMessage = messengerMsg;
       if (geminiKey !== undefined) patch.geminiApiKey = geminiKey;
       if (payReceiptMsg !== undefined) patch.paymentReceiptReplyMessage = payReceiptMsg;
+      if (unknownMsg !== undefined) patch.unknownQuestionFallbackMessage = unknownMsg;
 
       window.cashewSync.saveBotConfig(patch, 'Configuración del bot guardada');
 
@@ -6812,7 +6970,7 @@
     },
 
     restoreDefaultRules() {
-      if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlate?')) return;
+      if (!confirm('¿Deseas restaurar las reglas estándar recomendadas de Doomlater?')) return;
       window.cashewSync.saveBotConfig({ customAiRules: this.DEFAULT_CUSTOM_RULES_TEXT }, 'Reglas IA restauradas');
       this.toast('Reglas recomendadas restauradas', 'verified');
       this.renderMainView();
@@ -7413,7 +7571,7 @@
             <span>¿Estás seguro de que deseas eliminar este ${entityType}?</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); line-height:1.4;">
-            Esta acción eliminará el registro de la base de datos de Doomlate para ambos socios.
+            Esta acción eliminará el registro de la base de datos de Doomlater para ambos socios.
           </div>
         </div>
 

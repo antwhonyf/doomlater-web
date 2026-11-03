@@ -65,19 +65,19 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
 const GEMINI_API_KEY_ENV = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL_ENV = process.env.GEMINI_MODEL || '';
 
-/** Modelos de Gemini verificados y ultra-rápidos en orden de prioridad */
+/** Modelos de Gemini verificados con razonamiento y alta velocidad en orden de prioridad */
 const WORKING_GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',
-  'gemini-3-flash-preview',
-  'gemini-3.5-flash',
-  'gemini-3.7-flash'
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro'
 ];
 const WA_AUTH_SECRET = process.env.WA_AUTH_SECRET || '';
 const WA_DISABLED = process.env.WA_DISABLED === '1';
 const RENDER_URL = (process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
 
 const OFFICIAL_WA_NUMBER = (process.env.OFFICIAL_WA_NUMBER || '584245323796').replace(/\D/g, '');
-const DEFAULT_REDIRECT = `¡Hola! Gracias por contactarnos en Doomlate 📱. Para atenderte de inmediato con stock en tiempo real, escríbenos a nuestro WhatsApp oficial: +${OFFICIAL_WA_NUMBER} o toca este enlace: https://wa.me/${OFFICIAL_WA_NUMBER} ¡Te atenderemos enseguida!`;
+const DEFAULT_REDIRECT = `¡Hola! Gracias por contactarnos en Doomlater 📱. Para atenderte de inmediato con stock en tiempo real, escríbenos a nuestro WhatsApp oficial: +${OFFICIAL_WA_NUMBER} o toca este enlace: https://wa.me/${OFFICIAL_WA_NUMBER} ¡Te atenderemos enseguida!`;
 
 const INSTANCE_ID = `inst_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
 const INSTANCE_HOST = RENDER_URL ? `render (${RENDER_URL})` : `local (${os.hostname()})`;
@@ -321,7 +321,7 @@ const DEFAULT_PAYMENT_METHODS = [
 ];
 
 const DEFAULT_FAQ = [
-  { id: 'faq_1', question: '¿Qué productos y servicios ofrecen en Doomlate?', answer: 'En Doomlate nos especializamos en venta de consolas de videojuegos (PlayStation, Nintendo Switch, Xbox), accesorios, controles, videojuegos, y servicio técnico especializado (mantenimiento preventivo, cambio de pastas térmicas, reparación de controles drift/botones, pantallas y puertos de carga).' },
+  { id: 'faq_1', question: '¿Qué productos y servicios ofrecen en Doomlater?', answer: 'En Doomlater nos especializamos en venta de consolas de videojuegos (PlayStation, Nintendo Switch, Xbox), accesorios, controles, videojuegos, y servicio técnico especializado (mantenimiento preventivo, cambio de pastas térmicas, reparación de controles drift/botones, pantallas y puertos de carga).' },
   { id: 'faq_2', question: '¿Hacen envíos o delivery?', answer: 'Sí, contamos con servicio de delivery en la ciudad y envíos nacionales asegurados a través de MRW, Zoom y Tealca.' },
   { id: 'faq_3', question: '¿Los productos y servicios tienen garantía?', answer: 'Sí, todos nuestros productos cuentan con garantía de 30 días y los servicios técnicos son probados detalladamente antes de la entrega.' },
   { id: 'faq_4', question: '¿Dónde están ubicados y cuál es el horario de atención?', answer: 'Estamos ubicados en nuestro local comercial. Atendemos de Lunes a Sábado de 9:00 AM a 6:00 PM.' }
@@ -457,7 +457,7 @@ function buildMultiPagePdf({ title, subtitle, sections }) {
 
   const startNewPage = () => {
     if (currentStream) {
-      currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlate - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
+      currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlater - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
       pagesStreams.push(currentStream);
     }
     currentStream = '';
@@ -490,7 +490,7 @@ function buildMultiPagePdf({ title, subtitle, sections }) {
     y -= 10;
   }
 
-  currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlate - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
+  currentStream += 'BT\n/F1 8 Tf\n36 30 Td\n(Doomlater - Documento Oficial Generado por Doom Bot IA) Tj\nET\n';
   pagesStreams.push(currentStream);
 
   const numPages = pagesStreams.length;
@@ -568,14 +568,14 @@ function generateDoomPdf(type, adminCtx, requesterName = 'Socio') {
     ];
 
     const buffer = buildMultiPagePdf({
-      title: 'Doomlate - Inventario Oficial de Stock',
+      title: 'Doomlater - Inventario Oficial de Stock',
       subtitle: `Fecha: ${dateStr} - ${timeStr} | Solicitado por: @${requesterName}`,
       sections
     });
 
     return {
       buffer,
-      fileName: `Inventario_Doomlate_${now.toISOString().slice(0, 10)}.pdf`,
+      fileName: `Inventario_Doomlater_${now.toISOString().slice(0, 10)}.pdf`,
       title: 'Inventario Oficial de Stock'
     };
   }
@@ -624,15 +624,139 @@ function generateDoomPdf(type, adminCtx, requesterName = 'Socio') {
   ];
 
   const buffer = buildMultiPagePdf({
-    title: 'Doomlate - Estado de Cuenta Financiero',
+    title: 'Doomlater - Estado de Cuenta Financiero',
     subtitle: `Fecha: ${dateStr} - ${timeStr} | Solicitado por: @${requesterName}`,
     sections
   });
 
   return {
     buffer,
-    fileName: `Estado_De_Cuenta_Doomlate_${now.toISOString().slice(0, 10)}.pdf`,
+    fileName: `Estado_De_Cuenta_Doomlater_${now.toISOString().slice(0, 10)}.pdf`,
     title: 'Estado de Cuenta Financiero'
+  };
+}
+
+/**
+ * Generador de Facturas Oficiales en PDF (Exclusivo para Socios de Doomlater)
+ */
+function generateDoomInvoicePdf({ clientName, items, rates, requesterName = 'Socio' }) {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+  const cleanClient = String(clientName || 'Cliente').replace(/[^a-zA-Z0-9]/g, '_');
+
+  let subtotal = 0;
+  const itemLines = (items || []).map((it, idx) => {
+    const lineTotal = (Number(it.qty) || 1) * (Number(it.price) || 0);
+    subtotal += lineTotal;
+    return `${idx + 1}. ${it.description || 'Item'} - Cant: ${it.qty || 1} | P.Unit: $${Number(it.price || 0).toFixed(2)} | Subtotal: $${lineTotal.toFixed(2)} USD`;
+  });
+
+  const ratePar = rates?.paralelo || 1000;
+  const rateBcv = rates?.bcv || 890;
+  const totalBs = subtotal * ratePar;
+  const totalBcv = rateBcv > 0 ? (totalBs / rateBcv) : subtotal;
+
+  const sections = [
+    {
+      header: '1. Informacion de la Factura y del Cliente',
+      lines: [
+        `Empresa Emisora: Doomlater`,
+        `Fecha de Emision: ${dateStr} - ${timeStr}`,
+        `Cliente: ${clientName}`,
+        `Atendido por: @${requesterName} (Equipo Doomlater)`
+      ]
+    },
+    {
+      header: '2. Detalle de Productos y Servicios Facturados',
+      lines: itemLines.length > 0 ? itemLines : ['(Sin articulos)']
+    },
+    {
+      header: '3. Resumen y Total a Cancelar',
+      lines: [
+        `TOTAL EN DIVISAS: $${subtotal.toFixed(2)} USD / USDT`,
+        `Equivalente en Bolivares (Tasa Paralelo/USDT ${ratePar.toFixed(2)} Bs/$): Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`,
+        `Equivalente a Tasa Oficial BCV (${rateBcv.toFixed(2)} Bs/$): $${totalBcv.toFixed(2)} USD`
+      ]
+    },
+    {
+      header: '4. Condiciones de Entrega y Garantia',
+      lines: [
+        `* Garantia oficial de 30 dias continuos sobre repuestos nuevos y servicios tecnicos.`,
+        `* Conserve este comprobante digital oficial emitido por Doomlater.`,
+        `* Gracias por su preferencia en Doomlater.`
+      ]
+    }
+  ];
+
+  const buffer = buildMultiPagePdf({
+    title: 'Doomlater - Factura Oficial de Venta / Servicio',
+    subtitle: `Factura Nro. DLT-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)} | Cliente: ${clientName}`,
+    sections
+  });
+
+  return {
+    buffer,
+    fileName: `Factura_Doomlater_${cleanClient}_${now.toISOString().slice(0, 10)}.pdf`,
+    title: `Factura Oficial - ${clientName}`,
+    subtotal
+  };
+}
+
+/**
+ * Generador de Contratos de Servicio y Garantía en PDF (Exclusivo para Socios de Doomlater)
+ */
+function generateDoomContractPdf({ clientName, serviceName, equipment, requesterName = 'Socio' }) {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+  const cleanClient = String(clientName || 'Cliente').replace(/[^a-zA-Z0-9]/g, '_');
+
+  const sections = [
+    {
+      header: '1. Partes del Contrato de Servicio',
+      lines: [
+        `PRESTADOR DEL SERVICIO: Doomlater (Representado por @${requesterName})`,
+        `CLIENTE BENEFICIARIO: ${clientName}`,
+        `FECHA: ${dateStr} - ${timeStr}`
+      ]
+    },
+    {
+      header: '2. Objeto del Contrato y Especificaciones Tecnicas',
+      lines: [
+        `Servicio Contratado: ${serviceName || 'Servicio Tecnico Especializado'}`,
+        `Equipo / Dispositivo: ${equipment || 'Consola / Accesorio de Videojuegos'}`,
+        `Trabajo a Realizar: Diagnostico, mantenimiento, instalacion de piezas e insumos oficiales y pruebas de control de calidad.`
+      ]
+    },
+    {
+      header: '3. Cláusulas y Terminos de Garantia',
+      lines: [
+        `PRIMERA: Doomlater garantiza mano de obra tecnica calificada y materiales de primera calidad.`,
+        `SEGUNDA: Se otorga garantia de 30 dias continuos a partir de la entrega del equipo funcional.`,
+        `TERCERA: La garantia queda sin efecto ante caidas, derrame de liquidos o intervencion de terceros.`,
+        `CUARTA: Entregas acordadas en CC El Lider, La Previsora o Delivery autorizado.`
+      ]
+    },
+    {
+      header: '4. Conformidad y Firmas',
+      lines: [
+        `Por Doomlater: @${requesterName} (Firma Autorizada)`,
+        `Por el Cliente: ${clientName} (Firma de Conformidad)`
+      ]
+    }
+  ];
+
+  const buffer = buildMultiPagePdf({
+    title: 'Doomlater - Contrato de Servicio Tecnico y Garantia',
+    subtitle: `Contrato Oficial DLT-CON-${now.getFullYear()}-${Math.floor(1000 + Math.random() * 9000)} | Cliente: ${clientName}`,
+    sections
+  });
+
+  return {
+    buffer,
+    fileName: `Contrato_Doomlater_${cleanClient}_${now.toISOString().slice(0, 10)}.pdf`,
+    title: `Contrato de Servicio - ${clientName}`
   };
 }
 
@@ -652,8 +776,8 @@ async function checkLowStockAndAlert() {
         partnerAlertCooldown.set(key, Date.now());
 
         const alertMsg = stockNum <= 0
-          ? `🚨 *DOOMLATE ALERT: Producto AGOTADO* 📦\n\nEl producto/insumo *${it.name}* se quedó sin stock (0 unidades).\n👉 _Atento para reposición._`
-          : `⚠️ *DOOMLATE ALERT: Stock Crítico* 📦\n\nEl producto/insumo *${it.name}* tiene solo *${stockNum} unidad(es)* disponibles.\n👉 _Atento para reposición._`;
+          ? `🚨 *DOOMLATER ALERT: Producto AGOTADO* 📦\n\nEl producto/insumo *${it.name}* se quedó sin stock (0 unidades).\n👉 _Atento para reposición._`
+          : `⚠️ *DOOMLATER ALERT: Stock Crítico* 📦\n\nEl producto/insumo *${it.name}* tiene solo *${stockNum} unidad(es)* disponibles.\n👉 _Atento para reposición._`;
 
         await notifyPartners(alertMsg, key);
       }
@@ -663,26 +787,32 @@ async function checkLowStockAndAlert() {
   }
 }
 
-let cachedRate = { rate: 998, updatedAt: 0 };
-async function getLiveExchangeRate() {
-  if (Date.now() - cachedRate.updatedAt < 15 * 60 * 1000 && cachedRate.rate > 0) {
-    return cachedRate.rate;
+let cachedRates = { bcv: 891.10, paralelo: 1004.32, updatedAt: 0 };
+async function getLiveExchangeRates() {
+  if (Date.now() - cachedRates.updatedAt < 15 * 60 * 1000 && cachedRates.bcv > 0 && cachedRates.paralelo > 0) {
+    return cachedRates;
   }
   try {
     const res = await fetch('https://ve.dolarapi.com/v1/dolares', { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
       const data = await res.json();
+      const ofi = Array.isArray(data) ? data.find(d => d.fuente === 'oficial') : null;
       const par = Array.isArray(data) ? data.find(d => d.fuente === 'paralelo') : null;
-      const rateVal = par ? Number(par.promedio) : (data[0] ? Number(data[0].promedio) : 0);
-      if (rateVal > 0) {
-        cachedRate = { rate: Math.round(rateVal * 100) / 100, updatedAt: Date.now() };
-        return cachedRate.rate;
-      }
+      const bcvVal = ofi ? Number(ofi.promedio) : 0;
+      const parVal = par ? Number(par.promedio) : (data[0] ? Number(data[0].promedio) : 0);
+      if (bcvVal > 0) cachedRates.bcv = Math.round(bcvVal * 100) / 100;
+      if (parVal > 0) cachedRates.paralelo = Math.round(parVal * 100) / 100;
+      cachedRates.updatedAt = Date.now();
     }
   } catch (e) {
-    logger.warn({ err: e.message }, 'No se pudo obtener tasa en vivo de dolarapi, usando fallback');
+    logger.warn({ err: e.message }, 'No se pudo obtener tasas en vivo de dolarapi');
   }
-  return cachedRate.rate || 998;
+  return cachedRates;
+}
+
+async function getLiveExchangeRate() {
+  const rates = await getLiveExchangeRates();
+  return rates.paralelo || 1000;
 }
 
 async function loadAdminExecutiveContext() {
@@ -870,7 +1000,7 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
 ${adminCtx.botConfig.customAiRules}
 ` : '';
 
-  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlate, interactuando en vivo por WhatsApp exclusivamente con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater, interactuando en vivo por WhatsApp exclusivamente con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
 
 Tu misión: Responder CUALQUIER pregunta que te haga ${partnerName} sobre la base de datos de la empresa (dinero acumulado, stock, precios, insumos, clientes, deudas, transacciones pasadas, etc.) con datos 100% exactos, precisos y sin inventar nada.
 
@@ -969,7 +1099,7 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
   // 1. Dinero / Saldo / Balance / Caja / Acumulado / Total
   if (/(dinero|plata|cuanto|cuánto|saldo|balance|caja|acumulado|cuentas|billetera|total)/i.test(q)) {
     const lines = [
-      `💼 *Resumen Financiero Doomlate* (${partnerName})`,
+      `💼 *Resumen Financiero Doomlater* (${partnerName})`,
       `💰 *GRAN TOTAL CONSOLIDADO:* *$${ctx.grandTotalUsdt.toFixed(2)} USDT*`,
       ``,
       `*Desglose por Cuentas:*`
@@ -1013,7 +1143,7 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
 
   // 3. Stock general / Qué queda en stock / Inventario
   if (/(que queda|qué queda|todo el stock|inventario|lista de stock|cat[aá]logo)/i.test(q)) {
-    const lines = [`📦 *Inventario Actual Doomlate:*`, ``];
+    const lines = [`📦 *Inventario Actual Doomlater:*`, ``];
     if (ctx.sellables.length > 0) {
       lines.push(`*🛍️ Para la Venta:*`);
       for (const it of ctx.sellables) {
@@ -1080,7 +1210,7 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
   }
 
 // 6. Saludo / Ayuda por defecto
-  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlate listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"Agrega una transacción al dashboard"_ (puedes dictarme o escribirme título, monto, moneda, descripción y hora)\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuánto hay en total con la conversión de Bs a USDT?"_\n• _"Pásame el estado de cuenta en PDF"_\n• _"Envíale un mensaje de estados de cuenta a mi socio"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_\n• _"(número de tlf) pago verificado"_ (para aprobar un pago y quitar la alerta de la Web)`;
+  return `👑 *Hola ${partnerName}!* Asistente de Operaciones de Doomlater listo.\n\nPuedes decirme o preguntarme por WhatsApp:\n• _"Agrega una transacción al dashboard"_ (puedes dictarme o escribirme título, monto, moneda, descripción y hora)\n• _"¿Cuánto dinero tenemos acumulado ahorita?"_\n• _"¿Cuánto hay en total con la conversión de Bs a USDT?"_\n• _"Pásame el estado de cuenta en PDF"_\n• _"Genera una factura para [cliente] | [items y precios]"_\n• _"Genera un contrato para [cliente] | [servicio]"_\n• _"Envíale un mensaje de estados de cuenta a mi socio"_\n• _"¿Cuántos cargadores de 3ds quedan?"_\n• _"¿Qué queda en stock?"_\n• _"¿Qué falta o está por agotarse?"_\n• _"¿Hay pagos por verificar?"_\n• _"(número de tlf) pago verificado"_ (para aprobar un pago y quitar la alerta de la Web)\n• _"(número de tlf) delivery (precio)"_ (para cotizarle el delivery a un cliente y sumar su pedido)`;
 }
 
 /**
@@ -1108,7 +1238,7 @@ Borrador previo en proceso:
 - Hora actual: ${existingDraft.time || 'Pendiente'}
 ` : '';
 
-  const prompt = `Eres el asistente contable oficial de Doomlate. Tu misión es extraer los datos necesarios para registrar una transacción directamente en el dashboard financiero de la Web.
+  const prompt = `Eres el asistente contable oficial de Doomlater. Tu misión es extraer los datos necesarios para registrar una transacción directamente en el dashboard financiero de la Web.
 Socio que envía el mensaje o audio: @${partnerName}.
 Fecha de hoy (referencia): ${todayStr}.
 Hora actual (referencia): ${timeNowStr}.
@@ -1573,7 +1703,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
 
     await commitAndVerifyWebSync(patchUpdates, `Pago de ${targetConv.customerName} verificado`);
 
-    const clientConfirmMsg = `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlate! ✨`;
+    const clientConfirmMsg = `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater! ✨`;
 
     if (targetConv.customerJid && waSock && waState === 'connected') {
       try {
@@ -1592,6 +1722,143 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `  1. Se quitó la etiqueta de alerta en la Web.\n` +
       `  2. Se sumó el ingreso al Dashboard y a la caja.\n` +
       `  3. Se le envió la confirmación oficial al cliente en su chat.`;
+  }
+
+  // 0.0001. COTIZACIÓN DE DELIVERY VIA WHATSAPP POR EL SOCIO
+  // Sintaxis: "(número) delivery (precio)" o "delivery (número) (precio)"
+  const deliveryCmdMatch = lower.match(/(?:(?:(\+?58\d{10}|0?4\d{9,10})\s+delivery\s+([\d\.,]+))|(?:delivery\s+(\+?58\d{10}|0?4\d{9,10})\s+([\d\.,]+)))/i);
+  if (deliveryCmdMatch) {
+    const rawPhone = deliveryCmdMatch[1] || deliveryCmdMatch[3] || '';
+    const rawPrice = deliveryCmdMatch[2] || deliveryCmdMatch[4] || '0';
+    const deliveryFee = Number(String(rawPrice).replace(',', '.')) || 0;
+    const cleanDigits = rawPhone.replace(/\D/g, '');
+
+    const convsRaw = await fb('GET', ws('botConversations'));
+    const allConvs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
+
+    let targetConv = null;
+    if (cleanDigits) {
+      const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+      targetConv = allConvs.find(c => {
+        const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
+        const cJid = String(c.customerJid || '').replace(/\D/g, '');
+        return cPhone.endsWith(last10) || last10.endsWith(cPhone) || cJid.includes(last10) || String(c.id || '').includes(last10);
+      });
+    }
+
+    if (!targetConv) {
+      return `⚠️ No encontré ninguna conversación con el número *${cleanDigits || 'indicado'}* para enviar la cotización del delivery.\nVerifica el número o el chat en la Web (ej: *04141234567 delivery 5*).`;
+    }
+
+    const rates = await getLiveExchangeRates();
+    const rateParalelo = rates.paralelo || 1000;
+    const rateBcv = rates.bcv || 890;
+
+    const hist = convHistory.get(targetConv.id) || [];
+    const histTexts = hist.map(h => h.text);
+    const orderItemStr = detectWhatCustomerBought(targetConv, histTexts, (adminCtx && adminCtx.sellables) || [], []);
+    
+    let baseUsdt = 0;
+    const priceMatch = orderItemStr.match(/\$(\d+(?:\.\d+)?)/);
+    if (priceMatch) {
+      baseUsdt = parseFloat(priceMatch[1]);
+    }
+    const totalUsdt = (baseUsdt > 0 ? baseUsdt : 0) + deliveryFee;
+    const totalBs = totalUsdt * rateParalelo;
+    const totalBcv = rateBcv > 0 ? (totalBs / rateBcv) : totalUsdt;
+
+    const clientMsg = `¡Hola! Nuestro equipo ha calculado el costo de delivery para tu zona:\n\n` +
+      `• *Costo de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
+      (baseUsdt > 0 ? `• *Pedido:* ${orderItemStr} ($${baseUsdt.toFixed(2)} USD)\n` : '') +
+      `• *Total a Cancelar:* *$${totalUsdt.toFixed(2)} USD* (~Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} | $${totalBcv.toFixed(2)} a tasa BCV)\n\n` +
+      `¿Nos confirmas por favor el día y la hora exacta que más te convenga para agendar tu entrega? 🙌`;
+
+    if (targetConv.customerJid && waSock && waState === 'connected') {
+      try {
+        await waSend(targetConv.customerJid, { text: clientMsg });
+      } catch (e) {
+        logger.warn({ err: e.message }, 'No se pudo enviar mensaje de delivery al cliente');
+      }
+    }
+
+    await recordOutgoing(targetConv.id, {
+      id: `bmsg_wa_delivery_${Date.now()}`,
+      text: clientMsg,
+      sentBy: 'Doomlater Bot',
+      createdAt: Date.now()
+    });
+
+    await fb('PATCH', ws(`botConversations/${targetConv.id}`), {
+      deliveryQuotedFee: deliveryFee,
+      deliveryQuotedTotalUsdt: totalUsdt,
+      deliveryStatus: 'quoted',
+      needsAttention: false,
+      updatedAt: Date.now()
+    });
+
+    return `🚚 *¡Listo, ${partnerName}! Cotización de Delivery Enviada* ✅\n\n` +
+      `• *Cliente:* *${targetConv.customerName || 'Cliente'}* (+${cleanDigits})\n` +
+      `• *Tarifa de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
+      `• *Total Calculado:* *$${totalUsdt.toFixed(2)} USD* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n\n` +
+      `👉 _Se le envió el mensaje al cliente solicitando confirmación de día y hora. En cuanto confirme te avisaré con la alerta DOOM ALERT ENTREGA._`;
+  }
+
+  // 0.0002. FACTURAS EN PDF PARA SOCIOS
+  // Sintaxis: "factura [cliente] | [items y precios]"
+  const facturaMatch = text.match(/^(?:genera(?:r)?\s+)?factura(?:\s+(?:para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
+  if (facturaMatch && (lower.includes('|') || /(?:por|\$|\d+)/i.test(text))) {
+    const clientName = (facturaMatch[1] || 'Cliente').trim();
+    const itemsRaw = (facturaMatch[2] || '').trim();
+    const rates = await getLiveExchangeRates();
+
+    const items = [];
+    if (itemsRaw) {
+      const parts = itemsRaw.split(/[,;\n]/).map(p => p.trim()).filter(Boolean);
+      for (const p of parts) {
+        const numMatch = p.match(/(.*?)(?:[\$:\s]+)([\d\.,]+)\s*(?:usd|\$)?$/i);
+        if (numMatch) {
+          items.push({ description: numMatch[1].trim() || 'Producto / Servicio', qty: 1, price: parseFloat(numMatch[2].replace(',', '.')) });
+        } else {
+          items.push({ description: p, qty: 1, price: 0 });
+        }
+      }
+    }
+    if (items.length === 0) {
+      items.push({ description: 'Servicio Técnico / Insumos Oficiales', qty: 1, price: 20 });
+    }
+
+    const pdfAttachment = generateDoomInvoicePdf({ clientName, items, rates, requesterName: partnerName });
+    return {
+      reply: `📄 *¡Factura Oficial en PDF Generada!* ✅\n\n` +
+        `• *Cliente:* *${clientName}*\n` +
+        `• *Total:* *$${pdfAttachment.subtotal.toFixed(2)} USD* (~Bs. ${(pdfAttachment.subtotal * (rates.paralelo || 1000)).toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n` +
+        `• *Emisor:* Doomlater (Atendido por @${partnerName})\n\n` +
+        `_Adjunto el documento PDF oficial generado en tiempo real._`,
+      pdfAttachment
+    };
+  }
+
+  // 0.0003. CONTRATOS EN PDF PARA SOCIOS
+  // Sintaxis: "contrato [cliente] | [servicio o equipo]"
+  const contratoMatch = text.match(/^(?:genera(?:r)?\s+)?contrato(?:\s+(?:para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
+  if (contratoMatch && (lower.includes('|') || /(?:de|por|para)/i.test(text))) {
+    const clientName = (contratoMatch[1] || 'Cliente').trim();
+    const serviceDetail = (contratoMatch[2] || '').trim();
+
+    const pdfAttachment = generateDoomContractPdf({
+      clientName,
+      serviceName: serviceDetail || 'Servicio Técnico Especializado y Garantía',
+      requesterName: partnerName
+    });
+
+    return {
+      reply: `📜 *¡Contrato de Servicio en PDF Generado!* ✅\n\n` +
+        `• *Cliente:* *${clientName}*\n` +
+        `• *Servicio:* ${serviceDetail || 'Servicio Técnico Especializado y Garantía'}\n` +
+        `• *Emisor:* Doomlater (Por @${partnerName})\n\n` +
+        `_Adjunto el documento contractual oficial con cláusulas y espacios para firma._`,
+      pdfAttachment
+    };
   }
 
   // 0.0. CONFIRMACIÓN O CANCELACIÓN DE ELIMINACIÓN DE TRANSACCIÓN PENDIENTE
@@ -2180,7 +2447,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     const type = /(stock|inventario|articulos|insumos)/i.test(lower) ? 'stock' : 'estado_cuenta';
     const pdfAttachment = generateDoomPdf(type, adminCtx, partnerName);
     return {
-      reply: `📄 *¡Aquí tienes tu archivo PDF listo!* 🧾\n\nAdjunto el documento oficial de *${pdfAttachment.title}* generado en vivo con los datos actuales de Doomlate.`,
+      reply: `📄 *¡Aquí tienes tu archivo PDF listo!* 🧾\n\nAdjunto el documento oficial de *${pdfAttachment.title}* generado en vivo con los datos actuales de Doomlater.`,
       pdfAttachment
     };
   }
@@ -2205,7 +2472,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         }
       }).join('\n');
 
-      const partnerMsg = `💼 *ESTADO DE CUENTA - DOOMLATE*\n` +
+      const partnerMsg = `💼 *ESTADO DE CUENTA - DOOMLATER*\n` +
         `_Enviado en directo por tu socio @${partnerName}_\n\n` +
         `💰 *GRAN TOTAL CONSOLIDADO:* *$${adminCtx.grandTotalUsdt.toFixed(2)} USDT*\n` +
         `💵 *Divisas Directas:* $${adminCtx.totalUsdDirect.toFixed(2)} USDT\n` +
@@ -2223,7 +2490,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
 
     // Subcaso B: Enviar inventario / stock
     if (/(?:stock|inventario|catalogo)/i.test(lower)) {
-      const stockMsg = `📦 *INVENTARIO GENERAL - DOOMLATE*\n` +
+      const stockMsg = `📦 *INVENTARIO GENERAL - DOOMLATER*\n` +
         `_Enviado en directo por tu socio @${partnerName}_\n\n` +
         `• Productos para la venta: *${adminCtx.sellables.length}*\n` +
         `• Insumos de taller: *${adminCtx.insumos.length}*\n` +
@@ -2242,7 +2509,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       let directText = text
         .replace(/(?:env[ií](?:ale|ar)?|m[aá]nda(?:le|r)?|p[aá]sa(?:le|r)?|escr[ií]be(?:le|r)?|dile|av[ií]sa(?:le|r)?)\s*(?:un)?\s*(?:mensaje|aviso|recordatorio)?\s*(?:a|al)\s*(?:mi\s*socio|sebastian|sebastián|anthony|doom1|doom2)?(?:\s*que|\s*diciendo(?:\s*que)?)?/gi, '')
         .trim();
-      if (!directText) directText = 'Atento a los pendientes de Doomlate';
+      if (!directText) directText = 'Atento a los pendientes de Doomlater';
 
       const partnerMsg = `🔔 *MENSAJE DE TU SOCIO @${partnerName}:*\n\n"${directText}"\n\n_Enviado en directo vía Doom Bot IA._`;
       await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg);
@@ -2261,7 +2528,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       .replace(/(?:recu[eé]rdale|recuerda a mi socio|av[ií]sale|dile a mi socio|a mi socio que|que)/gi, '')
       .replace(/(?:a las \d+(?::\d+)?\s*(?:am|pm)?|en \d+\s*(?:horas?|minutos?)|mañana)/gi, '')
       .trim();
-    if (!reminderText) reminderText = 'Revisar pendientes de Doomlate';
+    if (!reminderText) reminderText = 'Revisar pendientes de Doomlater';
 
     let delayMs = 30 * 60 * 1000;
     let timeLabel = 'en 30 minutos';
@@ -2336,7 +2603,7 @@ async function checkPartnerReminders() {
         rem.sentAt = now;
         await fb('PATCH', ws(`partnerReminders/${key}`), { sent: true, sentAt: now });
 
-        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlate._`;
+        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
         const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
         await waSend(destJid, { text: msgText });
 
@@ -2462,7 +2729,7 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
         const pdfType = pdfSocioMatch[2].trim();
         const note = (pdfSocioMatch[3] || '').trim();
         const pdfAttachment = generateDoomPdf(pdfType, adminCtx, partnerName);
-        const caption = note ? `🔔 *REPORTE DE TU SOCIO @${partnerName}:*\n\n${note}` : `🔔 *REPORTE OFICIAL DOOMLATER.CORP*\nEnviado por tu socio @${partnerName}`;
+        const caption = note ? `🔔 *REPORTE DE TU SOCIO @${partnerName}:*\n\n${note}` : `🔔 *REPORTE OFICIAL DOOMLATER*\nEnviado por tu socio @${partnerName}`;
         sendPartnerDirectMessage(partnerName, target, caption, pdfAttachment).catch(e => logger.warn({ err: e.message }, 'Error enviando PDF a socio'));
         reply = reply.replace(pdfSocioMatch[0], '').trim();
       }
@@ -2485,10 +2752,10 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
 }
 
 async function loadAiContext() {
-  const [botConfig, stockRaw, exchangeRate] = await Promise.all([
+  const [botConfig, stockRaw, rates] = await Promise.all([
     fb('GET', ws('meta/botConfig')),
     fb('GET', ws('stockItems')),
-    getLiveExchangeRate()
+    getLiveExchangeRates()
   ]);
   const cfg = botConfig || {};
   const pms = Array.isArray(cfg.paymentMethods) && cfg.paymentMethods.length > 0 ? cfg.paymentMethods : DEFAULT_PAYMENT_METHODS;
@@ -2499,11 +2766,12 @@ async function loadAiContext() {
     stockItems: stockRaw ? Object.values(stockRaw).filter(Boolean) : [],
     paymentMethods: pms,
     knowledgeBaseFaq: faqs,
-    exchangeRate: exchangeRate || 1000
+    rates: rates || { paralelo: 1000, bcv: 890 },
+    exchangeRate: rates?.paralelo || 1000
   };
 }
 
-function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {}, exchangeRate = 1000 }) {
+function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {}, exchangeRate = 1000, rates = {} }) {
   const stock = stockItems
     .filter(i => !i.deleted && (i.kind === 'para_vender' || i.kind === 'insumo'))
     .map(i => `- ${i.name}: stock ${i.stock} | precio $${Number(i.salePrice || i.purchaseCost || 0).toFixed(2)}${i.extraDetail || i.notes ? ` | ${i.extraDetail || i.notes}` : ''}`)
@@ -2515,8 +2783,11 @@ function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botCo
     .map(s => {
       const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
         ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
-        : (s.defaultInsumoName || 'Insumos de taller');
-      return `- ${s.serviceName}: Presupuesto $${Number(s.defaultLaborPrice || 0).toFixed(2)} USD (Incluye / Requiere: ${insList})`;
+        : (s.defaultInsumoName || 'Solo mano de obra');
+      const labor = Number(s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0)).toFixed(2);
+      const total = Number(s.totalCost !== undefined ? s.totalCost : labor).toFixed(2);
+      const customMsg = s.customMessage ? ` | Mensaje oficial personalizado para responder: "${s.customMessage}"` : '';
+      return `- ${s.serviceName}: Presupuesto $${total} USD (Mano de obra $${labor} USD, Insumos: ${insList})${customMsg}`;
     })
     .join('\n');
 
@@ -2525,9 +2796,10 @@ function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botCo
 ${botConfig.customAiRules}
 ` : '';
 
-  const rateBs = exchangeRate > 0 ? exchangeRate : 1000;
+  const rateParalelo = Number(rates?.paralelo || exchangeRate || 1000);
+  const rateBcv = Number(rates?.bcv || 890);
 
-  return `Eres el asistente oficial de atención al cliente de Doomlate.
+  return `Eres el asistente oficial de atención al cliente de Doomlater.
 Nos especializamos en consolas de videojuegos (PlayStation, Nintendo, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
 Responde siempre en español, con tono amable, cálido, profesional y completo.
 REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final.
@@ -2539,8 +2811,9 @@ ${faq}
 === MÉTODOS DE PAGO Y CUENTAS OFICIALES ===
 ${pm}
 
-=== TASA DE CAMBIO USDT ACTUAL EN LA WEB ===
-1 USDT = ${rateBs.toFixed(2)} Bs.
+=== TASAS DE CAMBIO OFICIALES DEL DÍA ===
+• 1 USDT = ${rateParalelo.toFixed(2)} Bs. (Tasa Paralelo / USDT en la Web)
+• 1 USD BCV = ${rateBcv.toFixed(2)} Bs. (Tasa Oficial Banco Central de Venezuela)
 
 === SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES ===
 ${services || '(Consulta de presupuestos técnicos con el equipo)'}
@@ -2549,31 +2822,43 @@ ${services || '(Consulta de presupuestos técnicos con el equipo)'}
 ${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
 
 Instrucciones de respuesta y comportamiento:
-0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA): Habla SIEMPRE en nombre de "el equipo", "nuestro equipo técnico" o "el equipo de Doomlate". NUNCA menciones nombres propios de personas, dueños o técnicos (como Anthony o Sebastián) a los clientes bajo ninguna circunstancia.
-1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlate (consolas de videojuegos, accesorios y servicio técnico especializado).
+0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA): Habla SIEMPRE en nombre de "el equipo", "nuestro equipo técnico" o "el equipo de Doomlater". NUNCA menciones nombres propios de personas, dueños o técnicos (como Anthony o Sebastián) a los clientes bajo ninguna circunstancia.
+1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater (consolas de videojuegos, accesorios y servicio técnico especializado).
 2. PROHIBICIÓN ESTRICTA DE LA PALABRA "ALERTA": ¡BAJO NINGUNA CIRCUNSTANCIA ESCRIBAS LA PALABRA "Alerta" NI AGREGUES COLETILLAS COMO "Alerta" O "Doom Alert" AL FINAL O DENTRO DE TUS MENSAJES DIRIGIDOS A LOS CLIENTES! Toda respuesta al cliente debe ser 100% limpia y natural.
-3. PRESUPUESTO EN BASE A TASA USDT (MENSAJE APARTE TRAS DATOS DE PAGO):
+3. PRESUPUESTO EN BOLÍVARES Y CONVERSIÓN BCV (MENSAJE APARTE TRAS DATOS DE PAGO):
    - Todos los precios base oficiales de productos y servicios están fijados en USD / USDT (ej: Cargador $5 USDT, etc.).
-   - Cuando el cliente pida presupuesto, precio en Bolívares o datos para realizar Pago Móvil:
-     1. Primero redacta los datos de Pago Móvil oficiales (Banco Mercantil 0105, C.I: 32.296.961, Tlf: 0414-2005801).
+   - REGLA CONDICIONAL ESTRICTA: SOLO debes calcular y enviar el desglose del monto si el cliente YA cotizó, pidió o confirmó que seguro quiere un producto o servicio específico. Si el cliente únicamente preguntó de forma genérica qué métodos de pago tenemos o números de cuenta y NO ha pedido nada ni confirmado un pedido, ENVÍA ÚNICAMENTE los métodos de pago y NO envíes ningún mensaje de conversión ni monto.
+   - Si el cliente SÍ tiene un pedido o cotización activa:
+     1. Primero redacta los datos de pago oficiales requeridos.
      2. Coloca obligatoriamente la etiqueta [SEPARADOR_MENSAJE].
-     3. En el segundo mensaje, calcula y envía el presupuesto exacto en Bolívares multiplicando el precio en USDT por la tasa del día (${rateBs.toFixed(2)} Bs/USDT). Ejemplo para un cargador de $5 USDT:
-        "El total a transferir por tu cargador ($5 USDT) a la tasa actual (${rateBs.toFixed(2)} Bs/USDT) es de: Bs. ${(5 * rateBs).toFixed(2)}."
+     3. En el segundo mensaje, calcula y envía el presupuesto con la fórmula oficial:
+        Monto en Bs = Precio en USDT * ${rateParalelo.toFixed(2)} Bs/USDT.
+        Monto en $ a tasa BCV = Monto en Bs / ${rateBcv.toFixed(2)} Bs/USD.
+        Formato exacto:
+        📌 *Detalle de tu Pedido:*
+        • Monto a transferir en Bs: *Bs. ${(montoUsdt => (montoUsdt * rateParalelo).toFixed(2))(5)}*
+        • Monto en $ (a tasa oficial BCV): *$${(montoUsdt => ((montoUsdt * rateParalelo) / rateBcv).toFixed(2))(5)}*
+        • Precio base en USDT: *5.00 USDT*
 4. COORDINACIÓN DE ENTREGA EN PERSONA O DELIVERY:
    - Puntos de encuentro gratuitos: La Previsora y CC El Líder.
-   - También contamos con delivery en la ciudad (con costo adicional según zona) y envíos nacionales asegurados (MRW, Zoom, Tealca).
-   - Si el cliente coordina entrega personal (ej: "Previsora mañana a las 2pm" o en Líder) o delivery:
-     Confirma cordialmente que el equipo estará coordinando la entrega para ese lugar y a esa hora, y coloca al final la etiqueta [FLAG_COORDINACION_ENTREGA]. Recuerda: NO coloques la palabra "Alerta".
+   - Si el cliente coordina entrega personal en La Previsora o CC El Líder (ej: "Previsora mañana a las 2pm" o en Líder):
+     Confirma cordialmente que el equipo estará coordinando la entrega para ese lugar, fecha y hora, y coloca al final la etiqueta [FLAG_COORDINACION_ENTREGA]. Recuerda: NO coloques la palabra "Alerta".
+   - Si el cliente solicita delivery o entrega fuera de las zonas gratuitas (a domicilio u otra zona de la ciudad):
+     Indica amablemente que con gusto se le coordina el delivery y que nuestro equipo calculará la tarifa del servicio para confirmársela enseguida 🙌. Coloca la etiqueta [FLAG_DELIVERY_EXTERNO: <zona>].
 5. REPORTE DE PAGO / COMPROBANTE:
    - Si el cliente envía una imagen o comprobante de pago, indica:
      "¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌"
      y finaliza obligatoriamente tu mensaje con [FLAG_PAGO_REPORTADO].
-6. Preguntas frecuentes (Pestaña 2): Si el cliente formula preguntas sobre envíos, garantías, ubicación física, horarios o tasa de cambio, busca una pregunta idéntica o similar en "INFORMACIÓN Y PREGUNTAS FRECUENTES" y contesta basándote fielmente en su respuesta.
-7. Servicios Técnicos e Insumos (Pestaña 3): Cuando un cliente consulte por un servicio técnico específico (ej: "Instalación Magia SOLO OLED", "Magia Lite", "Magia V1/V2", memorias micro SD, mantenimiento o limpieza), responde ÚNICAMENTE con los detalles, presupuesto exacto en USD ($) e insumos que incluye ESE servicio consultado según la sección "SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES". No ofrezcas otros paquetes que no haya pedido a menos que el cliente pregunte abiertamente por todas las opciones disponibles.
-8. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES CUALQUIER COSA AL AZAR! Responde con cortesía y amabilidad: "Con gusto, voy a consultar ese detalle directamente con nuestro equipo técnico para darte la respuesta exacta en unos momentos 🙌" y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO].
-9. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, infórmale con amabilidad que no está en existencia o que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
-10. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
-11. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
+6. OFERTAS DE VENTA DE CONSOLAS O EQUIPOS USADOS POR PARTE DEL CLIENTE:
+   - Si el cliente escribe ofreciendo vender una consola, accesorio o equipo:
+     Responde cordialmente: "¡Excelente! Con gusto evaluamos tu equipo. Por favor indícanos el modelo exacto, estado y accesorios con los que viene; nuestro equipo estará verificándolo para darte una cotización en breve 🙌" y finaliza con la etiqueta [FLAG_VENTA_EQUIPO].
+7. TRATO ANTE INSULTOS O AGRESIVIDAD:
+   - Si el cliente insulta, usa malas palabras o se muestra agresivo, contesta siempre de manera impecablemente respetuosa, educada, con excelente léxico y calma profesional. Nunca respondas con hostilidad ni ironía.
+8. Servicios Técnicos (Pestaña 2): Cuando un cliente consulte por un servicio técnico específico (ej: Mantenimiento PS5, Magia Switch, etc.), si el servicio tiene un "mensaje oficial personalizado para responder", envíale ese mensaje con los detalles exactos.
+9. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES AL AZAR! Responde con amabilidad indicando que consultarás con el equipo y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO].
+10. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo que no está en stock, infórmale con amabilidad que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
+11. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
+12. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -2581,15 +2866,22 @@ function parseAIResponseFlags(text) {
   const isPayment = clean.includes('[FLAG_PAGO_REPORTADO]');
   const needsHuman = clean.includes('[FLAG_REQUIERE_HUMANO]');
   const isCoordination = clean.includes('[FLAG_COORDINACION_ENTREGA]');
+  const isEquipmentSale = clean.includes('[FLAG_VENTA_EQUIPO]');
+  const deliveryExternMatch = clean.match(/\[FLAG_DELIVERY_EXTERNO:\s*([^\]]+)\]/i);
+  const deliveryExternalZone = deliveryExternMatch ? deliveryExternMatch[1].trim() : null;
+
   clean = clean
     .replace(/\[FLAG_PAGO_REPORTADO\]/g, '')
     .replace(/\[FLAG_REQUIERE_HUMANO\]/g, '')
     .replace(/\[FLAG_COORDINACION_ENTREGA\]/g, '')
+    .replace(/\[FLAG_VENTA_EQUIPO\]/g, '')
+    .replace(/\[FLAG_DELIVERY_EXTERNO:[^\]]+\]/g, '')
     .trim();
+
   // Limpieza estricta: retirar cualquier residuo de palabra "Alerta", ". Alerta", "Alerta.", etc.
   clean = clean.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|ALERTA)[\.\s]*$/i, '.').trim();
   clean = clean.replace(/\.\s*\.$/, '.');
-  return { reply: clean, isPayment, needsHuman, isCoordination };
+  return { reply: clean, isPayment, needsHuman, isCoordination, isEquipmentSale, deliveryExternalZone };
 }
 
 async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
@@ -2681,7 +2973,7 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
   const msg = String(userMessage || '').toLowerCase();
   if (/(dinero|saldo|balance|cuánto tienen|cuanto tienen|cuanto dinero|cuánto dinero|ganancia)/i.test(msg)) {
     return {
-      reply: 'Esa es información interna y confidencial de la administración de Doomlate. Si tienes dudas sobre nuestras consolas, productos o servicios técnicos con gusto te ayudamos. ✨',
+      reply: 'Esa es información interna y confidencial de la administración de Doomlater. Si tienes dudas sobre nuestras consolas, productos o servicios técnicos con gusto te ayudamos. ✨',
       isPayment: false,
       needsHuman: false
     };
@@ -2772,6 +3064,23 @@ async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
   return null;
 }
 
+/**
+ * Identifica si un mensaje contiene ÚNICAMENTE emojis (Unicode) o emoticonos de texto (:), :D, XD, etc.)
+ */
+function isOnlyEmojisOrEmoticons(str) {
+  if (!str || typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  if (!trimmed) return false;
+  const emoticonRegex = /^(?:[:;=8][\-o']?[\)\]\(\[dDpP/:\}{@|\\]|<3|<\/3|[Xx][Dd]|\s)+$/;
+  if (emoticonRegex.test(trimmed)) return true;
+  try {
+    const stripped = trimmed.replace(/\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Emoji_Modifier_Base}|\p{Emoji_Modifier}|\p{Emoji_Component}|\s|[:;=8][\-o']?[\)\]\(\[dDpP/:\}{@|\\]|<3|<\/3|[Xx][Dd]/gu, '');
+    return stripped.length === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
   if (!imageBuffer || !apiKey) return null;
   const cleanMime = String(mimeType || 'image/jpeg').split(';')[0].trim();
@@ -2784,7 +3093,7 @@ async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(4500),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -2796,22 +3105,31 @@ async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
                 }
               },
               {
-                text: `Analiza esta imagen con precisión quirúrgica. Si es un comprobante de pago, capture de pantalla de Pago Móvil, transferencia bancaria, recibo o comprobante de Binance/USDT:
-Extrae los datos exactos del pago y responde ÚNICAMENTE con un JSON válido (sin markdown, solo el objeto JSON):
+                text: `Analiza esta imagen con precisión quirúrgica para Doomlater (tienda y servicio técnico de consolas de videojuegos).
+Determina cuál de estas categorías describe mejor la imagen:
+1. Comprobante de pago o capture de transferencia bancaria, Pago Móvil, Binance Pay, USDT, Zelle, efectivo o recibo.
+2. Foto de un lugar de encuentro o entrega (ej: estación de metro, CC El Líder, Torre La Previsora, local comercial o captura de mapa/ubicación).
+3. Foto de una consola de videojuegos, control, accesorio, componente electrónico o equipo para servicio técnico o venta por parte del cliente (ej: PS4, PS5, Nintendo Switch, Xbox, etc.).
+4. Otra imagen no relacionada / no correlacionada con pagos, entregas o consolas.
+
+Responde ÚNICAMENTE con un JSON válido (sin markdown, solo el objeto JSON):
 {
-  "isPayment": true,
-  "amount": <monto numérico pagado, ej: 40 o 2500.50>,
-  "currency": "VES" si son Bolívares (Pago Móvil / Banco), "USDT" si es Binance / Cripto / USDT, "USD" si son dólares / Zelle / efectivo, "EUR" si son Euros,
-  "reference": "<número de referencia, confirmación o comprobante>",
-  "targetPhone": "<número de teléfono destino al que se envió, ej: 04142005801, 04264181643, etc. o null>",
-  "targetCedula": "<número de cédula o RIF destino al que se envió, ej: 32296961, 32030679, etc. o null>",
-  "targetBank": "<código o nombre del banco receptor, ej: 0105, Mercantil, Banesco, etc. o null>",
-  "targetPhoneOrId": "<número de teléfono, cédula o Pay ID destino general>",
-  "paymentDate": "<fecha que aparece impresa en el comprobante en formato YYYY-MM-DD (ej: 2026-11-02), o null si no se distingue>",
+  "isPayment": true o false,
+  "isLocationOrMeetingPlace": true o false,
+  "isConsoleOrEquipment": true o false,
+  "isRelevant": true si es pago, lugar de encuentro o consola/equipo; false si es una imagen totalmente no correlacionada o irrelevante,
+  "description": "<breve descripción en 1 frase de lo que muestra la imagen>",
+  "amount": <monto numérico si es pago, o null>,
+  "currency": "VES" si son Bolívares (Pago Móvil / Banco), "USDT" si es Binance / Cripto / USDT, "USD" si son dólares / Zelle / efectivo, "EUR" si son Euros, o null,
+  "reference": "<número de referencia o comprobante si es pago, o null>",
+  "targetPhone": "<número de teléfono destino al que se envió o null>",
+  "targetCedula": "<número de cédula o RIF destino o null>",
+  "targetBank": "<código o nombre del banco receptor o null>",
+  "targetPhoneOrId": "<número de teléfono, cédula o Pay ID destino general o null>",
+  "paymentDate": "<fecha del comprobante en formato YYYY-MM-DD o null>",
   "bank": "<nombre del banco emisor o receptor si figura>",
   "senderName": "<nombre del pagador o emisor si figura o null>"
-}
-Si la imagen NO es un comprobante de pago o capture de transferencia, responde estrictamente: {"isPayment": false}`
+}`
               }
             ]
           }],
@@ -2828,7 +3146,7 @@ Si la imagen NO es un comprobante de pago o capture de transferencia, responde e
       const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
       if (parsed && typeof parsed === 'object') {
-        logger.info({ parsed }, 'Comprobante analizado con éxito por Gemini Vision');
+        logger.info({ parsed }, 'Imagen analizada con éxito por Gemini Vision');
         return parsed;
       }
     } catch (e) {
@@ -3019,15 +3337,26 @@ async function runAiReply(convId, q) {
   const userText = q.texts.join('\n').trim();
   const mediaAttachment = q.ctx.imageBuffer ? { buffer: q.ctx.imageBuffer, mimeType: q.ctx.imageMime } : null;
 
+  const isBrandNewChat = !conv || !conv.lastMessageAt || (convHistory.get(convId) || []).length <= 1;
+  const onlyPhotosNoText = q.hasImage && (!userText || !/[a-zA-Z0-9]{3,}/.test(userText));
+  const isBrandNewPhotoChat = !q.ctx.isPartner && isBrandNewChat && onlyPhotosNoText;
+
   let result;
   if (q.ctx.isPartner) {
     result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio', mediaAttachment);
+  } else if (isBrandNewPhotoChat) {
+    // Chat totalmente nuevo enviando fotos sin texto tras el debounce de 2.5s
+    result = {
+      reply: '¡Hola! Te damos una cordial bienvenida a Doomlater 🎮. Hemos recibido tus fotos; en breve uno de nuestros asesores técnicos las estará revisando para atenderte. Si deseas comentarnos alguna duda o lo que necesitas, con gusto puedes escribirnos mientras te atendemos 🙌',
+      needsHuman: true,
+      isBrandNewPhotoNotice: true
+    };
   } else if (q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment) {
     const pa = q.ctx.paymentAnalysis;
     const acctCheck = validateReceiptTargetAccount(pa);
     let replyText = '';
     if (!acctCheck.matched) {
-      replyText = `Hemos recibido tu comprobante, pero notamos que los datos destino (cédula/teléfono/banco) no parecen coincidir con las cuentas oficiales de Doomlate. El equipo estará revisando la transacción para verificarla contigo en breve 🙌`;
+      replyText = `Hemos recibido tu comprobante, pero notamos que los datos destino (cédula/teléfono/banco) no parecen coincidir con las cuentas oficiales de Doomlater. El equipo estará revisando la transacción para verificarla contigo en breve 🙌`;
     } else {
       replyText = `¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌`;
     }
@@ -3038,6 +3367,14 @@ async function runAiReply(convId, q) {
       needsHuman: true,
       acctCheck
     };
+  } else if (!q.ctx.isPartner && q.hasImage && q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isRelevant === false && !q.ctx.paymentAnalysis.isLocationOrMeetingPlace && !q.ctx.paymentAnalysis.isConsoleOrEquipment && (!userText || userText.length < 5)) {
+    // Imagen sin correlación alguna con pagos, lugares ni consolas: No responder y alertar a los socios
+    result = {
+      reply: '',
+      needsHuman: true,
+      isUncorrelatedImage: true,
+      imageDescription: q.ctx.paymentAnalysis.description || 'Imagen no relacionada con la tienda'
+    };
   } else if (q.hasImage && !/[a-z]{4,}/i.test(userText) && (!mediaAttachment || !mediaAttachment.buffer)) {
     result = {
       reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌',
@@ -3046,7 +3383,7 @@ async function runAiReply(convId, q) {
     };
   } else {
     result = await queryAI(convId, userText || '(el cliente envió una imagen o archivo)', aiCtx, mediaAttachment);
-    if (q.hasImage) {
+    if (q.hasImage && !result.reply) {
       result.isPayment = true;
       result.needsHuman = true;
       if (aiCtx?.botConfig?.paymentReceiptReplyMessage) {
@@ -3055,15 +3392,24 @@ async function runAiReply(convId, q) {
     }
   }
 
-  // Sanitizar respuesta frente a clientes para que NUNCA aparezcan nombres propios de los dueños
+  // Si a una pregunta no se le sabe la respuesta y se configuró mensaje personalizado de fallback
+  if (!q.ctx.isPartner && result.needsHuman && !result.isPayment && !result.isCoordination && !result.isEquipmentSale && !result.deliveryExternalZone && !result.isUncorrelatedImage && !result.isBrandNewPhotoNotice) {
+    if (aiCtx?.botConfig?.unknownQuestionFallbackMessage) {
+      result.reply = aiCtx.botConfig.unknownQuestionFallbackMessage;
+    }
+  }
+
+  // Sanitizar respuesta frente a clientes para que NUNCA aparezcan nombres propios de los dueños ni coletilla "Alerta"
   if (!q.ctx.isPartner && result.reply) {
     result.reply = result.reply
       .replace(/\bAnthony\s*(?:y|\&)\s*Sebasti[aá]n\b/gi, 'nuestro equipo')
       .replace(/\bSebasti[aá]n\s*(?:y|\&)\s*Anthony\b/gi, 'nuestro equipo')
       .replace(/\bAnthony\b/gi, 'nuestro equipo')
-      .replace(/\bSebasti[aá]n\b/gi, 'nuestro equipo');
+      .replace(/\bSebasti[aá]n\b/gi, 'nuestro equipo')
+      .replace(/\bDoomlate\b/gi, 'Doomlater')
+      .replace(/\bDoomlater\.Corp\b/gi, 'Doomlater');
     // Limpieza estricta: retirar cualquier residuo de palabra "Alerta"
-    result.reply = result.reply.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|ALERTA)[\.\s]*$/i, '.').trim();
+    result.reply = result.reply.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|Doomlater Alert|ALERTA)[\.\s!]*$/gi, '.').trim();
     result.reply = result.reply.replace(/\.\s*\.$/, '.');
   }
 
@@ -3079,72 +3425,90 @@ async function runAiReply(convId, q) {
   if (result.reply && result.reply.includes('[SEPARADOR_MENSAJE]')) {
     const parts = result.reply.split('[SEPARADOR_MENSAJE]').map(p => p.trim()).filter(Boolean);
     messagesToSend.push(...parts);
-  } else if (result.reply) {
-    messagesToSend.push(result.reply);
+  } else if (result.reply && result.reply.trim()) {
+    messagesToSend.push(result.reply.trim());
   }
 
   let deliveryStatus = 'sent';
   let deliveryError = '';
-  try {
-    if (q.ctx.platform === 'whatsapp') {
-      const candidateJids = [];
-      if (q.ctx.jid) candidateJids.push(q.ctx.jid);
-      const cleanPhone = String(q.ctx.phone || '').replace(/\D/g, '');
-      if (cleanPhone && cleanPhone.length >= 8) {
-        const pnJid = `${cleanPhone}@s.whatsapp.net`;
-        if (!candidateJids.includes(pnJid)) candidateJids.push(pnJid);
-      }
-      if (candidateJids.length === 0 && q.ctx.jid) candidateJids.push(q.ctx.jid);
+  if (messagesToSend.length > 0) {
+    try {
+      if (q.ctx.platform === 'whatsapp') {
+        const candidateJids = [];
+        if (q.ctx.jid) candidateJids.push(q.ctx.jid);
+        const cleanPhone = String(q.ctx.phone || '').replace(/\D/g, '');
+        if (cleanPhone && cleanPhone.length >= 8) {
+          const pnJid = `${cleanPhone}@s.whatsapp.net`;
+          if (!candidateJids.includes(pnJid)) candidateJids.push(pnJid);
+        }
+        if (candidateJids.length === 0 && q.ctx.jid) candidateJids.push(q.ctx.jid);
 
-      for (let idx = 0; idx < messagesToSend.length; idx++) {
-        const textPart = messagesToSend[idx];
-        if (idx > 0) {
-          await new Promise(r => setTimeout(r, 800)); // Breve pausa entre mensajes separados
-        }
-        let sentOk = false;
-        let lastErr = null;
-        for (const targetJid of candidateJids) {
-          try {
-            await waPresence('composing', targetJid);
-            if (idx === 0 && result.pdfAttachment && result.pdfAttachment.buffer) {
-              await waSend(targetJid, {
-                document: result.pdfAttachment.buffer,
-                mimetype: 'application/pdf',
-                fileName: result.pdfAttachment.fileName || 'Reporte_Doomlate.pdf',
-                caption: textPart
-              });
-            } else {
-              await waSend(targetJid, { text: textPart });
-            }
-            await waPresence('paused', targetJid);
-            sentOk = true;
-            break;
-          } catch (e) {
-            lastErr = e;
+        for (let idx = 0; idx < messagesToSend.length; idx++) {
+          const textPart = messagesToSend[idx];
+          if (idx > 0) {
+            await new Promise(r => setTimeout(r, 800)); // Breve pausa entre mensajes separados
           }
+          let sentOk = false;
+          let lastErr = null;
+          for (const targetJid of candidateJids) {
+            try {
+              await waPresence('composing', targetJid);
+              if (idx === 0 && result.pdfAttachment && result.pdfAttachment.buffer) {
+                await waSend(targetJid, {
+                  document: result.pdfAttachment.buffer,
+                  mimetype: 'application/pdf',
+                  fileName: result.pdfAttachment.fileName || 'Reporte_Doomlater.pdf',
+                  caption: textPart
+                });
+              } else {
+                await waSend(targetJid, { text: textPart });
+              }
+              await waPresence('paused', targetJid);
+              sentOk = true;
+              break;
+            } catch (e) {
+              lastErr = e;
+            }
+          }
+          if (!sentOk && lastErr) throw lastErr;
         }
-        if (!sentOk && lastErr) throw lastErr;
+      } else {
+        for (let idx = 0; idx < messagesToSend.length; idx++) {
+          const textPart = messagesToSend[idx];
+          if (idx > 0) await new Promise(r => setTimeout(r, 600));
+          await graphSend(q.ctx.platform, q.ctx.recipientId, { text: textPart });
+        }
       }
-    } else {
-      for (let idx = 0; idx < messagesToSend.length; idx++) {
-        const textPart = messagesToSend[idx];
-        if (idx > 0) await new Promise(r => setTimeout(r, 600));
-        await graphSend(q.ctx.platform, q.ctx.recipientId, { text: textPart });
-      }
+    } catch (err) {
+      deliveryStatus = 'error';
+      deliveryError = err.message;
+      logger.error({ err: err.message, convId }, 'No se pudo enviar la respuesta automática');
     }
-  } catch (err) {
-    deliveryStatus = 'error';
-    deliveryError = err.message;
-    logger.error({ err: err.message, convId }, 'No se pudo enviar la respuesta automática');
+    pushHistory(convId, 'bot', result.reply);
   }
-  pushHistory(convId, 'bot', result.reply);
 
   // Alertas proactivas a los socios cuando un cliente reporta pago o solicita atención / coordina entrega
   if (!q.ctx.isPartner) {
     const cleanPhone = String(conv.customerPhone || q.ctx.phone || '').replace(/\D/g, '');
     const platformName = (conv.platform || q.ctx.platform || 'WhatsApp').toUpperCase();
 
-    if (result.isPayment) {
+    if (result.isBrandNewPhotoNotice) {
+      const brandNewAlert =
+        `🚨 *DOOMLATER ALERT: Cliente nuevo envió fotos* 📷\n\n` +
+        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Plataforma:* ${platformName}\n` +
+        `• *Detalle:* Chat totalmente nuevo que envió imágenes sin texto. Se le envió bienvenida y espera por un asesor.\n` +
+        `💡 _El bot continúa 100% activo y responderá con normalidad a cualquier texto que el cliente envíe._`;
+      notifyPartners(brandNewAlert, `brandnew_${convId}`).catch(() => {});
+    } else if (result.isUncorrelatedImage) {
+      const uncorrAlert =
+        `🚨 *DOOMLATER ALERT: Imagen no correlacionada* 🖼️\n\n` +
+        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Plataforma:* ${platformName}\n` +
+        `• *Detalle:* El cliente envió una imagen sin correlación con pagos, lugares ni equipos: "${result.imageDescription}". No se envió respuesta automática.\n\n` +
+        `👉 _El chat está marcado con alerta en la Web para revisar qué sucede._`;
+      notifyPartners(uncorrAlert, `uncorr_${convId}`).catch(() => {});
+    } else if (result.isPayment) {
       const pa = q.ctx.paymentAnalysis || {};
       const amt = Number(pa.amount || conv.pendingPaymentAmount || 0);
       const cur = (pa.currency === 'VED' || pa.currency === 'VES') ? 'VES' : (pa.currency || 'USD');
@@ -3155,6 +3519,16 @@ async function runAiReply(convId, q) {
         montoStr = `${amt.toFixed(2)} USDT`;
       } else {
         montoStr = `Efectivo $${amt.toFixed(2)}`;
+      }
+
+      let montoVerifStr = '';
+      if (cur === 'VES' && Number(conv.pendingPaymentAmount) > 0) {
+        const diff = Math.abs(amt - Number(conv.pendingPaymentAmount));
+        if (diff <= 1.50) {
+          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (Diferencia: Bs. ${diff.toFixed(2)} dentro de tolerancia ±1.50 Bs)`;
+        } else {
+          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó Bs. ${amt.toFixed(2)} vs esperado Bs. ${Number(conv.pendingPaymentAmount).toFixed(2)} (Diferencia: Bs. ${diff.toFixed(2)})`;
+        }
       }
 
       const historyArr = (convHistory.get(convId) || []).map(h => h.text);
@@ -3169,10 +3543,10 @@ async function runAiReply(convId, q) {
       const refStr = pa.reference ? ` (Ref: ${pa.reference})` : (conv.pendingPaymentRef ? ` (Ref: ${conv.pendingPaymentRef})` : '');
 
       const alertMsg =
-        `🚨 *ALERTA DOOMLATE: Pago por verificar* 🧾\n\n` +
+        `🚨 *DOOMLATER ALERT: Pago por verificar* 🧾\n\n` +
         `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
         `• *Plataforma:* ${platformName}\n` +
-        `• *Monto:* *${montoStr}*${refStr}\n` +
+        `• *Monto:* *${montoStr}*${refStr}${montoVerifStr}\n` +
         `• *Motivo:* El cliente reportó un pago o envió un comprobante. Verifícalo\n` +
         `• *Qué compró:* ${queCompro}\n` +
         `${cuentaValStr}\n\n` +
@@ -3182,6 +3556,26 @@ async function runAiReply(convId, q) {
         `_para aprobarlo y quitar la alerta de la Web automáticamente._`;
 
       notifyPartners(alertMsg, `pay_${convId}`).catch(() => {});
+    } else if (result.isEquipmentSale) {
+      const saleAlertMsg =
+        `🎮 *DOOMLATER ALERT: Cliente ofrece vender equipo/consola* 🕹️\n\n` +
+        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Plataforma:* ${platformName}\n` +
+        `• *Mensaje del Cliente:* "${userText.slice(0, 150)}"\n\n` +
+        `💡 _El bot le indicó que el equipo estará evaluándolo para darle una cotización. Revisa el chat en la Web o WhatsApp._`;
+      notifyPartners(saleAlertMsg, `sale_${convId}`).catch(() => {});
+      result.needsHuman = true;
+    } else if (result.deliveryExternalZone) {
+      const deliveryAlertMsg =
+        `🚚 *DOOMLATER ALERT: Solicitud de Delivery Externo* 📦\n\n` +
+        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Plataforma:* ${platformName}\n` +
+        `• *Zona Solicitada:* *${result.deliveryExternalZone}*\n` +
+        `• *Mensaje:* "${userText.slice(0, 120)}"\n\n` +
+        `💡 _Para cotizarle y sumarle el delivery al cliente, responde a este WhatsApp:_\n` +
+        `*${cleanPhone} delivery <precio>*  (ej: *${cleanPhone} delivery 3*)`;
+      notifyPartners(deliveryAlertMsg, `delivery_${convId}`).catch(() => {});
+      result.needsHuman = true;
     } else {
       // Detección de coordinación de entrega
       const isCoordination = result.isCoordination ||
@@ -3205,7 +3599,7 @@ async function runAiReply(convId, q) {
         const fechaHora = timeMatch ? timeMatch[0] : 'Por confirmar con cliente';
 
         const coordAlertMsg =
-          `🚨 *ALERTA DOOMLATE: Coordinación de Entrega* 📦\n\n` +
+          `📦 *DOOM ALERT ENTREGA* 🚚\n\n` +
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
           `• *IMPORTANTE:* Coordiné con la persona para:\n` +
@@ -3213,12 +3607,15 @@ async function runAiReply(convId, q) {
           `  - *Modalidad:* ${modalidad}\n` +
           `  - *Fecha y Hora:* ${fechaHora}\n` +
           `• *Detalle del Chat:* "${userText.slice(0, 140)}"\n\n` +
-          `👉 _El chat está marcado con alerta en la Web para revisar y preparar el despacho._`;
+          `⚠️ _El chat está marcado con alerta de Entrega en la Web hasta que se marque como entregado el pedido._`;
 
         notifyPartners(coordAlertMsg, `coord_${convId}`).catch(() => {});
         result.needsHuman = true;
+        result.isCoordination = true;
+        result.deliveryLugar = lugar;
+        result.deliveryFechaHora = fechaHora;
       } else if (result.needsHuman) {
-        const alertMsg = `⚠️ *DOOMLATE ALERT: Atención Requerida*\n\n` +
+        const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
           `• *Mensaje:* "${userText.slice(0, 100)}"\n\n` +
@@ -3234,7 +3631,17 @@ async function runAiReply(convId, q) {
       patch.needsAttention = true;
       patch.attentionReason = result.isPayment
         ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'
-        : (result.isCoordination || /(?:previsora|lider|delivery)/i.test(userText) ? 'Entrega o delivery coordinado con el cliente.' : 'Consulta fuera del catálogo o caso especial.');
+        : (result.isCoordination ? `🚚 Entrega coordinada pendiente: ${result.deliveryLugar || 'Punto oficial'} (${result.deliveryFechaHora || 'Por confirmar'})`
+        : (result.deliveryExternalZone ? `Solicitud de delivery en zona: ${result.deliveryExternalZone}`
+        : (result.isEquipmentSale ? 'Cliente ofrece equipo o consola en venta.'
+        : (result.isUncorrelatedImage ? `Imagen sin correlación recibida: ${result.imageDescription}`
+        : (result.isBrandNewPhotoNotice ? 'Cliente nuevo envió fotos sin texto. Espera asesor.' : 'Consulta fuera del catálogo o caso especial.')))));
+    }
+    if (result.isCoordination) {
+      patch.deliveryStatus = 'pending_delivery';
+    }
+    if (result.isBrandNewPhotoNotice) {
+      patch.botActive = true; // El bot nunca se desactiva en este caso
     }
     if (result.isPayment) {
       patch.pendingPayment = true;
@@ -3251,17 +3658,21 @@ async function runAiReply(convId, q) {
       }
     }
   }
-  await recordOutgoing(convId, {
-    id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
-    text: result.reply,
-    deliveryStatus,
-    deliveryError
-  }, patch);
+  if (result.reply && result.reply.trim()) {
+    await recordOutgoing(convId, {
+      id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
+      text: result.reply,
+      deliveryStatus,
+      deliveryError
+    }, patch);
+  } else if (Object.keys(patch).length > 0) {
+    await fb('PATCH', ws(`botConversations/${convId}`), { ...patch, updatedAt: Date.now() });
+  }
 }
 
 function typingDelayMs(botConfig) {
   const sec = Number(botConfig && botConfig.typingDelaySec);
-  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 3.5)) * 1000;
+  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 2.5)) * 1000;
 }
 
 /* --------------------------------------------------------------------------
@@ -3443,6 +3854,26 @@ async function handleWaMessage(msg, type) {
   const ctype = content ? getContentType(content) : null;
   if (!ctype || WA_IGNORED.has(ctype)) return;
 
+  const isEdited = Boolean(
+    msg.message?.editedMessage ||
+    content?.editedMessage ||
+    content?.protocolMessage?.type === 14 ||
+    content?.protocolMessage?.editedMessage ||
+    ctype === 'editedMessage'
+  );
+  if (isEdited) {
+    logger.info({ jid }, 'Mensaje editado recibido en WhatsApp, se omite respuesta del bot');
+    return;
+  }
+
+  const isViewOnce = Boolean(
+    msg.message?.viewOnceMessage ||
+    msg.message?.viewOnceMessageV2 ||
+    msg.message?.viewOnceMessageV2Extension ||
+    content?.viewOnceMessage ||
+    content?.viewOnceMessageV2
+  );
+
   const tsMs = (Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000;
   // Solo mensajes nuevos entrantes (nunca responder al historial antiguo al vincular)
   if (!msg.key.fromMe) {
@@ -3622,6 +4053,72 @@ async function handleWaMessage(msg, type) {
     incomingBase.attentionReason = `Comprobante detectado: Ref ${paymentAnalysis.reference || 'S/N'} de ${paymentAnalysis.currency === 'VED' ? 'Bs.' : '$'} ${paymentAnalysis.amount} al número ${paymentAnalysis.targetPhoneOrId || 'N/A'}`;
   }
 
+  // 1. Detección de Stickers: Responder "¡Estamos a la orden! 🙌"
+  if (ctype === 'stickerMessage' && !partner) {
+    const conv = await recordIncoming({
+      convId: targetConvId,
+      base: incomingBase,
+      msg: { id: msgId, text: '🏷️ Sticker', sentBy: pushName || 'Cliente', createdAt: tsMs || Date.now(), platform: 'whatsapp', ...(mediaKey ? { mediaKey, mediaType: 'image' } : {}) },
+      label: `🏷️ ${pushName || targetPhone || 'Cliente'} (WhatsApp): Sticker`
+    });
+
+    if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
+      try {
+        await waSend(jid, { text: '¡Estamos a la orden! 🙌' });
+        await recordOutgoing(targetConvId, {
+          id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
+          text: '¡Estamos a la orden! 🙌',
+          deliveryStatus: 'sent'
+        });
+      } catch (e) {
+        logger.warn({ err: e.message }, 'No se pudo responder al sticker');
+      }
+    }
+    return;
+  }
+
+  // 2. Detección de Archivos en modo Ver Una Sola Vez (x1)
+  if (isViewOnce && !partner) {
+    const cleanPhone = String(targetPhone || phone || '').replace(/\D/g, '');
+    if (!caption || !caption.trim()) {
+      incomingBase.needsAttention = true;
+      incomingBase.attentionReason = 'El cliente envió un archivo en modo ver una sola vez (x1).';
+      await recordIncoming({
+        convId: targetConvId,
+        base: incomingBase,
+        msg: { id: msgId, text: '📷 Archivo en modo ver una sola vez (x1)', sentBy: pushName || 'Cliente', createdAt: tsMs || Date.now(), platform: 'whatsapp' },
+        label: `📷 ${pushName || targetPhone || 'Cliente'} (WhatsApp): Archivo x1`
+      });
+
+      const voAlert =
+        `🚨 *DOOMLATER ALERT: Archivo de una sola vez (x1)* 📸\n\n` +
+        `• *Cliente:* *${pushName || targetPhone || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Detalle:* El cliente envió una foto, audio o video en modo "ver una sola vez" (x1). No se envió respuesta automática al cliente.\n\n` +
+        `👉 _Revisa el chat directamente en tu WhatsApp para ver el contenido antes de que expire._`;
+      notifyPartners(voAlert, `vo_${targetConvId}`).catch(() => {});
+      return;
+    } else {
+      const voAlert =
+        `🚨 *DOOMLATER ALERT: Archivo de una sola vez (x1) con texto* 📸\n\n` +
+        `• *Cliente:* *${pushName || targetPhone || 'Cliente'}* (+${cleanPhone})\n` +
+        `• *Texto del cliente:* "${caption}"\n\n` +
+        `👉 _El bot responderá al texto con normalidad, pero revisa el archivo x1 en tu WhatsApp antes de que expire._`;
+      notifyPartners(voAlert, `vo_${targetConvId}`).catch(() => {});
+    }
+  }
+
+  // 3. Detección de Solo Emojis o Emoticonos: Registrar en la conversación pero no responder nada
+  if (!partner && (isOnlyEmojisOrEmoticons(caption) || (ctype !== 'imageMessage' && isOnlyEmojisOrEmoticons(text)))) {
+    logger.info({ targetConvId, caption, text }, 'Mensaje con solo emojis/emoticonos detectado, se registra sin responder');
+    await recordIncoming({
+      convId: targetConvId,
+      base: incomingBase,
+      msg: { id: msgId, text: caption || text, sentBy: pushName || 'Cliente', createdAt: tsMs || Date.now(), platform: 'whatsapp' },
+      label: `💬 ${pushName || targetPhone || 'Cliente'} (WhatsApp): ${caption || text}`
+    });
+    return;
+  }
+
   const conv = await recordIncoming({
     convId: targetConvId,
     base: incomingBase,
@@ -3639,7 +4136,7 @@ async function handleWaMessage(msg, type) {
       hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
       imageBuffer: downloadedImageBuffer,
       imageMime: downloadedImageMime,
-      paymentAnalysis: paymentAnalysis && paymentAnalysis.isPayment ? paymentAnalysis : null,
+      paymentAnalysis: paymentAnalysis || null,
       destWalletId,
       destWalletName,
       delayMs: partner ? 100 : typingDelayMs(botConfig),
@@ -4066,7 +4563,7 @@ async function decideOwnershipAtStartup() {
 app.get('/', (_req, res) => {
   res.json({
     status: 'online',
-    app: 'Doomlate Bot Bridge',
+    app: 'Doomlater Bot Bridge',
     version: SERVER_VERSION,
     host: INSTANCE_HOST,
     instanceId: INSTANCE_ID,
@@ -4130,7 +4627,7 @@ async function checkAttentionAlertsAndNotify() {
         const reason = c.attentionReason ? `\n• *Motivo:* ${c.attentionReason}` : '';
         const lastMsg = c.lastMessage ? `\n• *Último mensaje:* "${String(c.lastMessage).slice(0, 80)}"` : '';
 
-        const alertMsg = `🚨 *ALERTA DOOMLATE: ${alertTag}* 🧾\n\n` +
+        const alertMsg = `🚨 *DOOMLATER ALERT: ${alertTag}* 🧾\n\n` +
           `• *Cliente:* *${custName}*${custPhone}\n` +
           `• *Plataforma:* ${(c.platform || 'WhatsApp').toUpperCase()}${amtStr}${reason}${lastMsg}\n\n` +
           `⚠️ _El chat está marcado con alerta en la Web. Entra a "Bot & Inbox" para responder o verificar._` +

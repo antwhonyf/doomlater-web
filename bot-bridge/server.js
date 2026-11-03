@@ -2675,7 +2675,7 @@ Extrae los datos exactos del pago y responde ÚNICAMENTE con un JSON válido (si
 {
   "isPayment": true,
   "amount": <monto numérico pagado, ej: 40 o 2500.50>,
-  "currency": "VED" si son Bolívares o "USD" si son dólares / USDT / Binance,
+  "currency": "VES" si son Bolívares (Pago Móvil / Banco), "USDT" si es Binance / Cripto / USDT, "USD" si son dólares / Zelle / efectivo, "EUR" si son Euros,
   "reference": "<número de referencia, confirmación o comprobante>",
   "targetPhoneOrId": "<número de teléfono o cédula/cuenta destino al que se envió el dinero, ej: 04142005801, 32030679, etc.>",
   "paymentDate": "<fecha que aparece impresa en el comprobante en formato YYYY-MM-DD (ej: 2026-11-02), o null si no se distingue>",
@@ -3269,14 +3269,25 @@ async function handleWaMessage(msg, type) {
         if (apiKey) {
           paymentAnalysis = await analyzePaymentCaptureWithGemini(buffer, downloadedImageMime, apiKey);
           if (paymentAnalysis && paymentAnalysis.isPayment) {
+            const rawCur = String(paymentAnalysis.currency || 'USD').toUpperCase();
+            const cur = (rawCur === 'VED' || rawCur === 'VES') ? 'VES' : rawCur;
+            paymentAnalysis.currency = cur;
             const targetDigits = String(paymentAnalysis.targetPhoneOrId || '').replace(/\D/g, '');
-            if (targetDigits.includes('32030679') || targetDigits.includes('4264181643') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('sebasti')) {
-              destWalletId = 'w_bs_socio';
-              destWalletName = 'Cuenta en Bs de Sebastián (@doom2)';
-            } else if (targetDigits.includes('04142005801') || targetDigits.includes('4142005801') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('anthony')) {
-              destWalletId = 'w_bs_anthony';
-              destWalletName = 'Cuenta en Bs de Anthony (@doom1)';
-            } else if (paymentAnalysis.currency === 'USD') {
+            if (cur === 'USDT') {
+              destWalletId = 'w_binance';
+              destWalletName = 'Binance (USDT)';
+            } else if (cur === 'VES') {
+              if (targetDigits.includes('32030679') || targetDigits.includes('4264181643') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('sebasti')) {
+                destWalletId = 'w_bs_socio';
+                destWalletName = 'Cuenta Sebastián (VES)';
+              } else if (targetDigits.includes('04142005801') || targetDigits.includes('4142005801') || String(paymentAnalysis.targetPhoneOrId || '').toLowerCase().includes('anthony')) {
+                destWalletId = 'w_bs_anthony';
+                destWalletName = 'Banesco Anthony (VES)';
+              } else {
+                destWalletId = 'w_banco';
+                destWalletName = 'Pago Móvil / Banco (VES)';
+              }
+            } else if (cur === 'USD') {
               destWalletId = 'w_efectivo';
               destWalletName = 'Divisas Efectivo ($)';
             }

@@ -5092,7 +5092,8 @@
     },
 
     renderPaymentVerificationCardHTML(conv) {
-      const cur = conv.pendingPaymentCurrency === 'VED' ? 'Bs. ' : '$';
+      const pCur = conv.pendingPaymentCurrency;
+      const cur = (pCur === 'VED' || pCur === 'VES') ? 'Bs. ' : (pCur === 'USDT' ? 'USDT ' : (pCur === 'EUR' ? '€ ' : '$'));
       const amtStr = `${cur}${Number(conv.pendingPaymentAmount || 0).toFixed(2)}`;
 
       return `
@@ -5257,6 +5258,23 @@
       }
       if (!defaultWalletId && wallets.length > 0) defaultWalletId = wallets[0].id;
 
+      // Determine initial currency from detection, wallet or phone
+      let initCurrency = 'USD';
+      if (conv.pendingPaymentCurrency === 'VED' || conv.pendingPaymentCurrency === 'VES') {
+        initCurrency = 'VES';
+      } else if (conv.pendingPaymentCurrency === 'USDT') {
+        initCurrency = 'USDT';
+      } else if (conv.pendingPaymentCurrency === 'EUR') {
+        initCurrency = 'EUR';
+      } else {
+        const curWallet = wallets.find(w => w.id === defaultWalletId);
+        if (curWallet && curWallet.currency) {
+          initCurrency = (curWallet.currency === 'VED' || curWallet.currency === 'VES') ? 'VES' : curWallet.currency;
+        } else if (phoneOrId) {
+          initCurrency = 'VES';
+        }
+      }
+
       const bodyHtml = `
         <div class="modal-head">
           <div style="display:flex; align-items:center; gap:10px;">
@@ -5284,13 +5302,25 @@
               <span style="color:var(--text-muted);">Concepto reportado:</span>
               <span>${this.escapeHtml(conv.pendingPaymentItem || 'Servicio Técnico / Venta')}</span>
             </div>
-            <div class="verify-payment-row" style="font-size:15px; align-items:center;">
+            <div class="verify-payment-row" style="font-size:15px; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
               <span style="color:var(--text-muted); font-weight:700;">Monto Cobrado / Verificado:</span>
-              <div style="display:flex; align-items:center; gap:6px;">
-                <span style="color:var(--cashew-income); font-weight:800; font-size:16px;">$</span>
-                <input type="number" id="vpay_amount" step="0.5" min="0" value="${amount.toFixed(2)}" class="cashew-input"
-                       style="width:115px; font-weight:800; color:var(--cashew-income); font-size:16px; text-align:right;"
-                       oninput="CashewApp.updateVerifyPaymentBreakdown()" />
+              <div style="display:flex; align-items:center; gap:8px;">
+                <select id="vpay_currency" class="cashew-input"
+                        style="font-weight:800; font-size:13.5px; padding:6px 10px; color:var(--cashew-income); background:var(--bg-elevated); border:1.5px solid var(--border-subtle); border-radius:10px; cursor:pointer;"
+                        onchange="CashewApp.onVerifyPaymentCurrencyChange(this.value)">
+                  <option value="VES" ${initCurrency === 'VES' ? 'selected' : ''}>Bs (VES)</option>
+                  <option value="USD" ${initCurrency === 'USD' ? 'selected' : ''}>$ (USD)</option>
+                  <option value="USDT" ${initCurrency === 'USDT' ? 'selected' : ''}>USDT</option>
+                  <option value="EUR" ${initCurrency === 'EUR' ? 'selected' : ''}>€ (EUR)</option>
+                </select>
+                <div style="display:flex; align-items:center; gap:4px;">
+                  <span id="vpay_curSymbol" style="color:var(--cashew-income); font-weight:800; font-size:16px;">
+                    ${initCurrency === 'VES' ? 'Bs.' : (initCurrency === 'USDT' ? 'USDT' : (initCurrency === 'EUR' ? '€' : '$'))}
+                  </span>
+                  <input type="number" id="vpay_amount" step="any" min="0" value="${amount.toFixed(2)}" class="cashew-input"
+                         style="width:130px; font-weight:800; color:var(--cashew-income); font-size:16px; text-align:right;"
+                         oninput="CashewApp.updateVerifyPaymentBreakdown()" />
+                </div>
               </div>
             </div>
           </div>
@@ -5333,9 +5363,9 @@
             <label class="form-label" style="font-weight:700; font-size:13px; margin-bottom:5px; display:block;">
               ¿En qué cuenta o billetera cayó el pago?
             </label>
-            <select id="vpay_walletId" class="cashew-input" style="width:100%; font-size:13.5px;" required>
+            <select id="vpay_walletId" class="cashew-input" style="width:100%; font-size:13.5px;" onchange="CashewApp.onVerifyPaymentWalletChange(this.value)" required>
               ${wallets.map(w => `
-                <option value="${w.id}" ${w.id === defaultWalletId ? 'selected' : ''}>
+                <option value="${w.id}" data-currency="${w.currency || 'USD'}" ${w.id === defaultWalletId ? 'selected' : ''}>
                   ${this.escapeHtml(w.name)} (${w.currency || 'USD'})
                 </option>
               `).join('')}
@@ -5545,6 +5575,83 @@
       this.updateVerifyPaymentBreakdown();
     },
 
+    onVerifyPaymentCurrencyChange(newCur) {
+      const symEl = document.getElementById('vpay_curSymbol');
+      if (symEl) {
+        if (newCur === 'VES') symEl.textContent = 'Bs.';
+        else if (newCur === 'USDT') symEl.textContent = 'USDT';
+        else if (newCur === 'EUR') symEl.textContent = '€';
+        else symEl.textContent = '$';
+      }
+
+      // Check current wallet in select: does it match newCur?
+      const walletSel = document.getElementById('vpay_walletId');
+      if (walletSel) {
+        const wallets = this.activeList('wallets') || [];
+        const currentWallet = wallets.find(w => w.id === walletSel.value);
+        const curWalletCurrency = (currentWallet?.currency === 'VED' || currentWallet?.currency === 'VES') ? 'VES' : (currentWallet?.currency || 'USD');
+
+        if (curWalletCurrency !== newCur) {
+          let matchedW = null;
+          if (newCur === 'VES') {
+            const phoneVal = document.getElementById('vpay_phone')?.value || '';
+            const p = phoneVal.replace(/\D/g, '');
+            if (p.includes('32030679') || p.includes('4264181643') || phoneVal.toLowerCase().includes('sebasti')) {
+              matchedW = wallets.find(w => (w.currency === 'VES' || w.currency === 'VED') && (w.id === 'w_bs_socio' || w.name?.toLowerCase().includes('sebasti')));
+            } else if (p.includes('04142005801') || p.includes('4142005801') || phoneVal.toLowerCase().includes('anthony')) {
+              matchedW = wallets.find(w => (w.currency === 'VES' || w.currency === 'VED') && (w.id === 'w_bs_anthony' || w.name?.toLowerCase().includes('anthony')));
+            }
+            if (!matchedW) {
+              matchedW = wallets.find(w => (w.currency === 'VES' || w.currency === 'VED'));
+            }
+          } else if (newCur === 'USDT') {
+            matchedW = wallets.find(w => w.currency === 'USDT' || w.id === 'w_binance' || w.name?.toLowerCase().includes('binance') || w.name?.toLowerCase().includes('usdt'));
+          } else if (newCur === 'EUR') {
+            matchedW = wallets.find(w => w.currency === 'EUR');
+          } else if (newCur === 'USD') {
+            matchedW = wallets.find(w => (w.currency === 'USD' || !w.currency) && (w.id === 'w_efectivo' || w.name?.toLowerCase().includes('efectivo') || w.name?.toLowerCase().includes('dolar') || w.name?.toLowerCase().includes('zelle')));
+            if (!matchedW) {
+              matchedW = wallets.find(w => w.currency === 'USD' || !w.currency);
+            }
+          }
+
+          if (matchedW) {
+            walletSel.value = matchedW.id;
+          }
+        }
+      }
+
+      this.updateVerifyPaymentBreakdown();
+    },
+
+    onVerifyPaymentWalletChange(walletId) {
+      if (!walletId) return;
+      const wallets = this.activeList('wallets') || [];
+      const w = wallets.find(x => x.id === walletId);
+      if (!w) return;
+
+      let wCur = (w.currency === 'VED' || w.currency === 'VES') ? 'VES' : (w.currency || 'USD');
+      if (w.name?.toLowerCase().includes('binance') || w.name?.toLowerCase().includes('usdt')) {
+        wCur = 'USDT';
+      } else if (w.name?.toLowerCase().includes('(ves)') || w.name?.toLowerCase().includes('bolivar')) {
+        wCur = 'VES';
+      }
+
+      const curSel = document.getElementById('vpay_currency');
+      if (curSel) {
+        curSel.value = wCur;
+      }
+      const symEl = document.getElementById('vpay_curSymbol');
+      if (symEl) {
+        if (wCur === 'VES') symEl.textContent = 'Bs.';
+        else if (wCur === 'USDT') symEl.textContent = 'USDT';
+        else if (wCur === 'EUR') symEl.textContent = '€';
+        else symEl.textContent = '$';
+      }
+
+      this.updateVerifyPaymentBreakdown();
+    },
+
     updateVerifyPaymentBreakdown(totalCharged = null) {
       const typeSel = document.getElementById('vpay_operationType');
       const type = typeSel ? typeSel.value : 'venta';
@@ -5555,6 +5662,13 @@
       const currentTotal = (amtInput && !isNaN(parseFloat(amtInput.value)))
         ? parseFloat(amtInput.value)
         : (totalCharged != null ? Number(totalCharged) : 0);
+
+      const curSel = document.getElementById('vpay_currency');
+      const chosenCur = curSel ? curSel.value : 'USD';
+      let curSymbol = '$';
+      if (chosenCur === 'VES') curSymbol = 'Bs. ';
+      else if (chosenCur === 'USDT') curSymbol = 'USDT ';
+      else if (chosenCur === 'EUR') curSymbol = '€';
 
       let costBasis = 0;
       let label = '';
@@ -5588,12 +5702,38 @@
         label = `Costo Insumos (${count} un.): -$${costBasis.toFixed(2)}`;
       }
 
-      const netProfit = Math.max(0, currentTotal - costBasis);
-      if (costBasis > 0) {
-        profitEl.textContent = `+$${netProfit.toFixed(2)} (${label})`;
+      let netProfitDisplay = '';
+      if (chosenCur === 'VES') {
+        let costInBs = 0;
+        if (costBasis > 0 && window.cashewCurrency && typeof window.cashewCurrency.convert === 'function') {
+          costInBs = window.cashewCurrency.convert(costBasis, 'USD', 'VES');
+        }
+        if (costInBs > 0) {
+          const netBs = Math.max(0, currentTotal - costInBs);
+          netProfitDisplay = `+Bs. ${netBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${label} ≈ Bs. ${costInBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+        } else {
+          netProfitDisplay = `+Bs. ${currentTotal.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (100% Ganancia Neta)`;
+        }
+      } else if (chosenCur === 'USDT') {
+        const netProfit = Math.max(0, currentTotal - costBasis);
+        if (costBasis > 0) {
+          netProfitDisplay = `+${netProfit.toFixed(2)} USDT (${label})`;
+        } else {
+          netProfitDisplay = `+${netProfit.toFixed(2)} USDT (100% Ganancia Neta)`;
+        }
+      } else if (chosenCur === 'EUR') {
+        let costInEur = costBasis;
+        if (costBasis > 0 && window.cashewCurrency && typeof window.cashewCurrency.convert === 'function') {
+          costInEur = window.cashewCurrency.convert(costBasis, 'USD', 'EUR');
+        }
+        const netProfit = Math.max(0, currentTotal - costInEur);
+        netProfitDisplay = costBasis > 0 ? `+€${netProfit.toFixed(2)} (${label})` : `+€${currentTotal.toFixed(2)} (100% Ganancia Neta)`;
       } else {
-        profitEl.textContent = `+$${netProfit.toFixed(2)} (100% Ganancia Neta)`;
+        const netProfit = Math.max(0, currentTotal - costBasis);
+        netProfitDisplay = costBasis > 0 ? `+$${netProfit.toFixed(2)} (${label})` : `+$${currentTotal.toFixed(2)} (100% Ganancia Neta)`;
       }
+
+      profitEl.textContent = netProfitDisplay;
     },
 
     executeVerifyPayment(convId) {
@@ -5601,6 +5741,10 @@
       if (!conv) return;
 
       const walletId = document.getElementById('vpay_walletId').value;
+      const wallets = this.activeList('wallets') || [];
+      const wallet = wallets.find(w => w.id === walletId);
+
+      const chosenCur = document.getElementById('vpay_currency')?.value || (wallet?.currency || 'USD');
       const operationType = document.getElementById('vpay_operationType') ? document.getElementById('vpay_operationType').value : 'venta';
       const amtInput = document.getElementById('vpay_amount');
       const amount = (amtInput && !isNaN(parseFloat(amtInput.value)) && parseFloat(amtInput.value) >= 0)
@@ -5732,11 +5876,30 @@
 
       const conceptoPrincipal = conv.pendingPaymentItem || itemName || (operationType === 'servicio' ? 'Servicio Técnico' : 'Venta de Producto');
 
+      // Currency formatting for amounts & records
+      let formattedAmt = `$${amount.toFixed(2)}`;
+      let costBasisInWallet = costBasis;
+      if (chosenCur === 'VES') {
+        formattedAmt = `Bs. ${amount.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        if (costBasis > 0 && window.cashewCurrency && typeof window.cashewCurrency.convert === 'function') {
+          costBasisInWallet = window.cashewCurrency.convert(costBasis, 'USD', 'VES');
+        }
+      } else if (chosenCur === 'USDT') {
+        formattedAmt = `${amount.toFixed(2)} USDT`;
+      } else if (chosenCur === 'EUR') {
+        formattedAmt = `€${amount.toFixed(2)}`;
+        if (costBasis > 0 && window.cashewCurrency && typeof window.cashewCurrency.convert === 'function') {
+          costBasisInWallet = window.cashewCurrency.convert(costBasis, 'USD', 'EUR');
+        }
+      }
+
       const descParts = [];
       descParts.push(`Ref: ${refNum || 'Sin Referencia'}`);
       if (dayName) descParts.push(`Día: ${dayName}`);
       descParts.push(`Fecha: ${datePretty}`);
       descParts.push(`Hora: ${payTime}`);
+      descParts.push(`Monto: ${formattedAmt}`);
+      descParts.push(`Cuenta: ${wallet ? wallet.name : 'Billetera'} (${chosenCur})`);
       descParts.push(`Tipo: ${tipoCobroText} (${conceptoPrincipal})`);
       if (destNum) descParts.push(`Destino: ${destNum}`);
       if (itemName && operationType === 'servicio') descParts.push(`Insumos consumidos: ${itemName} (Costo: -$${costBasis.toFixed(2)})`);
@@ -5745,22 +5908,24 @@
 
       const finalNote = descParts.join(' • ');
 
-      // Register Income Transaction
-      const netProfit = Math.max(0, amount - costBasis);
+      // Register Income Transaction in target wallet and currency
+      const netProfit = Math.max(0, amount - costBasisInWallet);
       ops.push({
         collection: 'transactions',
         item: {
           id: 'tx_vpay_' + now.toString(36),
           type: 'income',
           amount: amount,
-          costBasis: costBasis,
-          netProfit: netProfit,
+          currency: chosenCur,
+          costBasis: Math.round(costBasisInWallet * 100) / 100,
+          netProfit: Math.round(netProfit * 100) / 100,
           walletId: walletId,
           categoryId: categoryId,
           date: chosenDate,
           time: payTime,
-          title: (refNum ? `Pago Ref: ${refNum} - ` : 'Cobro verificado - ') + `${conv.customerName} (${(conv.platform || 'whatsapp').toUpperCase()})`,
+          title: (refNum ? `Pago Ref: ${refNum} - ` : 'Cobro verificado - ') + `${conv.customerName} (${(conv.platform || 'whatsapp').toUpperCase()}) [${formattedAmt}]`,
           note: finalNote,
+          paid: true,
           createdBy: this.user || 'doom1',
           createdAt: now,
           updatedAt: now
@@ -5775,17 +5940,17 @@
         pendingPayment: false,
         paymentVerified: true,
         attentionReason: '',
-        lastMessage: `✅ Pago verificado ($${amount.toFixed(2)}) por @${this.user}`,
+        lastMessage: `✅ Pago verificado (${formattedAmt}) por @${this.user || 'socio'}`,
         lastMessageAt: now
       };
       ops.push({ collection: 'botConversations', item: updatedConv });
 
-      // Confirmation Message to customer
+      // Confirmation Message to customer ("el equipo")
       const confMsg = {
         id: 'bmsg_vpay_conf_' + now.toString(36),
         convId: conv.id,
         direction: 'out',
-        text: `✅ ¡Tu pago de $${amount.toFixed(2)} ha sido verificado con éxito por @${this.user || 'socio'}! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater.Corp! ✨`,
+        text: `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater.Corp! ✨`,
         sentBy: this.user || 'doom1',
         createdAt: now + 100
       };
@@ -5794,7 +5959,21 @@
         item: confMsg
       });
 
-      window.cashewSync.batchUpsert(ops, `Pago verificado: $${amount.toFixed(2)} de ${conv.customerName}`);
+      // Internal system message for chat inbox history
+      const systemMsg = {
+        id: 'bmsg_vpay_sys_' + now.toString(36),
+        convId: conv.id,
+        direction: 'in',
+        sender: 'system',
+        text: `💰 **PAGO VERIFICADO Y ACREDITADO**\n• Monto: ${formattedAmt}\n• Cuenta: ${wallet ? wallet.name : 'Billetera'} (${chosenCur})\n• Ref: ${refNum || 'N/A'}\n• Tipo: ${tipoCobroText} (${conceptoPrincipal})\n• Verificado por: @${this.user || 'socio'}`,
+        createdAt: now + 150
+      };
+      ops.push({
+        collection: 'botMessages',
+        item: systemMsg
+      });
+
+      window.cashewSync.batchUpsert(ops, `Pago verificado: ${formattedAmt} de ${conv.customerName}`);
 
       // Dispatch confirmation message to WhatsApp outbox so the client gets it
       if (window.cashewSync && typeof window.cashewSync.queueBotOutbox === 'function') {
@@ -5811,7 +5990,7 @@
       }
 
       this.closeModal();
-      this.toast(`¡Pago de $${amount.toFixed(2)} verificado! Ganancias (+${netProfit.toFixed(2)}$) y stock actualizados.`, 'verified');
+      this.toast(`¡Pago de ${formattedAmt} verificado! Acreditado a ${wallet ? wallet.name : 'cuenta'}.`, 'verified');
       this.renderMainView();
       this.scrollChatToBottom('botMessagesStream');
     },
@@ -5822,12 +6001,16 @@
       const walletSel = document.getElementById('vpay_walletId');
       if (!walletSel) return;
 
+      let targetWallet = null;
       if (p.includes('32030679') || p.includes('4264181643') || String(val || '').toLowerCase().includes('sebasti')) {
-        const w = wallets.find(x => x.id === 'w_bs_socio' || x.name?.toLowerCase().includes('sebasti') || x.name?.toLowerCase().includes('socio') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom2')));
-        if (w) walletSel.value = w.id;
+        targetWallet = wallets.find(x => x.id === 'w_bs_socio' || x.name?.toLowerCase().includes('sebasti') || x.name?.toLowerCase().includes('socio') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom2')));
       } else if (p.includes('04142005801') || p.includes('4142005801') || String(val || '').toLowerCase().includes('anthony')) {
-        const w = wallets.find(x => x.id === 'w_bs_anthony' || x.name?.toLowerCase().includes('anthony') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom1')) || x.name?.toLowerCase().includes('banesco'));
-        if (w) walletSel.value = w.id;
+        targetWallet = wallets.find(x => x.id === 'w_bs_anthony' || x.name?.toLowerCase().includes('anthony') || (x.currency === 'VES' && x.name?.toLowerCase().includes('doom1')) || x.name?.toLowerCase().includes('banesco'));
+      }
+
+      if (targetWallet) {
+        walletSel.value = targetWallet.id;
+        this.onVerifyPaymentWalletChange(targetWallet.id);
       }
     },
 

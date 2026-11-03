@@ -3947,11 +3947,12 @@
        PAGE 10: BOT MULTICANAL & BANDEJA OMNICANAL (WHATSAPP, INSTAGRAM, MESSENGER)
        ====================================================================== */
 
-    DEFAULT_CUSTOM_RULES_TEXT: `- No dar descuentos mayores al 5% sin consultar previamente a Anthony (+584142005801) o Sebastián (+584264181643).
+    DEFAULT_CUSTOM_RULES_TEXT: `- No otorgar ningún tipo de descuento o rebaja bajo ninguna circunstancia. Todos los precios son fijos.
+- REGLA DE IDENTIDAD: Habla siempre en nombre de "el equipo" o "nuestro equipo técnico". NUNCA menciones nombres de personas o dueños específicos a los clientes.
+- Si un cliente hace una consulta que no esté en la información oficial de la empresa ni en stock, responder amablemente que el equipo técnico revisará su caso y activar la alerta humana.
 - El horario de atención en tienda y taller es de Lunes a Sábado de 9:00 AM a 6:00 PM.
 - Para envíos nacionales trabajamos exclusivamente con MRW, Zoom y Tealca asegurado.
-- Si el cliente pregunta por presupuestos grandes o combos, pedirle su nombre y decirle que Anthony o el socio le confirmarán.
-- En pagos móviles verificar siempre los últimos 4 dígitos del comprobante antes de entregar mercancía.`,
+- En pagos móviles verificar siempre el número de referencia y comprobante antes de asentar.`,
 
     getBotConfig() {
       const cfg = (this.st.botConfig && typeof this.st.botConfig === 'object') ? this.st.botConfig : {};
@@ -3964,6 +3965,7 @@
         typingDelaySec: cfg.typingDelaySec !== undefined ? Number(cfg.typingDelaySec) : 3.5,
         showTypingIndicator: cfg.showTypingIndicator !== false,
         showOnlinePresence: cfg.showOnlinePresence !== false,
+        paymentReceiptReplyMessage: cfg.paymentReceiptReplyMessage || '¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌',
         customAiRules: rules,
         geminiApiKey: cfg.geminiApiKey || '',
         whatsappConnected: Boolean(cfg.whatsappConnected),
@@ -4795,15 +4797,29 @@
               ${this.renderSocialBadgeHTML(conv.platform)}
             </div>
             <div>
-              <div class="bot-chat-user-title">${this.escapeHtml(conv.customerName || 'Cliente')}</div>
+              <div class="bot-chat-user-title" style="display:flex; align-items:center; gap:8px;">
+                <span>${this.escapeHtml(conv.customerName || 'Cliente')}</span>
+                ${conv.botActive === false ? `<span style="font-size:11px; font-weight:800; padding:2px 8px; border-radius:99px; background:rgba(234,179,8,0.18); color:#eab308; border:1px solid rgba(234,179,8,0.35);">⏸️ Modo Humano</span>` : ''}
+              </div>
               <div class="bot-chat-user-sub">
                 <span class="bot-status-dot"></span>
-                <span>En línea • WhatsApp ${conv.customerPhone ? `• ${this.escapeHtml(conv.customerPhone)}` : ''}</span>
+                <span>En línea • WhatsApp ${conv.customerPhone ? `• ${this.escapeHtml(conv.customerPhone)}` : ''} ${conv.botActive === false ? '• Bot desactivado en este chat' : ''}</span>
               </div>
             </div>
           </div>
 
           <div class="bot-chat-header-actions" style="display:flex; align-items:center; gap:8px;">
+            <!-- Individual Bot Active/Paused Toggle Button -->
+            <button type="button" class="btn-cashew ${conv.botActive !== false ? 'btn-tonal' : 'btn-surface'}"
+                    style="${conv.botActive !== false ? 'color:#22c55e; border-color:rgba(34,197,94,0.35); background:rgba(34,197,94,0.12);' : 'color:#eab308; border-color:rgba(234,179,8,0.35); background:rgba(234,179,8,0.12);'} font-size:12px; padding:6px 11px; font-weight:800;"
+                    title="${conv.botActive !== false ? 'Pausar el bot en este chat (atención manual)' : 'Activar respuestas del bot en este chat'}"
+                    onclick="CashewApp.toggleBotConversationBotActive('${conv.id}')">
+              <span class="material-symbols-rounded" style="font-size:17px; color:${conv.botActive !== false ? '#22c55e' : '#eab308'};">
+                ${conv.botActive !== false ? 'smart_toy' : 'pause_circle'}
+              </span>
+              <span>${conv.botActive !== false ? 'Bot: Activo' : 'Bot: Pausado'}</span>
+            </button>
+
             <!-- Toggle Alert Button -->
             <button class="btn-cashew ${conv.needsAttention ? 'btn-tonal' : 'btn-surface'}"
                     style="${conv.needsAttention ? 'color:#d49b4b; border-color:#d49b4b; background:rgba(212,155,75,0.18);' : 'color:var(--text-muted);'} font-size:12px; padding:6px 11px; font-weight:800;"
@@ -5136,6 +5152,31 @@
         attentionReason: newState ? 'Alerta manual activada por el operador' : ''
       }, newState ? `Puso alerta en chat con ${conv.customerName}` : `Quitó alerta en chat con ${conv.customerName}`);
       this.toast(newState ? 'Chat marcado en alerta (amarillo mostaza)' : 'Alerta desactivada', newState ? 'warning' : 'info');
+      this.renderMainView();
+    },
+
+    toggleBotConversationBotActive(convId) {
+      const conv = (this.activeList('botConversations') || []).find(c => c.id === convId);
+      if (!conv) return;
+      const current = conv.botActive !== false;
+      const next = !current;
+      window.cashewSync.upsertEntity('botConversations', {
+        ...conv,
+        botActive: next,
+        updatedAt: Date.now(),
+        updatedBy: this.user || 'doom1'
+      }, next ? `Activó bot IA en chat con ${conv.customerName}` : `Pausó bot IA en chat con ${conv.customerName} (Modo Humano)`);
+      this.toast(next ? `🤖 Bot IA ACTIVADO en este chat` : `⏸️ Bot IA PAUSADO en este chat (Modo Humano)`, next ? 'success' : 'warning');
+      this.renderMainView();
+    },
+
+    savePaymentReceiptMessage() {
+      const inp = document.getElementById('cfg_paymentReceiptReplyMessage');
+      const text = inp ? inp.value.trim() : '';
+      const fallback = '¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌';
+      const val = text || fallback;
+      window.cashewSync.saveBotConfig({ paymentReceiptReplyMessage: val }, 'Actualizó mensaje automático de confirmación de pago');
+      this.toast('Mensaje de recepción de pago guardado correctamente', 'success');
       this.renderMainView();
     },
 
@@ -5898,6 +5939,29 @@
             </div>
           </div>
 
+          <!-- Mensaje Automático al Recibir Foto / Capture de Pago -->
+          <div class="bot-card-setting" style="border: 1.5px solid rgba(34,197,94,0.35); background: rgba(34,197,94,0.03);">
+            <div class="bot-card-header">
+              <div class="bot-card-title">
+                <span class="material-symbols-rounded" style="color:#22c55e;">mark_email_read</span>
+                Mensaje Automático al Recibir Foto / Capture de Pago
+              </div>
+              <button type="button" class="btn-cashew btn-success" style="font-size:12px; padding:6px 14px; font-weight:800;" onclick="CashewApp.savePaymentReceiptMessage()">
+                <span class="material-symbols-rounded" style="font-size:17px;">save</span>
+                Guardar Mensaje de Pago
+              </button>
+            </div>
+            <p style="font-size:13px; color:var(--text-muted); margin:0;">
+              Este es el mensaje exacto que el bot le responde inmediatamente al cliente en WhatsApp cuando este envía una foto, capture o comprobante de transferencia.
+            </p>
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+              <textarea id="cfg_paymentReceiptReplyMessage" class="cashew-input" rows="3" style="font-size:13px; line-height:1.5; resize:vertical;" placeholder="¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌">${this.escapeHtml(cfg.paymentReceiptReplyMessage || '¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌')}</textarea>
+              <span style="font-size:11.5px; color:var(--text-muted);">
+                💡 Tip: Puedes personalizar el saludo como prefieras. Se enviará de inmediato al recibir una imagen de pago.
+              </span>
+            </div>
+          </div>
+
           <!-- SECCIÓN 3: Preguntas Frecuentes (FAQ) -->
           <div class="bot-card-setting">
             <div class="bot-card-header">
@@ -6505,21 +6569,25 @@
     },
 
     saveBotConfigFromForm() {
-      const delay = Number(document.getElementById('cfg_delay').value) || 3.5;
-      const showTyping = document.getElementById('cfg_showTyping').checked;
-      const showOnline = document.getElementById('cfg_showOnline').checked;
+      const delay = Number(document.getElementById('cfg_delay')?.value) || 3.5;
+      const showTyping = Boolean(document.getElementById('cfg_showTyping')?.checked);
+      const showOnline = Boolean(document.getElementById('cfg_showOnline')?.checked);
       const customAiRules = document.getElementById('cfg_customAiRules')?.value?.trim() || '';
-      const messengerMsg = document.getElementById('cfg_messengerMsg').value.trim();
-      const geminiKey = document.getElementById('cfg_geminiKey').value.trim();
+      const messengerMsg = document.getElementById('cfg_messengerMsg')?.value?.trim();
+      const geminiKey = document.getElementById('cfg_geminiKey')?.value?.trim();
+      const payReceiptMsg = document.getElementById('cfg_paymentReceiptReplyMessage')?.value?.trim();
 
-      window.cashewSync.saveBotConfig({
+      const patch = {
         typingDelaySec: delay,
         showTypingIndicator: showTyping,
         showOnlinePresence: showOnline,
-        customAiRules: customAiRules,
-        messengerRedirectMessage: messengerMsg,
-        geminiApiKey: geminiKey
-      }, 'Configuración del bot guardada');
+        customAiRules: customAiRules
+      };
+      if (messengerMsg !== undefined) patch.messengerRedirectMessage = messengerMsg;
+      if (geminiKey !== undefined) patch.geminiApiKey = geminiKey;
+      if (payReceiptMsg !== undefined) patch.paymentReceiptReplyMessage = payReceiptMsg;
+
+      window.cashewSync.saveBotConfig(patch, 'Configuración del bot guardada');
 
       this.toast('Ajustes del bot guardados con éxito', 'verified');
       this.renderMainView();

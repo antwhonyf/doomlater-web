@@ -2440,18 +2440,19 @@ ${faq}
 ${pm}
 
 === SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES ===
-${services || '(Consulta de presupuestos técnicos con Anthony y Sebastián)'}
+${services || '(Consulta de presupuestos técnicos con el equipo)'}
 
 === STOCK DISPONIBLE ACTUAL ===
 ${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
 
 Instrucciones de respuesta y comportamiento:
+0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA): Habla SIEMPRE en nombre de "el equipo", "nuestro equipo técnico" o "el equipo de Doomlater.Corp". NUNCA menciones nombres propios de personas, dueños o técnicos (como Anthony o Sebastián) a los clientes bajo ninguna circunstancia.
 1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater.Corp (consolas de videojuegos, accesorios y servicio técnico especializado).
 2. Métodos de pago (Pestaña 2): Cuando el cliente pregunte por métodos de pago, cómo pagar, datos de transferencias, Pago Móvil o Binance, busca y responde ÚNICAMENTE con la información oficial de la sección "MÉTODOS DE PAGO". Solicita amablemente el comprobante una vez realizado el pago.
 3. Preguntas frecuentes (Pestaña 2): Si el cliente formula preguntas sobre envíos, garantías, ubicación física, horarios o tasa de cambio, busca una pregunta idéntica o similar en "INFORMACIÓN Y PREGUNTAS FRECUENTES" y contesta basándote fielmente en su respuesta.
 4. Servicios Técnicos e Insumos (Pestaña 3): Cuando un cliente consulte por un servicio técnico específico (ej: "Instalación Magia SOLO OLED", "Magia Lite", "Magia V1/V2", memorias micro SD, mantenimiento o limpieza), responde ÚNICAMENTE con los detalles, presupuesto exacto en USD ($) e insumos que incluye ESE servicio consultado según la sección "SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES". No ofrezcas otros paquetes que no haya pedido a menos que el cliente pregunte abiertamente por todas las opciones disponibles.
-5. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES CUALQUIER COSA AL AZAR! Responde con cortesía y amabilidad: "Con gusto, voy a consultar ese detalle directamente con nuestros técnicos Anthony y Sebastián para darte la respuesta exacta en unos momentos 🙌" y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO]. Esto activará la alerta en la Web (en color amarillo-mostaza) y notificará a los socios por WhatsApp para que ellos respondan manualmente.
-6. Reporte de Pago: Si el cliente indica que ya realizó el pago, envía un comprobante, foto, capture o número de referencia: Agradece, indícale que los socios Anthony y Sebastián lo están verificando y finaliza obligatoriamente tu mensaje con [FLAG_PAGO_REPORTADO].
+5. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES CUALQUIER COSA AL AZAR! Responde con cortesía y amabilidad: "Con gusto, voy a consultar ese detalle directamente con nuestro equipo técnico para darte la respuesta exacta en unos momentos 🙌" y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO]. Esto activará la alerta en la Web (en color amarillo-mostaza) y notificará al equipo para responder manualmente.
+6. Reporte de Pago: Si el cliente indica que ya realizó el pago, envía un comprobante, foto, capture o número de referencia: Agradece, indícale que nuestro equipo lo está verificando y finaliza obligatoriamente tu mensaje con [FLAG_PAGO_REPORTADO].
 7. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo o producto específico que no está en la lista de stock, infórmale con amabilidad que no está en existencia o que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
 8. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
 9. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
@@ -2835,20 +2836,49 @@ async function runAiReply(convId, q) {
     const pa = q.ctx.paymentAnalysis;
     const curSymbol = pa.currency === 'VED' ? 'Bs.' : '$';
     const refStr = pa.reference ? ` (Ref: ${pa.reference})` : '';
+    const defaultTemplate = `¡Muchas gracias! 🧾 Recibimos tu comprobante de pago por ${curSymbol}${pa.amount || ''}${refStr}. Nuestro equipo lo está verificando y te confirmamos en breve 🙌`;
+    const configuredTemplate = aiCtx?.botConfig?.paymentReceiptReplyMessage || defaultTemplate;
+    const replyText = configuredTemplate
+      .replace(/{monto}/gi, `${curSymbol}${pa.amount || ''}`)
+      .replace(/{referencia}/gi, pa.reference || 'S/N')
+      .replace(/{equipo}/gi, 'nuestro equipo');
+
     result = {
-      reply: `¡Muchas gracias! 🧾 Recibimos tu comprobante de pago por ${curSymbol}${pa.amount || ''}${refStr}. Anthony y Sebastián lo están verificando y te confirmamos en breve.`,
+      reply: replyText,
       isPayment: true,
       needsHuman: true
     };
   } else if (q.hasImage && !/[a-z]{4,}/i.test(userText) && (!mediaAttachment || !mediaAttachment.buffer)) {
+    const defaultTemplate = '¡Muchas gracias! 🧾 Recibimos tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌';
+    const configuredTemplate = aiCtx?.botConfig?.paymentReceiptReplyMessage || defaultTemplate;
+    const replyText = configuredTemplate
+      .replace(/{monto}/gi, '')
+      .replace(/{referencia}/gi, '')
+      .replace(/{equipo}/gi, 'nuestro equipo');
+
     result = {
-      reply: '¡Gracias! 🧾 Recibimos tu imagen/comprobante. Los socios de Doomlater.Corp lo verifican y te confirman en breve.',
+      reply: replyText,
       isPayment: true,
       needsHuman: true
     };
   } else {
     result = await queryAI(convId, userText || '(el cliente envió una imagen o archivo)', aiCtx, mediaAttachment);
-    if (q.hasImage) { result.isPayment = true; result.needsHuman = true; }
+    if (q.hasImage) {
+      result.isPayment = true;
+      result.needsHuman = true;
+      if (aiCtx?.botConfig?.paymentReceiptReplyMessage) {
+        result.reply = aiCtx.botConfig.paymentReceiptReplyMessage;
+      }
+    }
+  }
+
+  // Sanitizar respuesta frente a clientes para que NUNCA aparezcan nombres propios de los dueños
+  if (!q.ctx.isPartner && result.reply) {
+    result.reply = result.reply
+      .replace(/\bAnthony\s*(?:y|\&)\s*Sebasti[aá]n\b/gi, 'nuestro equipo')
+      .replace(/\bSebasti[aá]n\s*(?:y|\&)\s*Anthony\b/gi, 'nuestro equipo')
+      .replace(/\bAnthony\b/gi, 'nuestro equipo')
+      .replace(/\bSebasti[aá]n\b/gi, 'nuestro equipo');
   }
 
   // Si el cliente indica explícitamente que ya pagó o adjuntó pago por texto

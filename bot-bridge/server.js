@@ -3175,13 +3175,31 @@ async function handleWaMessage(msg, type) {
   const tsMs = (Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000;
   // Solo mensajes nuevos entrantes (nunca responder al historial antiguo al vincular)
   if (!msg.key.fromMe) {
-    if (type !== 'notify') return;
-    if (Date.now() - tsMs > 3 * 60 * 1000) return;
+    if (type !== 'notify' && type !== 'append') return;
+    if (Date.now() - tsMs > 10 * 60 * 1000) return;
   }
 
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
   const phone = pnJid ? pnJid.split('@')[0].split(':')[0] : '';
-  const convId = `conv_wa_${phone || `lid_${jid.split('@')[0].split(':')[0]}`}`;
+  const partner = isAuthorizedPartner(jid) || isAuthorizedPartner(phone);
+
+  const rawConvId = `conv_wa_${phone || `lid_${jid.split('@')[0].split(':')[0]}`}`;
+  let targetConvId = partner ? `conv_wa_${partner.phone}` : rawConvId;
+  let targetPhone = partner ? partner.phone : phone;
+
+  // Resolver conversación correspondiente existente (incluso si fue borrada previamente)
+  const existingConvs = (await fb('GET', ws('botConversations'))) || {};
+  if (!partner) {
+    for (const [cId, c] of Object.entries(existingConvs)) {
+      if (c) {
+        if (c.customerJid === jid || (phone && String(c.customerPhone || '').replace(/\D/g, '').endsWith(phone))) {
+          targetConvId = cId;
+          break;
+        }
+      }
+    }
+  }
+
   let caption = waTextOf(content);
   const label = WA_LABELS[ctype] || '';
   let text = caption ? (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption) : (label || '[Mensaje]');
@@ -3200,28 +3218,16 @@ async function handleWaMessage(msg, type) {
       } catch (err) {}
     }
 
-    // Resolver conversación correspondiente existente (incluso si fue borrada previamente)
-    let targetConvId = convId;
-    const existingConvs = (await fb('GET', ws('botConversations'))) || {};
-    for (const [cId, c] of Object.entries(existingConvs)) {
-      if (c) {
-        if (c.customerJid === jid || (phone && String(c.customerPhone || '').replace(/\D/g, '').endsWith(phone))) {
-          targetConvId = cId;
-          break;
-        }
-      }
-    }
-
     let existing = existingConvs[targetConvId];
     if (!existing) {
       existing = {
         id: targetConvId,
         platform: 'whatsapp',
         platformAccount: 'shared',
-        customerName: phone ? `+${phone}` : 'Cliente WhatsApp',
-        customerPhone: phone ? `+${phone}` : '',
+        customerName: partner ? partner.name : (targetPhone ? `+${targetPhone}` : 'Cliente WhatsApp'),
+        customerPhone: targetPhone ? `+${targetPhone}` : '',
         customerJid: jid,
-        botActive: false, // El operador humano respondió desde el teléfono
+        botActive: partner ? true : false,
         needsAttention: false,
         unreadCount: 0,
         deleted: false,
@@ -3238,11 +3244,11 @@ async function handleWaMessage(msg, type) {
     await recordOutgoing(targetConvId, {
       id: msgId,
       text,
-      sentBy: 'WhatsApp (Móvil)',
+      sentBy: partner ? partner.name : 'WhatsApp (Móvil)',
       deliveryStatus: 'sent',
       mediaKey,
       createdAt: tsMs || Date.now()
-    }, {
+    }, partner ? {} : {
       botActive: false
     });
     return;
@@ -3319,15 +3325,15 @@ async function handleWaMessage(msg, type) {
     text = (label || '[Mensaje]');
   }
 
-  logger.info({ convId, pushName, text }, 'WhatsApp entrante');
-  pushHistory(convId, 'user', caption || label);
+  logger.info({ convId: targetConvId, pushName, text }, 'WhatsApp entrante');
+  pushHistory(targetConvId, 'user', caption || label);
 
   const incomingBase = {
     platform: 'whatsapp',
     platformAccount: 'shared',
-    customerName: pushName || (phone ? `+${phone}` : 'Cliente WhatsApp'),
-    genericName: !pushName,
-    customerPhone: phone ? `+${phone}` : '',
+    customerName: partner ? partner.name : (pushName || (targetPhone ? `+${targetPhone}` : 'Cliente WhatsApp')),
+    genericName: !pushName && !partner,
+    customerPhone: targetPhone ? `+${targetPhone}` : '',
     customerJid: jid
   };
 
@@ -3346,26 +3352,26 @@ async function handleWaMessage(msg, type) {
   }
 
   const conv = await recordIncoming({
-    convId,
+    convId: targetConvId,
     base: incomingBase,
-    msg: { id: msgId, text, sentBy: pushName || 'Cliente', createdAt: tsMs, platform: 'whatsapp', ...(mediaKey ? { mediaKey, mediaType: ctype === 'audioMessage' ? 'audio' : 'image' } : {}) },
-    label: `💬 ${pushName || phone || 'Cliente'} (WhatsApp): ${text.slice(0, 60)}`
+    msg: { id: msgId, text, sentBy: partner ? partner.name : (pushName || 'Cliente'), createdAt: tsMs || Date.now(), platform: 'whatsapp', ...(mediaKey ? { mediaKey, mediaType: ctype === 'audioMessage' ? 'audio' : 'image' } : {}) },
+    label: `💬 ${partner ? partner.name : (pushName || targetPhone || 'Cliente')} (WhatsApp): ${text.slice(0, 60)}`
   });
 
-  const partner = isAuthorizedPartner(jid) || isAuthorizedPartner(phone) || (convId === 'conv_wa_584142005801' ? PARTNER_ACCOUNTS[0] : null);
-  if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
+  const shouldReply = partner ? (botConfig.globalBotEnabled !== false) : (botConfig.globalBotEnabled !== false && conv.botActive !== false);
+  if (shouldReply) {
     if (botConfig.showTypingIndicator !== false) await waPresence('composing', jid);
-    scheduleAiReply(convId, caption, {
+    scheduleAiReply(targetConvId, caption, {
       platform: 'whatsapp',
       jid,
-      phone,
+      phone: targetPhone,
       hasImage: Boolean(mediaKey) || ctype === 'imageMessage',
       imageBuffer: downloadedImageBuffer,
       imageMime: downloadedImageMime,
       paymentAnalysis: paymentAnalysis && paymentAnalysis.isPayment ? paymentAnalysis : null,
       destWalletId,
       destWalletName,
-      delayMs: partner ? 150 : typingDelayMs(botConfig),
+      delayMs: partner ? 100 : typingDelayMs(botConfig),
       isPartner: Boolean(partner),
       partnerName: partner ? partner.name : null
     });

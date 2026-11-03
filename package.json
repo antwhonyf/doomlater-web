@@ -1,0 +1,9 @@
+{
+  "name": "doomlater-web",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Doomlater.Corp Web - Finanzas, Stock e Inbox Multicanal",
+  "scripts": {
+    "build": "echo Web build OK"
+  }
+}

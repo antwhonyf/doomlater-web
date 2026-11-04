@@ -38,6 +38,8 @@ import makeWASocketImport, {
 
 const makeWASocket = makeWASocketImport.default || makeWASocketImport;
 
+import { generateDoomDigitalInvoicePdf, generateDoomContractPdf as generateDoomContractPdfEngine } from './doom-pdf-engine.js';
+
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1033,6 +1035,12 @@ Cuando ${partnerName} te pida en lenguaje natural que le envíes algo a su socio
    [ACCION_PDF_LOCAL: estado_cuenta | Nota de entrega]
 (Usa "stock" si piden inventario o catálogo, o "estado_cuenta" si piden finanzas o balance).
 
+4. Si te pide generar una Factura Digital (Diseño oficial ItsDoomlater con desglose, abonos, saldo pendiente y garantía):
+   [ACCION_PDF_FACTURA_DIGITAL: <cliente> | <detalles de equipos, abonos y precios>]
+
+5. Si te pide generar un Contrato o Acuerdo (Diseño oficial con cláusulas, recuadro de exclusión estricta y firmas):
+   [ACCION_PDF_CONTRATO: <nombre> | <cédula> | <título o servicio>]
+
 El servidor interceptará estas órdenes automáticamente, generará el PDF y/o enviará el mensaje al WhatsApp del socio (+584264181643 para Sebastián o +584142005801 para Anthony), y le confirmará a ${partnerName}.
 
 REGISTRO DE TRANSACCIONES DIRECTO AL DASHBOARD EN TIEMPO REAL:
@@ -1582,6 +1590,108 @@ function findMatchingStockItem(rawText, stockList) {
   return bestScore >= 5 ? bestItem : null;
 }
 
+/**
+ * Parsea el texto del socio para extraer datos de la Factura Digital (ItsDoomlater)
+ */
+function parseInvoiceInputText(rawText) {
+  const facturaMatch = rawText.match(/^(?:genera(?:r)?\s+)?factura(?:\s+(?:digital|para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
+  const clientName = (facturaMatch && facturaMatch[1] ? facturaMatch[1] : 'Cliente').trim();
+  const rest = (facturaMatch && facturaMatch[2] ? facturaMatch[2] : rawText.replace(/^(?:genera(?:r)?\s+)?factura[^\:]*:/i, '')).trim();
+
+  const items = [];
+  if (rest && rest !== clientName) {
+    const parts = rest.split(/[,;\n]/).map(p => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      const colorMatch = part.match(/\b(verde|amarillo|azul|rojo|negro|blanco|gris|morado|naranja)\b/i);
+      const tag = colorMatch ? 'COLOR ' + colorMatch[1].toUpperCase() : '';
+
+      const isPendiente = /pendiente/i.test(part);
+      const isPagado = /(pagad[oa]|abonad[oa]|listo)/i.test(part);
+
+      const nums = Array.from(part.matchAll(/\$?(\d+(?:[\.,]\d+)?)/g), m => parseFloat(m[1].replace(',', '.'))).filter(n => !isNaN(n));
+
+      let total = nums[0] !== undefined ? nums[0] : 15;
+      let abonado = 0;
+
+      if (isPendiente) {
+        abonado = 0;
+      } else if (isPagado) {
+        abonado = total;
+      } else if (nums.length >= 2) {
+        total = nums[0];
+        abonado = nums[1];
+      } else {
+        abonado = total;
+      }
+
+      const cleanTitle = part
+        .replace(/\$?(\d+(?:[\.,]\d+)?)/g, '')
+        .replace(/\b(verde|amarillo|azul|rojo|negro|blanco|pendiente|pagado|abonado|hoy|usd|\$)\b/gi, '')
+        .replace(/[()\-:]/g, '')
+        .trim();
+
+      items.push({
+        title: cleanTitle.length > 2 ? cleanTitle : 'Reparación de Control / Consola',
+        tag,
+        desc: isPendiente
+          ? 'Servicio de reparación técnica, reemplazo/ajuste de componentes internos, calibración y pruebas de funcionamiento. (Queda pendiente por pagar).'
+          : 'Servicio de reparación y mantenimiento técnico integral. (Ya pagado / abonado el día de hoy).',
+        status: isPendiente ? 'Pendiente por Pagar' : 'Abonado / Pagado Hoy',
+        abonado,
+        total
+      });
+    }
+  }
+
+  if (items.length === 0) {
+    items.push({
+      title: 'Reparación de Control PowerA',
+      tag: 'COLOR VERDE',
+      desc: 'Servicio de reparación técnica, reemplazo/ajuste de componentes internos, calibración y pruebas de funcionamiento. (Queda pendiente por pagar).',
+      status: 'Pendiente por Pagar',
+      abonado: 0,
+      total: 30
+    });
+    items.push({
+      title: 'Reparación de Control PowerA',
+      tag: 'COLOR AMARILLO',
+      desc: 'Servicio de reparación y mantenimiento técnico integral. (Ya pagado / abonado el día de hoy).',
+      status: 'Abonado / Pagado Hoy',
+      abonado: 15,
+      total: 15
+    });
+  }
+
+  return { clientName, items };
+}
+
+/**
+ * Parsea el texto del socio para extraer datos del Acuerdo / Contrato Oficial
+ */
+function parseContractInputText(rawText) {
+  const contratoMatch = rawText.match(/^(?:genera(?:r)?\s+)?contrato(?:\s+(?:para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
+  const personPart = (contratoMatch && contratoMatch[1] ? contratoMatch[1] : rawText).trim();
+  const titlePart = (contratoMatch && contratoMatch[2] ? contratoMatch[2] : '').trim();
+
+  let personName = personPart;
+  let personId = 'V-33.267.135';
+  const ciMatch = personPart.match(/(?:(?:c\.?i\.?|v-?|c[eé]dula|identidad)\s*:?\s*)?([ve]-?\d{1,2}(?:\.\d{3}){2}|[ve]-?\d{6,9}|\d{1,2}(?:\.\d{3}){2})/i);
+  if (ciMatch) {
+    let cleanId = ciMatch[0].trim().replace(/^(?:c\.?i\.?|c[eé]dula)\s*:?\s*/i, '');
+    if (!cleanId.toUpperCase().startsWith('V-') && !cleanId.toUpperCase().startsWith('E-')) {
+      cleanId = `V-${cleanId}`;
+    }
+    personId = cleanId;
+    personName = personPart.replace(ciMatch[0], '').replace(/(?:c\.?i\.?|c[eé]dula)\s*:?/i, '').trim();
+  }
+
+  const title = titlePart.length > 3
+    ? titlePart
+    : 'ACUERDO DE ASOCIACIÓN DE VENTAS Y CAPACITACIÓN TÉCNICA';
+
+  return { personName, personId, title };
+}
+
 async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = null) {
   const text = String(userText || '').trim();
   const lower = text.toLowerCase();
@@ -1803,60 +1913,65 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `👉 _Se le envió el mensaje al cliente solicitando confirmación de día y hora. En cuanto confirme te avisaré con la alerta DOOM ALERT ENTREGA._`;
   }
 
-  // 0.0002. FACTURAS EN PDF PARA SOCIOS
-  // Sintaxis: "factura [cliente] | [items y precios]"
-  const facturaMatch = text.match(/^(?:genera(?:r)?\s+)?factura(?:\s+(?:para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
-  if (facturaMatch && (lower.includes('|') || /(?:por|\$|\d+)/i.test(text))) {
-    const clientName = (facturaMatch[1] || 'Cliente').trim();
-    const itemsRaw = (facturaMatch[2] || '').trim();
+  // 0.0002. FACTURAS DIGITALES EN PDF PARA SOCIOS (DISEÑO OFICIAL ITSDOOMLATER)
+  // Sintaxis: "factura [cliente] | [items y precios]" o "genera factura digital para [cliente]..."
+  const facturaMatch = text.match(/^(?:genera(?:r)?\s+)?factura(?:\s+(?:digital|para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
+  if (facturaMatch && (lower.includes('|') || /(?:por|\$|\d+|abono|pendiente|control|consola|reparaci[oó]n)/i.test(text))) {
+    const parsed = parseInvoiceInputText(text);
     const rates = await getLiveExchangeRates();
+    const invoicePdfBuffer = await generateDoomDigitalInvoicePdf({
+      clientName: parsed.clientName,
+      items: parsed.items,
+      bcvRate: rates.bcv
+    });
 
-    const items = [];
-    if (itemsRaw) {
-      const parts = itemsRaw.split(/[,;\n]/).map(p => p.trim()).filter(Boolean);
-      for (const p of parts) {
-        const numMatch = p.match(/(.*?)(?:[\$:\s]+)([\d\.,]+)\s*(?:usd|\$)?$/i);
-        if (numMatch) {
-          items.push({ description: numMatch[1].trim() || 'Producto / Servicio', qty: 1, price: parseFloat(numMatch[2].replace(',', '.')) });
-        } else {
-          items.push({ description: p, qty: 1, price: 0 });
-        }
-      }
-    }
-    if (items.length === 0) {
-      items.push({ description: 'Servicio Técnico / Insumos Oficiales', qty: 1, price: 20 });
-    }
+    const valorTotal = parsed.items.reduce((acc, i) => acc + (i.total || 0), 0);
+    const abonoTotal = parsed.items.reduce((acc, i) => acc + (i.abonado || 0), 0);
+    const saldoPendiente = Math.max(0, valorTotal - abonoTotal);
 
-    const pdfAttachment = generateDoomInvoicePdf({ clientName, items, rates, requesterName: partnerName });
+    const pdfAttachment = {
+      buffer: invoicePdfBuffer,
+      fileName: `Factura_Digital_ItsDoomlater_${safeId(parsed.clientName)}_${Date.now()}.pdf`,
+      title: `Factura Digital - ${parsed.clientName}`,
+      subtotal: valorTotal
+    };
+
     return {
-      reply: `📄 *¡Factura Oficial en PDF Generada!* ✅\n\n` +
-        `• *Cliente:* *${clientName}*\n` +
-        `• *Total:* *$${pdfAttachment.subtotal.toFixed(2)} USD* (~Bs. ${(pdfAttachment.subtotal * (rates.paralelo || 1000)).toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n` +
-        `• *Emisor:* Doomlater (Atendido por @${partnerName})\n\n` +
-        `_Adjunto el documento PDF oficial generado en tiempo real._`,
+      reply: `📄 *¡Factura Digital Oficial Generada!* ✅\n\n` +
+        `• *Cliente:* *${parsed.clientName}*\n` +
+        `• *Total Servicios:* *$${valorTotal.toFixed(2)} USD* (~Bs. ${(valorTotal * (rates.bcv || 890)).toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n` +
+        `• *Abono Registrado Hoy:* *$${abonoTotal.toFixed(2)} USD*\n` +
+        (saldoPendiente > 0 ? `• *Saldo Pendiente:* *$${saldoPendiente.toFixed(2)} USD* (a tasa oficial BCV)\n` : `• *Estado:* Cancelado en su totalidad\n`) +
+        `• *Emisor:* ItsDoomlater (Atendido por @${partnerName})\n\n` +
+        `_Adjunto el documento en PDF con el diseño oficial de ItsDoomlater._`,
       pdfAttachment
     };
   }
 
-  // 0.0003. CONTRATOS EN PDF PARA SOCIOS
-  // Sintaxis: "contrato [cliente] | [servicio o equipo]"
+  // 0.0003. CONTRATOS Y ACUERDOS EN PDF PARA SOCIOS (DISEÑO OFICIAL CON CLÁUSULAS Y FIRMAS)
+  // Sintaxis: "contrato [cliente/asociado] | [servicio o acuerdo]"
   const contratoMatch = text.match(/^(?:genera(?:r)?\s+)?contrato(?:\s+(?:para|a|de))?\s+([^\|]+)(?:\|(.*))?$/i);
-  if (contratoMatch && (lower.includes('|') || /(?:de|por|para)/i.test(text))) {
-    const clientName = (contratoMatch[1] || 'Cliente').trim();
-    const serviceDetail = (contratoMatch[2] || '').trim();
-
-    const pdfAttachment = generateDoomContractPdf({
-      clientName,
-      serviceName: serviceDetail || 'Servicio Técnico Especializado y Garantía',
-      requesterName: partnerName
+  if (contratoMatch && (lower.includes('|') || /(?:asociaci|capacita|servicio|garant|acuerdo)/i.test(text))) {
+    const parsed = parseContractInputText(text);
+    const contractPdfBuffer = await generateDoomContractPdfEngine({
+      personName: parsed.personName,
+      personId: parsed.personId,
+      title: parsed.title
     });
 
+    const pdfAttachment = {
+      buffer: contractPdfBuffer,
+      fileName: `Contrato_Doomlater_${safeId(parsed.personName)}_${Date.now()}.pdf`,
+      title: `Contrato - ${parsed.personName}`
+    };
+
     return {
-      reply: `📜 *¡Contrato de Servicio en PDF Generado!* ✅\n\n` +
-        `• *Cliente:* *${clientName}*\n` +
-        `• *Servicio:* ${serviceDetail || 'Servicio Técnico Especializado y Garantía'}\n` +
+      reply: `📜 *¡Documento Contractual Oficial Generado!* ✅\n\n` +
+        `• *Titular:* *${parsed.personName}*\n` +
+        `• *Cédula:* *${parsed.personId}*\n` +
+        `• *Documento:* ${parsed.title}\n` +
         `• *Emisor:* Doomlater (Por @${partnerName})\n\n` +
-        `_Adjunto el documento contractual oficial con cláusulas y espacios para firma._`,
+        `_Adjunto el documento oficial en PDF con cláusulas, recuadro de exclusión/nota estricta y espacios para firma._`,
       pdfAttachment
     };
   }
@@ -2740,6 +2855,46 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
         const pdfType = pdfLocalMatch[1].trim();
         localPdf = generateDoomPdf(pdfType, adminCtx, partnerName);
         reply = reply.replace(pdfLocalMatch[0], '').trim();
+      }
+
+      // 4. Generar Factura Digital oficial (ItsDoomlater)
+      const facturaDigMatch = reply.match(/\[ACCION_PDF_FACTURA_DIGITAL:\s*([^\|\]]+)(?:\|\s*([^\]]*))?\]/i);
+      if (facturaDigMatch) {
+        const clientName = (facturaDigMatch[1] || 'Cliente').trim();
+        const detailsRaw = (facturaDigMatch[2] || '').trim();
+        const parsed = parseInvoiceInputText(`factura ${clientName} | ${detailsRaw}`);
+        const rates = await getLiveExchangeRates();
+        const buf = await generateDoomDigitalInvoicePdf({
+          clientName: parsed.clientName,
+          items: parsed.items,
+          bcvRate: rates.bcv
+        });
+        localPdf = {
+          buffer: buf,
+          fileName: `Factura_Digital_ItsDoomlater_${safeId(clientName)}_${Date.now()}.pdf`,
+          title: `Factura Digital - ${clientName}`
+        };
+        reply = reply.replace(facturaDigMatch[0], '').trim();
+      }
+
+      // 5. Generar Contrato / Acuerdo oficial (Doomlater)
+      const contratoDigMatch = reply.match(/\[ACCION_PDF_CONTRATO:\s*([^\|\]]+)(?:\|\s*([^\|\]]*))?(?:\|\s*([^\]]*))?\]/i);
+      if (contratoDigMatch) {
+        const personPart = (contratoDigMatch[1] || 'Asociado').trim();
+        const idPart = (contratoDigMatch[2] || '').trim();
+        const titlePart = (contratoDigMatch[3] || '').trim();
+        const parsed = parseContractInputText(`contrato ${personPart} ${idPart} | ${titlePart}`);
+        const buf = await generateDoomContractPdfEngine({
+          personName: parsed.personName,
+          personId: parsed.personId,
+          title: parsed.title
+        });
+        localPdf = {
+          buffer: buf,
+          fileName: `Contrato_Doomlater_${safeId(parsed.personName)}_${Date.now()}.pdf`,
+          title: `Contrato - ${parsed.personName}`
+        };
+        reply = reply.replace(contratoDigMatch[0], '').trim();
       }
 
       return { reply, pdfAttachment: localPdf, isPayment: false, needsHuman: false };

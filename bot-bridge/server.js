@@ -994,9 +994,17 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
   const servicesSummary = (adminCtx.botConfig?.serviceInsumosMap || [])
     .map(s => {
       const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
-        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
-        : (s.defaultInsumoName || 'Insumo taller');
-      return `- ${s.serviceName}: $${Number(s.defaultLaborPrice || 0).toFixed(2)} USD (Insumos requeridos: ${insList})`;
+        ? s.insumos.map(i => `${i.qty}x ${i.name} ($${Number(i.unitCost || i.cost || 0).toFixed(2)})`).join(' + ')
+        : (s.defaultInsumoName || 'Solo mano de obra');
+      const labor = Number(s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0)).toFixed(2);
+      const calcInsumosCost = (Array.isArray(s.insumos) && s.insumos.length > 0)
+        ? s.insumos.reduce((sum, it) => sum + (Number(it.unitCost || it.cost || 0) * (Number(it.qty) || 1)), 0)
+        : 0;
+      const insCost = Number(s.insumosCost !== undefined ? s.insumosCost : calcInsumosCost).toFixed(2);
+      const opCost = Number(s.operatingCost || s.operationalCost || 0).toFixed(2);
+      const total = Number(s.totalCost !== undefined ? s.totalCost : (Number(labor) + Number(insCost) + Number(opCost))).toFixed(2);
+      const custom = s.customMessage ? ` | Mensaje cliente: "${s.customMessage}"` : '';
+      return `- ${s.serviceName}: TOTAL $${total} USD (Mano de obra: $${labor} USD, Insumos: $${insCost} USD [${insList}], Costos Operativos: $${opCost} USD)${custom}`;
     })
     .join('\n');
 
@@ -1005,7 +1013,22 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
 ${adminCtx.botConfig.customAiRules}
 ` : '';
 
-  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater, interactuando en vivo por WhatsApp exclusivamente con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater, interactuando en vivo por WhatsApp con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+
+REGLA DE IGUALDAD EJECUTIVA: Trata siempre a ambos socios (Anthony y Sebastián) con el mismo respeto, igualdad de condiciones, transparencia y acceso total a todas las herramientas, balances, stock y servicios de la empresa.
+
+CONSULTAS DE SERVICIOS TÉCNICOS Y PRESUPUESTOS (DE FORMA AUTÓNOMA):
+- Cuando ${partnerName} o su socio te pregunte por cualquier servicio técnico (ej: "¿cuánto sale la magia de Switch OLED?", "precio de magia V1", "¿cuánto cuesta el mantenimiento?"):
+  1. Brinda SIEMPRE el COSTO COMPLETO TOTAL y su desglose detallado con la información oficial de la web y base de datos:
+     • 🛠️ Servicio: [Nombre exacto del servicio]
+     • 💵 Costo Total: $XX.XX USD
+     • 👨‍🔧 Mano de obra: $XX.XX USD
+     • 📦 Insumos vinculados: $XX.XX USD (ej: 1x Chip HwFly, 1x Memoria 128Gb)
+     • ⚡ Costos Operativos: $XX.XX USD
+  2. OPCIÓN SIN MEMORIA / CLIENTE TRAE SU PROPIA MEMORIA:
+     • Si el socio te pide el costo o presupuesto SIN MEMORIA (o si el cliente ya tiene su propia memoria microSD):
+       - Consulta de forma autónoma la versión SOLO del servicio registrada en la base de datos (por ejemplo: "Instalación Magia/Chipeo (SOLO) - OLED", "Instalacion Magia/Chipeo – SOLO (V1/V2)", "Instalacion Magia/Chipeo – SOLO (Lite)").
+       - Informa el costo total sin memoria de forma autónoma y explica qué incluye (chip, instalación, pasta térmica, limpieza y garantía sin suministrar la microSD).
 
 Tu misión: Responder CUALQUIER pregunta que te haga ${partnerName} sobre la base de datos de la empresa (dinero acumulado, stock, precios, insumos, clientes, deudas, transacciones pasadas, etc.) con datos 100% exactos, precisos y sin inventar nada.
 
@@ -1199,7 +1222,47 @@ function fallbackAdminRuleBased(userText, ctx, partnerName) {
     return lines.join('\n');
   }
 
-  // 5. Búsqueda específica de un producto (ej. "3ds", "cargador", etc.)
+  // 5. Consultas de Servicios Técnicos y Presupuestos (Desglose de Costos completo o Sin Memoria)
+  const servicesMap = ctx.botConfig?.serviceInsumosMap || [];
+  if (/(servicio|magia|chipeo|chipear|mantenimiento|reparaci[oó]n|pasta\s*t[eé]rmica)/i.test(q)) {
+    const matched = findServiceMatch(q, servicesMap);
+    if (matched) {
+      const isSolo = /(?:solo|sin memoria|sin la memoria|sin sd|sin microsd|sin tarjeta|ya tengo (?:la )?(?:memoria|sd|microsd)|tengo mi (?:propia )?(?:memoria|sd)|yo pongo la (?:memoria|sd)|solo (?:el )?chip|mano de obra)/i.test(q);
+      let targetService = matched;
+      if (isSolo && !matched.serviceName.toLowerCase().includes('solo')) {
+        const soloVariant = servicesMap.find(s => {
+          const sName = (s.serviceName || '').toLowerCase();
+          const targetName = (matched.serviceName || '').toLowerCase();
+          const model = targetName.includes('oled') ? 'oled' : (targetName.includes('lite') ? 'lite' : 'v1');
+          return sName.includes(model) && (sName.includes('solo') || !sName.includes('128gb'));
+        });
+        if (soloVariant) targetService = soloVariant;
+      }
+
+      const labor = Number(targetService.laborPrice !== undefined ? targetService.laborPrice : (targetService.defaultLaborPrice || 0));
+      const calcInsumosCost = (Array.isArray(targetService.insumos) && targetService.insumos.length > 0)
+        ? targetService.insumos.reduce((sum, it) => sum + (Number(it.unitCost || it.cost || 0) * (Number(it.qty) || 1)), 0)
+        : 0;
+      const insCost = Number(targetService.insumosCost !== undefined ? targetService.insumosCost : calcInsumosCost);
+      const opCost = Number(targetService.operatingCost || targetService.operationalCost || 0);
+      const total = Number(targetService.totalCost !== undefined ? targetService.totalCost : (labor + insCost + opCost));
+
+      const insList = (Array.isArray(targetService.insumos) && targetService.insumos.length > 0)
+        ? targetService.insumos.map(i => `  • ${i.qty}x ${i.name} ($${Number(i.unitCost || i.cost || 0).toFixed(2)})`).join('\n')
+        : '  • (Sin insumos adicionales / Solo mano de obra)';
+
+      return `🔧 *Detalle del Servicio Técnico (Doomlater)*\n\n` +
+        `🛠️ *Servicio:* *${targetService.serviceName}*\n` +
+        `💵 *COSTO TOTAL:* *$${total.toFixed(2)} USD / USDT*\n\n` +
+        `*Desglose de Costos Oficial:*` +
+        `\n• 👨‍🔧 *Mano de obra:* $${labor.toFixed(2)} USD` +
+        `\n• 📦 *Insumos vinculados:* $${insCost.toFixed(2)} USD\n${insList}` +
+        `\n• ⚡ *Costos Operativos:* $${opCost.toFixed(2)} USD` +
+        (targetService.customMessage ? `\n\n💬 *Mensaje predeterminado al cliente:*\n"${targetService.customMessage.slice(0, 220)}..."` : '');
+    }
+  }
+
+  // 6. Búsqueda específica de un producto (ej. "3ds", "cargador", etc.)
   const stopWordsStockSearch = new Set(['chat', 'chats', 'con', 'en', 'alerta', 'alertas', 'hola', 'amigo', 'socio', 'por', 'del', 'los', 'las', 'que', 'queda', 'quedan', 'hay']);
   const words = q.replace(/cuantos|cuántos|quedan|queda|de|hay|en|stock|\?|¿/gi, '').trim().split(/\s+/).filter(w => w.length >= 3 && !stopWordsStockSearch.has(w));
   if (words.length > 0) {
@@ -3070,7 +3133,7 @@ function findServiceMatch(userMsg, services) {
   if (!userMsg || !Array.isArray(services) || services.length === 0) return null;
   const clean = String(userMsg).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const hasMagiaOrChip = /(?:magia|chipeo|chipear|chipean|chip|flasheo|hack|mod)/.test(clean);
-  const isSolo = /(?:solo|sin memoria|sin sd|sin micro|mano de obra)/.test(clean);
+  const isSolo = /(?:solo|sin memoria|sin la memoria|sin sd|sin microsd|sin tarjeta|ya tengo (?:la )?(?:memoria|sd|microsd)|tengo mi (?:propia )?(?:memoria|sd)|yo pongo la (?:memoria|sd)|solo (?:el )?chip|mano de obra)/i.test(clean);
 
   if (hasMagiaOrChip) {
     if (clean.includes('oled')) {
@@ -3143,6 +3206,60 @@ function findFaqMatch(userMsg, faqs) {
   // Coincidencia sólida (al menos 1 palabra de tema específico o 2 palabras clave)
   if (bestScore >= 1) return bestFaq;
   return null;
+}
+
+/**
+ * Extrae con alta fidelidad los detalles de coordinación de entrega (Lugar, Fecha/Hora, Modalidad)
+ * Filtra preguntas informativas genéricas para no alertar prematuramente.
+ */
+function parseCoordinationDetails(text) {
+  if (!text || typeof text !== 'string') return null;
+  const clean = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  // Si solo está preguntando dónde entregan o qué puntos hay, NO es coordinación aún
+  const isJustAsking = /(?:d[oó]nde|d[oó]nde\s*podemos|c[oó]mo\s*podemos|cu[aá]les\s*son|qu[eé]\s*lugares|en\s*d[oó]nde|qu[eé]\s*sitios)\s*(?:vernos|entregar|entregas|entregan|hacen)/i.test(clean);
+  if (isJustAsking && !/(?:a\s*las?\s*\d|\d{1,2}\s*(?:pm|am)|ma[nñ]ana|hoy|el\s*(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo))/i.test(clean)) {
+    return null;
+  }
+
+  // Detectar lugar
+  let lugar = null;
+  let modalidad = 'Entrega Gratuita en punto de encuentro';
+  if (/previsora/i.test(clean)) {
+    lugar = 'La Previsora (Sabana Grande)';
+  } else if (/(?:el\s*)?l[ií]der/i.test(clean)) {
+    lugar = 'CC El Líder (La California)';
+  } else if (/delivery|domicilio|env[ií]o/i.test(clean)) {
+    lugar = 'Delivery a domicilio / Dirección cliente';
+    modalidad = 'Servicio de Delivery';
+  }
+
+  // Buscar combinación directa completa (ej: "el día de mañana a las 2pm", "mañana a las 2:00 PM")
+  const comboMatch = text.match(/(?:(?:el\s*d[ií]a\s*)?(?:de\s*)?(?:ma[nñ]ana|hoy|pasado\s*ma[nñ]ana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo))\s*(?:a\s*las?\s*\d{1,2}(?::\d{2})?\s*(?:pm|am)?|\d{1,2}\s*(?:pm|am)|\d{1,2}:\d{2})/i);
+
+  const dateMatch = text.match(/(?:(?:el\s*d[ií]a\s*)?(?:de\s*)?(?:ma[nñ]ana|hoy|pasado\s*ma[nñ]ana)|(?:el\s*)?(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)(?:\s*\d{1,2})?|\d{1,2}\s*de\s*[a-záéíóú]+)/i);
+
+  const timeMatch = text.match(/(?:a\s*las?\s*)?\d{1,2}(?::\d{2})?\s*(?:pm|am|p\.m\.|a\.m\.)|(?:a\s*las?\s*)\d{1,2}(?::\d{2})?|(?:en\s*la\s*|por\s*la\s*)(?:ma[nñ]ana|tarde|noche)|mediod[ií]a/i);
+
+  let fechaHora = 'Por confirmar con cliente';
+  if (comboMatch) {
+    fechaHora = comboMatch[0].trim();
+  } else if (dateMatch && timeMatch) {
+    fechaHora = `${dateMatch[0].trim()} ${timeMatch[0].trim()}`;
+  } else if (dateMatch) {
+    fechaHora = `${dateMatch[0].trim()} (hora por confirmar)`;
+  } else if (timeMatch) {
+    fechaHora = timeMatch[0].trim();
+  }
+
+  const hasSpecificCoordination = Boolean(lugar || comboMatch || (dateMatch && timeMatch));
+  if (!hasSpecificCoordination) return null;
+
+  return {
+    lugar: lugar || 'La Previsora / CC El Líder (Punto por definir)',
+    modalidad,
+    fechaHora: fechaHora.charAt(0).toUpperCase() + fechaHora.slice(1)
+  };
 }
 
 async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
@@ -3504,6 +3621,8 @@ async function recordIncoming({ convId, base, msg, label }) {
     id: convId,
     lastMessage: msg.text,
     lastMessageAt: msg.createdAt,
+    lastCustomerMessage: msg.text,
+    lastCustomerMessageAt: msg.createdAt,
     unreadCount: (Number(existing?.unreadCount) || 0) + 1,
     deleted: false,
     deletedAt: null,
@@ -3548,6 +3667,7 @@ async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus
       deletedAt: null,
       lastMessage: text,
       lastMessageAt: msgTime,
+      lastCustomerMessage: existing.lastCustomerMessage || (existing.lastMessage && existing.updatedBy !== 'bot' ? existing.lastMessage : ''),
       ...convPatch,
       updatedAt: stampAfter(existing),
       updatedBy: 'bot'
@@ -3906,39 +4026,29 @@ async function runAiReply(convId, q) {
       notifyPartners(deliveryAlertMsg, `delivery_${convId}`).catch(() => {});
       result.needsHuman = true;
     } else {
-      // Detección de coordinación de entrega
-      const isCoordination = result.isCoordination ||
-        /(?:previsora|lider|el lider|cc lider|entrega|personal|delivery|domicilio|a las \d|mañana)/i.test(userText);
+      // Detección precisa de coordinación de entrega (Lugar + Fecha/Hora escogida)
+      const coord = parseCoordinationDetails(userText);
+      const isCoordination = Boolean(coord || result.isCoordination);
 
       if (isCoordination) {
-        let lugar = 'La Previsora / CC El Líder';
-        let modalidad = 'Entrega Gratuita en punto de encuentro';
-        if (/previsora/i.test(userText)) {
-          lugar = 'La Previsora';
-          modalidad = 'Entrega Gratuita en punto de encuentro';
-        } else if (/(?:el\s*)?l[ií]der/i.test(userText)) {
-          lugar = 'CC El Líder';
-          modalidad = 'Entrega Gratuita en punto de encuentro';
-        } else if (/delivery|domicilio|env[ií]o/i.test(userText)) {
-          lugar = 'Dirección de entrega / domicilio';
-          modalidad = 'Con delivery (nosotros le mandamos el monto del delivery)';
-        }
-
-        const timeMatch = userText.match(/(?:mañana|hoy|el día\s+[a-záéíóú0-9]+|\d{1,2}\s*(?:pm|am)|las\s*\d{1,2}(?::\d{2})?\s*(?:pm|am)?|\d{1,2}:\d{2})/i);
-        const fechaHora = timeMatch ? timeMatch[0] : 'Por confirmar con cliente';
+        const lugar = coord?.lugar || result.deliveryLugar || 'La Previsora / CC El Líder';
+        const modalidad = coord?.modalidad || 'Entrega Gratuita en punto de encuentro';
+        const fechaHora = coord?.fechaHora || result.deliveryFechaHora || 'Por confirmar con cliente';
 
         const coordAlertMsg =
           `📦 *DOOM ALERT ENTREGA* 🚚\n\n` +
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
           `• *IMPORTANTE:* Coordiné con la persona para:\n` +
-          `  - *Lugar:* ${lugar}\n` +
+          `  - *Lugar:* *${lugar}*\n` +
           `  - *Modalidad:* ${modalidad}\n` +
-          `  - *Fecha y Hora:* ${fechaHora}\n` +
-          `• *Detalle del Chat:* "${userText.slice(0, 140)}"\n\n` +
+          `  - *Fecha y Hora:* *${fechaHora}*\n` +
+          `• *Último mensaje del Cliente:* "${userText.slice(0, 160)}"\n\n` +
           `⚠️ _El chat está marcado con alerta de Entrega en la Web hasta que se marque como entregado el pedido._`;
 
         notifyPartners(coordAlertMsg, `coord_${convId}`).catch(() => {});
+        alertedConvsTrack.add(`coord_${convId}`);
+        alertedConvsTrack.add(`alert_${convId}`);
         result.needsHuman = true;
         result.isCoordination = true;
         result.deliveryLugar = lugar;
@@ -3947,15 +4057,18 @@ async function runAiReply(convId, q) {
         const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
-          `• *Mensaje:* "${userText.slice(0, 100)}"\n\n` +
+          `• *Último mensaje del Cliente:* "${userText.slice(0, 140)}"\n\n` +
           `👉 _Se requiere la intervención de un socio en el chat._`;
         notifyPartners(alertMsg, `human_${convId}`).catch(() => {});
+        alertedConvsTrack.add(`human_${convId}`);
+        alertedConvsTrack.add(`alert_${convId}`);
       }
     }
   }
 
   const patch = {};
   if (!q.ctx.isPartner) {
+    patch.lastCustomerMessage = userText;
     if (result.isPayment || (result.needsHuman && !isGreetingOrPolite)) {
       patch.needsAttention = true;
       patch.attentionReason = result.isPayment
@@ -4936,9 +5049,18 @@ async function checkAttentionAlertsAndNotify() {
         const isPartnerPhone = c.customerPhone === '584142005801' || c.customerPhone === '584264181643';
         if (isPartnerPhone && !String(c.attentionReason || '').includes('Simulación')) continue;
 
+        // Evitar duplicar alertas que ya fueron enviadas de forma inmediata por DOOM ALERT ENTREGA o Reporte de Pago
+        if (alertedConvsTrack.has(`coord_${c.id}`) || alertedConvsTrack.has(`pay_${c.id}`) || alertedConvsTrack.has(`alert_${c.id}`)) {
+          continue;
+        }
+        if (c.deliveryStatus === 'pending_delivery' || String(c.attentionReason || '').includes('Entrega coordinada')) {
+          continue;
+        }
+
         const trackKey = `${c.id}_${Boolean(c.needsAttention)}_${Boolean(c.pendingPayment)}_${c.lastMessageAt || c.updatedAt || 0}`;
         if (alertedConvsTrack.has(trackKey)) continue;
         alertedConvsTrack.add(trackKey);
+        alertedConvsTrack.add(`alert_${c.id}`);
 
         const isPayment = Boolean(c.pendingPayment);
         const alertTag = isPayment ? 'Pago por verificar' : 'Atención Requerida (Chat en Alerta)';
@@ -4954,7 +5076,8 @@ async function checkAttentionAlertsAndNotify() {
             : (cur === 'USDT' ? `\n• *Monto:* ${amt.toFixed(2)} USDT` : `\n• *Monto:* Efectivo $${amt.toFixed(2)}`);
         }
         const reason = c.attentionReason ? `\n• *Motivo:* ${c.attentionReason}` : '';
-        const lastMsg = c.lastMessage ? `\n• *Último mensaje:* "${String(c.lastMessage).slice(0, 80)}"` : '';
+        const custMsgText = c.lastCustomerMessage || (c.lastMessage && c.updatedBy !== 'bot' ? c.lastMessage : '');
+        const lastMsg = custMsgText ? `\n• *Último mensaje del Cliente:* "${String(custMsgText).slice(0, 140)}"` : '';
 
         const alertMsg = `🚨 *DOOMLATER ALERT: ${alertTag}* 🧾\n\n` +
           `• *Cliente:* *${custName}*${custPhone}\n` +

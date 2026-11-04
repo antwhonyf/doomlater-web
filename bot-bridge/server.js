@@ -69,10 +69,13 @@ const GEMINI_MODEL_ENV = process.env.GEMINI_MODEL || '';
 
 /** Modelos de Gemini verificados con razonamiento y alta velocidad en orden de prioridad */
 const WORKING_GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-2.5-pro'
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-flash-lite-latest',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-flash-latest'
 ];
 const WA_AUTH_SECRET = process.env.WA_AUTH_SECRET || '';
 const WA_DISABLED = process.env.WA_DISABLED === '1';
@@ -1290,7 +1293,7 @@ Si el mensaje no tiene ninguna relación con registrar o agregar una transacció
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(5000),
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.1, maxOutputTokens: 400 }
@@ -2811,7 +2814,7 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(2800),
+        signal: AbortSignal.timeout(6000),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildAdminSystemPrompt(adminCtx, partnerName) }] },
           contents,
@@ -2978,7 +2981,7 @@ ${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo 
 
 Instrucciones de respuesta y comportamiento:
 0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA): Habla SIEMPRE en nombre de "el equipo", "nuestro equipo técnico" o "el equipo de Doomlater". NUNCA menciones nombres propios de personas, dueños o técnicos (como Anthony o Sebastián) a los clientes bajo ninguna circunstancia.
-1. Saludos o bienvenida: Saluda con entusiasmo y presenta brevemente lo que ofrece Doomlater (consolas de videojuegos, accesorios y servicio técnico especializado).
+1. Saludos o bienvenida: Saluda con entusiasmo, calidez y presenta brevemente lo que ofrece Doomlater (consolas de videojuegos, accesorios y servicio técnico especializado). LOS SALUDOS, BIENVENIDAS Y MENSAJES DE CORTESÍA NUNCA SON PREGUNTAS SIN RESPUESTA Y BAJO NINGUNA CIRCUNSTANCIA DEBEN LLEVAR [FLAG_REQUIERE_HUMANO].
 2. PROHIBICIÓN ESTRICTA DE LA PALABRA "ALERTA": ¡BAJO NINGUNA CIRCUNSTANCIA ESCRIBAS LA PALABRA "Alerta" NI AGREGUES COLETILLAS COMO "Alerta" O "Doom Alert" AL FINAL O DENTRO DE TUS MENSAJES DIRIGIDOS A LOS CLIENTES! Toda respuesta al cliente debe ser 100% limpia y natural.
 3. PRESUPUESTO EN BOLÍVARES Y CONVERSIÓN BCV (MENSAJE APARTE TRAS DATOS DE PAGO):
    - Todos los precios base oficiales de productos y servicios están fijados en USD / USDT (ej: Cargador $5 USDT, etc.).
@@ -3009,8 +3012,13 @@ Instrucciones de respuesta y comportamiento:
      Responde cordialmente: "¡Excelente! Con gusto evaluamos tu equipo. Por favor indícanos el modelo exacto, estado y accesorios con los que viene; nuestro equipo estará verificándolo para darte una cotización en breve 🙌" y finaliza con la etiqueta [FLAG_VENTA_EQUIPO].
 7. TRATO ANTE INSULTOS O AGRESIVIDAD:
    - Si el cliente insulta, usa malas palabras o se muestra agresivo, contesta siempre de manera impecablemente respetuosa, educada, con excelente léxico y calma profesional. Nunca respondas con hostilidad ni ironía.
-8. Servicios Técnicos (Pestaña 2): Cuando un cliente consulte por un servicio técnico específico (ej: Mantenimiento PS5, Magia Switch, etc.), si el servicio tiene un "mensaje oficial personalizado para responder", envíale ese mensaje con los detalles exactos.
-9. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO: Si ninguna de las Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos ni Productos en Stock contesta de forma precisa la pregunta del cliente: ¡BAJO NINGUNA CIRCUNSTANCIA INVENTES O CONTESTES AL AZAR! Responde con amabilidad indicando que consultarás con el equipo y debes finalizar tu mensaje obligatoriamente con la etiqueta [FLAG_REQUIERE_HUMANO].
+8. Servicios Técnicos (Pestaña Servicios): Cuando un cliente consulte por un servicio técnico de la lista oficial (por ejemplo magia o chipeo para Switch OLED, V1, V2, Lite, mantenimiento, etc.):
+   - Si el servicio cuenta con un "mensaje oficial personalizado para responder", ENVÍA OBLIGATORIAMENTE ESE MENSAJE PERSONALIZADO de forma íntegra y exacta, sin modificar precios ni recortar información.
+   - NUNCA uses [FLAG_REQUIERE_HUMANO] para servicios que ya forman parte de la lista oficial.
+9. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO:
+   - Saludos, agradecimientos ("gracias", "muchas gracias"), confirmaciones ("ok", "dale", "perfecto") y preguntas de cortesía NUNCA son preguntas sin respuesta. Responde amablemente y NUNCA uses [FLAG_REQUIERE_HUMANO].
+   - Si la consulta ya está respondida en Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos o Stock, NUNCA uses [FLAG_REQUIERE_HUMANO].
+   - ÚNICAMENTE si el cliente hace una PREGUNTA ESPECÍFICA sobre un producto, consola o servicio que NO existe en el catálogo ni en la base de datos: responde con amabilidad indicando que consultarás con el equipo técnico para brindarle respuesta exacta y coloca obligatoriamente al final la etiqueta [FLAG_REQUIERE_HUMANO].
 10. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo que no está en stock, infórmale con amabilidad que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
 11. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
 12. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
@@ -3039,7 +3047,120 @@ function parseAIResponseFlags(text) {
   return { reply: clean, isPayment, needsHuman, isCoordination, isEquipmentSale, deliveryExternalZone };
 }
 
+/**
+ * Detecta si el mensaje es únicamente un saludo, agradecimiento, confirmación o despedida de cortesía
+ */
+function isGreetingOrSmallTalk(text) {
+  if (!text || typeof text !== 'string') return false;
+  const clean = text.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[¡!¿?,.;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  const tokens = clean.split(/\s+/);
+  const politeWords = new Set([
+    'hola', 'buenas', 'buenos', 'dias', 'tardes', 'noches', 'saludos', 'que', 'tal', 'como', 'estas', 'estan',
+    'hey', 'epa', 'epale', 'buen', 'dia', 'alo', 'ok', 'okay', 'gracias', 'muchas', 'vale', 'dale',
+    'perfecto', 'listo', 'entendido', 'amigo', 'amiga', 'amigos', 'equipo', 'doomlater', 'chico', 'chica', 'chicos', 'gente', 'compa'
+  ]);
+  return tokens.length <= 4 && tokens.every(t => politeWords.has(t));
+}
+
+/**
+ * Busca coincidencia exacta o inteligente de servicios técnicos configurados en la pestaña "Servicios"
+ */
+function findServiceMatch(userMsg, services) {
+  if (!userMsg || !Array.isArray(services) || services.length === 0) return null;
+  const clean = String(userMsg).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const hasMagiaOrChip = /(?:magia|chipeo|chipear|chipean|chip|flasheo|hack|mod)/.test(clean);
+  const isSolo = /(?:solo|sin memoria|sin sd|sin micro|mano de obra)/.test(clean);
+
+  if (hasMagiaOrChip) {
+    if (clean.includes('oled')) {
+      const match = services.find(s => {
+        const name = (s.serviceName || '').toLowerCase();
+        return name.includes('oled') && (isSolo ? (name.includes('solo') || !name.includes('128gb')) : (name.includes('128gb') || !name.includes('solo')));
+      }) || services.find(s => (s.serviceName || '').toLowerCase().includes('oled'));
+      if (match) return match;
+    }
+    if (clean.includes('lite')) {
+      const match = services.find(s => {
+        const name = (s.serviceName || '').toLowerCase();
+        return name.includes('lite') && (isSolo ? (name.includes('solo') || !name.includes('128gb')) : (name.includes('128gb') || !name.includes('solo')));
+      }) || services.find(s => (s.serviceName || '').toLowerCase().includes('lite'));
+      if (match) return match;
+    }
+    if (/(?:v1|v2|normal|clasica|clasico|estandar)/.test(clean)) {
+      const match = services.find(s => {
+        const name = (s.serviceName || '').toLowerCase();
+        return (name.includes('v1') || name.includes('v2')) && (isSolo ? (name.includes('solo') || !name.includes('128gb')) : (name.includes('128gb') || !name.includes('solo')));
+      }) || services.find(s => (s.serviceName || '').toLowerCase().includes('v1') || (s.serviceName || '').toLowerCase().includes('v2'));
+      if (match) return match;
+    }
+  }
+
+  // Búsqueda por palabras clave del nombre del servicio
+  for (const s of services) {
+    const sName = String(s.serviceName || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cleanSName = sName.replace(/[^a-z0-9]/g, ' ');
+    const sWords = cleanSName.split(/\s+/).filter(w => w.length >= 4);
+    if (sWords.length > 0 && sWords.filter(w => clean.includes(w)).length >= 2) {
+      return s;
+    }
+  }
+  return null;
+}
+
+/**
+ * Busca coincidencia con preguntas frecuentes (FAQs) con filtrado de stopwords y puntuación precisa
+ */
+function findFaqMatch(userMsg, faqs) {
+  if (!userMsg || !Array.isArray(faqs) || faqs.length === 0) return null;
+  const clean = String(userMsg).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[¡!¿?,.;:]/g, ' ').trim();
+  const stopWords = new Set([
+    'que', 'los', 'las', 'por', 'para', 'con', 'del', 'el', 'la', 'un', 'una', 'en', 'es', 'son', 'al', 'se', 'a',
+    'tienen', 'tiene', 'hacen', 'hace', 'venden', 'vende', 'hay', 'dan', 'da', 'cuentan', 'cuenta', 'pueden', 'puede'
+  ]);
+  const words = clean.split(/\s+/).filter(w => w.length >= 3 && !stopWords.has(w));
+  if (words.length === 0) return null;
+
+  let bestFaq = null;
+  let bestScore = 0;
+
+  for (const f of faqs) {
+    const qClean = String(f.question || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[¡!¿?,.;:]/g, ' ').trim();
+    const qWords = qClean.split(/\s+/).filter(w => w.length >= 3 && !stopWords.has(w));
+
+    let score = 0;
+    for (const w of words) {
+      if (qWords.some(qw => qw === w || (qw.length >= 4 && (qw.includes(w) || w.includes(qw))))) {
+        score++;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestFaq = f;
+    }
+  }
+
+  // Coincidencia sólida (al menos 1 palabra de tema específico o 2 palabras clave)
+  if (bestScore >= 1) return bestFaq;
+  return null;
+}
+
 async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
+  // Respuesta inmediata para saludos simples (sin necesidad de llamar a la API ni alertar)
+  if (!mediaAttachment && isGreetingOrSmallTalk(userMessage)) {
+    return {
+      reply: '¡Hola! Bienvenido a Doomlater 🎮. Con gusto te atendemos. ¿En qué producto, consola o servicio técnico podemos ayudarte hoy? 🙌',
+      isPayment: false,
+      needsHuman: false
+    };
+  }
+
+  // Respuesta inmediata con el mensaje personalizado si es consulta directa de un servicio técnico configurado
+  const directService = findServiceMatch(userMessage, ctx.botConfig?.serviceInsumosMap || []);
+  if (!mediaAttachment && directService && directService.customMessage && directService.customMessage.trim() && String(userMessage || '').trim().length < 90) {
+    return { reply: directService.customMessage.trim(), isPayment: false, needsHuman: false };
+  }
+
   const apiKey = ctx.botConfig.geminiApiKey || GEMINI_API_KEY_ENV;
   if (!apiKey) return fallbackRuleBasedBot(userMessage, ctx);
 
@@ -3101,7 +3222,7 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(2800),
+        signal: AbortSignal.timeout(6000),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildSystemPrompt(ctx) }] },
           contents,
@@ -3126,6 +3247,26 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
 
 function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [], botConfig = {} }) {
   const msg = String(userMessage || '').toLowerCase();
+  const cleanMsg = msg.replace(/[¡!¿?,.;:]/g, ' ').trim();
+
+  // 1. Saludos y confirmaciones de cortesía (NUNCA requieren humano ni alertan)
+  if (isGreetingOrSmallTalk(userMessage)) {
+    const isThanks = /^(?:gracias|muchas gracias|vale|ok|okay|dale|listo|perfecto|entendido|graciass?)/i.test(cleanMsg);
+    if (isThanks) {
+      return {
+        reply: '¡A la orden! Con muchísimo gusto 🙌 Si tienes alguna otra duda o consulta de nuestras consolas o servicios técnicos, aquí estamos para ayudarte.',
+        isPayment: false,
+        needsHuman: false
+      };
+    }
+    return {
+      reply: '¡Hola! Bienvenido a Doomlater 🎮. Con gusto te atendemos. ¿En qué producto, consola o servicio técnico podemos ayudarte hoy? 🙌',
+      isPayment: false,
+      needsHuman: false
+    };
+  }
+
+  // 2. Información confidencial
   if (/(dinero|saldo|balance|cuánto tienen|cuanto tienen|cuanto dinero|cuánto dinero|ganancia)/i.test(msg)) {
     return {
       reply: 'Esa es información interna y confidencial de la administración de Doomlater. Si tienes dudas sobre nuestras consolas, productos o servicios técnicos con gusto te ayudamos. ✨',
@@ -3133,38 +3274,60 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
       needsHuman: false
     };
   }
+
+  // 3. Comprobantes de pago
   if (/(ya pagu|ya pagué|transfer|comprobante|capture|pago realizado)/.test(msg)) {
     return { reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌', isPayment: true, needsHuman: true };
   }
+
+  // 4. Métodos de pago
   if (/(m[eé]todo|c[oó]mo pag|datos de pago|pago m[oó]vil|binance|zelle|cuenta)/.test(msg)) {
     const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
     return { reply: `¡Claro! Nuestros métodos de pago son:\n\n${pm || '• Pago Móvil\n• Binance Pay\n• Efectivo'}\n\nCuando pagues, envíanos el comprobante por aquí.`, isPayment: false, needsHuman: false };
   }
+
+  // 5. Servicios Técnicos (Pestaña "Servicios"): Usar mensaje personalizado si está configurado
   const servicesMap = botConfig.serviceInsumosMap || [];
-  for (const s of servicesMap) {
-    const sName = String(s.serviceName || '').toLowerCase();
-    const cleanSName = sName.replace(/[^a-z0-9]/g, ' ');
-    const sWords = cleanSName.split(/\s+/).filter(w => w.length >= 4);
-    if (sWords.length > 0 && sWords.filter(w => msg.includes(w)).length >= 2) {
-      const insList = (Array.isArray(s.insumos) && s.insumos.length > 0)
-        ? s.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
-        : (s.defaultInsumoName || 'Insumos de taller');
-      return {
-        reply: `¡Hola! El presupuesto para *${s.serviceName}* es de *$${Number(s.defaultLaborPrice || 0).toFixed(2)} USD* (Incluye: ${insList}). ¿Te gustaría agendar cita o traer tu consola a nuestro local comercial? ✨`,
-        isPayment: false,
-        needsHuman: false
-      };
+  const matchedService = findServiceMatch(userMessage, servicesMap);
+  if (matchedService) {
+    if (matchedService.customMessage && matchedService.customMessage.trim()) {
+      return { reply: matchedService.customMessage.trim(), isPayment: false, needsHuman: false };
     }
+    const insList = (Array.isArray(matchedService.insumos) && matchedService.insumos.length > 0)
+      ? matchedService.insumos.map(i => `${i.qty}x ${i.name}`).join(' + ')
+      : (matchedService.defaultInsumoName || 'Insumos de taller');
+    const total = matchedService.totalCost !== undefined ? matchedService.totalCost : (matchedService.defaultLaborPrice || 0);
+    return {
+      reply: `¡Hola! El presupuesto para *${matchedService.serviceName}* es de *$${Number(total || 0).toFixed(2)} USD* (Incluye: ${insList}). ¿Te gustaría agendar cita o traer tu consola a nuestro local comercial? ✨`,
+      isPayment: false,
+      needsHuman: false
+    };
   }
-  for (const f of knowledgeBaseFaq) {
-    const words = String(f.question || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    if (words.filter(w => msg.includes(w)).length >= 2) return { reply: f.answer, isPayment: false, needsHuman: false };
+
+  // 6. Preguntas Frecuentes (FAQs)
+  const matchedFaq = findFaqMatch(userMessage, knowledgeBaseFaq);
+  if (matchedFaq) {
+    return { reply: matchedFaq.answer, isPayment: false, needsHuman: false };
   }
+
+  // 7. Productos en stock
   const item = stockItems.find(i => !i.deleted && i.name && msg.includes(String(i.name).toLowerCase()));
   if (item) {
-    return { reply: `¡Sí! Tenemos ${item.name} (${item.stock} disponible(s)) a $${Number(item.salePrice || 0).toFixed(2)}. ¿Te lo apartamos?`, isPayment: false, needsHuman: false };
+    return { reply: `¡Sí! Tenemos ${item.name} (${item.stock} disponible(s)) a $${Number(item.salePrice || 0).toFixed(2)}. ¿Te gustaría adquirirlo?`, isPayment: false, needsHuman: false };
   }
-  return { reply: '¡Hola! Recibimos tu mensaje 🙌 Ya le avisé al equipo para darte la información exacta. Te respondemos en breve.', isPayment: false, needsHuman: true };
+
+  // 8. Fallback: SOLO si es una pregunta explícita que no sabemos responder se alerta al equipo
+  const isExplicitQuestion = /\?/.test(userMessage) || /^(?:cu[aá]nto|tienen|hacen|venden|hay|precio|costo|d[oó]nde|horario|reparan)/i.test(cleanMsg);
+  if (isExplicitQuestion) {
+    const fallbackText = botConfig.unknownQuestionFallbackMessage || '¡Hola! Recibimos tu consulta 🙌 Ya le avisé a nuestro equipo para darte la respuesta exacta en unos momentos.';
+    return { reply: fallbackText, isPayment: false, needsHuman: true };
+  }
+
+  return {
+    reply: '¡Hola! Bienvenido a Doomlater 🎮. Con gusto te atendemos. ¿En qué producto, consola o servicio técnico podemos ayudarte hoy? 🙌',
+    isPayment: false,
+    needsHuman: false
+  };
 }
 
 /* --------------------------------------------------------------------------
@@ -3182,7 +3345,7 @@ async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(6000),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -3248,7 +3411,7 @@ async function analyzePaymentCaptureWithGemini(imageBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(4500),
+        signal: AbortSignal.timeout(6000),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -3547,8 +3710,15 @@ async function runAiReply(convId, q) {
     }
   }
 
+  // Saludos, bienvenidas, agradecimientos o confirmaciones de cortesía NUNCA son preguntas sin respuesta ni requieren humano
+  const isGreetingOrPolite = isGreetingOrSmallTalk(userText);
+  if (isGreetingOrPolite) {
+    result.needsHuman = false;
+    result.isPayment = false;
+  }
+
   // Si a una pregunta no se le sabe la respuesta y se configuró mensaje personalizado de fallback
-  if (!q.ctx.isPartner && result.needsHuman && !result.isPayment && !result.isCoordination && !result.isEquipmentSale && !result.deliveryExternalZone && !result.isUncorrelatedImage && !result.isBrandNewPhotoNotice) {
+  if (!q.ctx.isPartner && result.needsHuman && !isGreetingOrPolite && !result.isPayment && !result.isCoordination && !result.isEquipmentSale && !result.deliveryExternalZone && !result.isUncorrelatedImage && !result.isBrandNewPhotoNotice) {
     if (aiCtx?.botConfig?.unknownQuestionFallbackMessage) {
       result.reply = aiCtx.botConfig.unknownQuestionFallbackMessage;
     }
@@ -3562,9 +3732,13 @@ async function runAiReply(convId, q) {
       .replace(/\bAnthony\b/gi, 'nuestro equipo')
       .replace(/\bSebasti[aá]n\b/gi, 'nuestro equipo')
       .replace(/\bDoomlate\b/gi, 'Doomlater')
-      .replace(/\bDoomlater\.Corp\b/gi, 'Doomlater');
+      .replace(/\bDoomlater\.Corp\b/gi, 'Doomlater')
+      .replace(/\bDoomlaterCorp\b/gi, 'Doomlater');
     // Limpieza estricta: retirar cualquier residuo de palabra "Alerta"
-    result.reply = result.reply.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|Doomlater Alert|ALERTA)[\.\s!]*$/gi, '.').trim();
+    result.reply = result.reply
+      .replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|Doomlater Alert|ALERTA)[\.\s!]*$/gi, '.')
+      .replace(/\b(?:Alerta|ALERTA)\b(?!\s+(?:de\s+estafa|bancaria|naranja|roja))/gi, '')
+      .trim();
     result.reply = result.reply.replace(/\.\s*\.$/, '.');
   }
 
@@ -3769,7 +3943,7 @@ async function runAiReply(convId, q) {
         result.isCoordination = true;
         result.deliveryLugar = lugar;
         result.deliveryFechaHora = fechaHora;
-      } else if (result.needsHuman) {
+      } else if (result.needsHuman && !isGreetingOrPolite) {
         const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
@@ -3782,7 +3956,7 @@ async function runAiReply(convId, q) {
 
   const patch = {};
   if (!q.ctx.isPartner) {
-    if (result.isPayment || result.needsHuman) {
+    if (result.isPayment || (result.needsHuman && !isGreetingOrPolite)) {
       patch.needsAttention = true;
       patch.attentionReason = result.isPayment
         ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'

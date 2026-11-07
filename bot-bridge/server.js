@@ -449,6 +449,9 @@ async function getTelegramAndAntiBanConfig(forceRefresh = false) {
   }
   const cfg = (await fb('GET', ws('meta/botConfig'))) || {};
   const token = String(cfg.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  if (token && !cfg.telegramBotToken) {
+    fb('PATCH', ws('meta/botConfig'), { telegramBotToken: token }).catch(() => {});
+  }
   const chatIdsSet = new Set();
 
   const rawEnvIds = String(process.env.TELEGRAM_CHAT_ID || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);

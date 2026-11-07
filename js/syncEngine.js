@@ -679,9 +679,14 @@
         this.bc.postMessage({ type: 'local_state', clientId, by: author, state: this.state });
       }
       this.emit({ source: 'local', by: author });
-      this.pushBatchItemsToFirebase([], label, {
-        'meta/botConfig': cleanForFirebase(nextConfig)
-      });
+      const extraMeta = {
+        'meta/botConfig/updatedAt': now,
+        'meta/botConfig/updatedBy': author
+      };
+      for (const [k, v] of Object.entries(updates || {})) {
+        extraMeta[`meta/botConfig/${k}`] = v === undefined ? null : cleanForFirebase(v);
+      }
+      this.pushBatchItemsToFirebase([], label, extraMeta);
       return nextConfig;
     }
 

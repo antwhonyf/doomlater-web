@@ -3964,7 +3964,13 @@
         globalBotEnabled: cfg.globalBotEnabled !== false,
         typingDelaySec: cfg.typingDelaySec !== undefined ? Number(cfg.typingDelaySec) : 2.5,
         showTypingIndicator: cfg.showTypingIndicator !== false,
-        showOnlinePresence: cfg.showOnlinePresence !== false,
+        showOnlinePresence: Boolean(cfg.showOnlinePresence),
+        antiBanStrictMode: cfg.antiBanStrictMode !== false,
+        telegramBotToken: cfg.telegramBotToken || '',
+        telegramChatId: cfg.telegramChatId || '',
+        telegramSubscribers: (cfg.telegramSubscribers && typeof cfg.telegramSubscribers === 'object') ? cfg.telegramSubscribers : {},
+        telegramBotUsername: cfg.telegramBotUsername || '',
+        telegramStatus: cfg.telegramStatus || null,
         paymentReceiptReplyMessage: cfg.paymentReceiptReplyMessage || '¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y te confirmamos en breve 🙌',
         unknownQuestionFallbackMessage: cfg.unknownQuestionFallbackMessage || 'Con gusto, voy a consultar ese detalle directamente con nuestro equipo para darte la respuesta exacta en unos momentos 🙌',
         customAiRules: rules,
@@ -3974,7 +3980,7 @@
         instagramConnected: Boolean(cfg.instagramConnected),
         messengerDoom1Connected: Boolean(cfg.messengerDoom1Connected),
         messengerDoom2Connected: Boolean(cfg.messengerDoom2Connected),
-        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlater 📱. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, por favor escríbenos directamente a nuestro WhatsApp oficial: +58 412 0000000 o toca este enlace: https://wa.me/584120000000 ¡Te atenderemos de inmediato!',
+        messengerRedirectMessage: cfg.messengerRedirectMessage || '¡Hola! Gracias por contactarnos en Doomlater 🎮. Para brindarte atención inmediata con stock en tiempo real y coordinar envíos o entregas, escríbenos directamente a nuestro WhatsApp oficial: +58 424-5323796 o toca este enlace: https://wa.me/584245323796 ¡Te atenderemos enseguida! 🙌',
         paymentMethods: Array.isArray(cfg.paymentMethods) ? cfg.paymentMethods : [
           { id: 'pm_1', name: 'Pago Móvil / Banco', details: 'Banco Banesco (0134) • C.I: 12.345.678 • Tlf: 0412-1234567' },
           { id: 'pm_2', name: 'Binance Pay / USDT', details: 'Pay ID: 123456789 • Red TRC20 / Binance Pay' },
@@ -6792,9 +6798,70 @@
                 </label>
                 <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:700; cursor:pointer;">
                   <input type="checkbox" id="cfg_showOnline" ${cfg.showOnlinePresence ? 'checked' : ''} />
-                  <span>Mostrar estado "En línea" permanente en los perfiles</span>
+                  <span>Mostrar estado "En línea" permanente (desactivado recomendado para Anti-Baneo)</span>
                 </label>
               </div>
+
+              <!-- Blindaje Anti-Baneo Total & Alertas Instantáneas por Telegram -->
+              ${(() => {
+                const subs = Object.values(cfg.telegramSubscribers || {}).filter(s => s && s.chatId);
+                const tgUser = cfg.telegramBotUsername || (cfg.telegramStatus && cfg.telegramStatus.username) || '';
+                const tgSt = cfg.telegramStatus || null;
+                let statusBanner = '';
+                if (cfg.telegramBotToken && subs.length > 0) {
+                  const names = subs.map(s => this.escapeHtml(s.name || s.username || s.chatId)).join(', ');
+                  statusBanner = `<div style="padding:10px 12px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); border-radius:12px; font-size:12.5px; color:#10b981; font-weight:700; margin-bottom:12px;">
+                    ✅ Telegram Activo ${tgUser ? `(<a href="https://t.me/${this.escapeHtml(tgUser)}" target="_blank" style="color:#10b981; text-decoration:underline;">@${this.escapeHtml(tgUser)}</a>)` : ''} • ${subs.length} dispositivo(s) recibiendo alertas: <span style="color:var(--text-main); font-weight:600;">${names}</span>
+                  </div>`;
+                } else if (cfg.telegramBotToken && tgSt && tgSt.ok === false) {
+                  statusBanner = `<div style="padding:10px 12px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:12px; font-size:12.5px; color:#ef4444; font-weight:700; margin-bottom:12px;">
+                    ⚠️ Error de Token Telegram: ${this.escapeHtml(tgSt.error || 'Verifica el token en @BotFather')}
+                  </div>`;
+                } else if (cfg.telegramBotToken) {
+                  statusBanner = `<div style="padding:10px 12px; background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); border-radius:12px; font-size:12.5px; color:#3b82f6; font-weight:700; margin-bottom:12px;">
+                    ⏳ Token guardado ${tgUser ? `(@${this.escapeHtml(tgUser)})` : ''}. Ahora abre tu bot en Telegram desde el teléfono de Anthony y Sebastián y pulsa <strong>Iniciar (/start)</strong> para quedar vinculados automáticamente.
+                    ${tgUser ? `<a href="https://t.me/${this.escapeHtml(tgUser)}" target="_blank" style="margin-left:6px; color:#3b82f6; text-decoration:underline;">Abrir @${this.escapeHtml(tgUser)}</a>` : ''}
+                  </div>`;
+                } else {
+                  statusBanner = `<div style="padding:10px 12px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.28); border-radius:12px; font-size:12px; color:var(--text-main); margin-bottom:12px; line-height:1.45;">
+                    🛡️ <strong>Blindaje Anti-Baneo WhatsApp Activo:</strong> El bot jamás iniciará mensajes salientes no solicitados por WhatsApp. Crea gratis tu bot en <strong>@BotFather</strong> en Telegram, pega el Token aquí abajo y envía <strong>/start</strong> desde sus teléfonos para recibir pagos, entregas y alertas con botones de 1 toque.
+                  </div>`;
+                }
+                return `
+                <div style="margin-top:18px; padding:18px; background:rgba(59,130,246,0.05); border:1.5px solid rgba(59,130,246,0.28); border-radius:18px;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+                    <label style="font-weight:800; font-size:14.5px; color:var(--text-main); display:flex; align-items:center; gap:8px; margin:0;">
+                      <span class="material-symbols-rounded" style="color:#3b82f6; font-size:22px;">shield_lock</span>
+                      Blindaje Anti-Baneo Total & Alertas por Telegram
+                    </label>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      ${subs.length > 0 ? `<button type="button" class="btn-cashew btn-surface btn-sm" style="font-size:11.5px; padding:5px 10px;" onclick="CashewApp.clearTelegramSubscribers()">Limpiar vinculados</button>` : ''}
+                      <button type="button" class="btn-cashew btn-primary btn-sm" style="font-size:12px; padding:6px 14px; background:#3b82f6; color:#fff; font-weight:800;" onclick="CashewApp.testTelegramBotConnection()">
+                        <span class="material-symbols-rounded" style="font-size:16px;">send</span> Guardar y Probar Telegram
+                      </button>
+                    </div>
+                  </div>
+                  ${statusBanner}
+                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+                    <div>
+                      <label style="font-weight:700; font-size:12.5px; color:var(--text-main); display:block; margin-bottom:4px;">
+                        Token del Bot de Telegram (@BotFather):
+                      </label>
+                      <input type="password" id="cfg_telegramBotToken" class="cashew-input" style="width:100%; font-size:13px;" value="${this.escapeHtml(cfg.telegramBotToken)}" placeholder="1234567890:AAH..." />
+                    </div>
+                    <div>
+                      <label style="font-weight:700; font-size:12.5px; color:var(--text-main); display:block; margin-bottom:4px;">
+                        Chat ID Manual (Opcional — se vincula solo con /start):
+                      </label>
+                      <input type="text" id="cfg_telegramChatId" class="cashew-input" style="width:100%; font-size:13px;" value="${this.escapeHtml(cfg.telegramChatId)}" placeholder="Ej: 987654321 (opcional)" />
+                    </div>
+                  </div>
+                  <label style="display:flex; align-items:center; gap:10px; font-size:13px; font-weight:700; cursor:pointer; margin-top:12px;">
+                    <input type="checkbox" id="cfg_antiBanStrict" ${cfg.antiBanStrictMode !== false ? 'checked' : ''} />
+                    <span>Modo Anti-Baneo Estricto (Recomendado: CERO alertas automáticas por WhatsApp — enviar todo a Telegram y Web)</span>
+                  </label>
+                </div>`;
+              })()}
 
               <!-- Reglas del Asistente IA & Filtros de Comportamiento -->
               <div style="margin-top:20px; padding:18px; background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:18px;">
@@ -6911,6 +6978,9 @@
       const delay = Number(document.getElementById('cfg_delay')?.value) || 2.5;
       const showTyping = Boolean(document.getElementById('cfg_showTyping')?.checked);
       const showOnline = Boolean(document.getElementById('cfg_showOnline')?.checked);
+      const antiBanStrict = document.getElementById('cfg_antiBanStrict') ? Boolean(document.getElementById('cfg_antiBanStrict')?.checked) : true;
+      const tgToken = document.getElementById('cfg_telegramBotToken')?.value?.trim();
+      const tgChatId = document.getElementById('cfg_telegramChatId')?.value?.trim();
       const customAiRules = document.getElementById('cfg_customAiRules')?.value?.trim() || '';
       const messengerMsg = document.getElementById('cfg_messengerMsg')?.value?.trim();
       const geminiKey = document.getElementById('cfg_geminiKey')?.value?.trim();
@@ -6921,8 +6991,11 @@
         typingDelaySec: delay,
         showTypingIndicator: showTyping,
         showOnlinePresence: showOnline,
+        antiBanStrictMode: antiBanStrict,
         customAiRules: customAiRules
       };
+      if (tgToken !== undefined) patch.telegramBotToken = tgToken;
+      if (tgChatId !== undefined) patch.telegramChatId = tgChatId;
       if (messengerMsg !== undefined) patch.messengerRedirectMessage = messengerMsg;
       if (geminiKey !== undefined) patch.geminiApiKey = geminiKey;
       if (payReceiptMsg !== undefined) patch.paymentReceiptReplyMessage = payReceiptMsg;
@@ -6931,6 +7004,32 @@
       window.cashewSync.saveBotConfig(patch, 'Configuración del bot guardada');
 
       this.toast('Ajustes del bot guardados con éxito', 'verified');
+      this.renderMainView();
+    },
+
+    testTelegramBotConnection() {
+      const tgToken = document.getElementById('cfg_telegramBotToken')?.value?.trim() || '';
+      const tgChatId = document.getElementById('cfg_telegramChatId')?.value?.trim() || '';
+      const antiBanStrict = document.getElementById('cfg_antiBanStrict') ? Boolean(document.getElementById('cfg_antiBanStrict')?.checked) : true;
+      if (!tgToken) {
+        this.toast('Pega primero el Token que te dio @BotFather en Telegram', 'warning');
+        return;
+      }
+      window.cashewSync.saveBotConfig({
+        telegramBotToken: tgToken,
+        telegramChatId: tgChatId,
+        antiBanStrictMode: antiBanStrict,
+        requestTelegramTest: Date.now()
+      }, 'Prueba de conexión Telegram solicitada');
+      this.toast('Verificando bot de Telegram y enviando alerta de prueba...', 'sync');
+      setTimeout(() => this.renderMainView(), 3800);
+    },
+
+    clearTelegramSubscribers() {
+      window.cashewSync.saveBotConfig({
+        telegramSubscribers: null
+      }, 'Dispositivos de Telegram desvinculados');
+      this.toast('Dispositivos desvinculados. Envía /start en Telegram para volver a vincular.', 'info');
       this.renderMainView();
     },
 

@@ -311,11 +311,50 @@ async function clearAuthEverywhere() {
    IA (GEMINI) + RESPALDO POR REGLAS
    -------------------------------------------------------------------------- */
 const convHistory = new Map(); // convId -> [{role, text}]
+const convHistoryHydrated = new Set();
+
 function pushHistory(convId, role, text) {
   const arr = convHistory.get(convId) || [];
   arr.push({ role, text: String(text || '').slice(0, 600) });
   while (arr.length > 12) arr.shift();
   convHistory.set(convId, arr);
+}
+
+async function ensureConvHistoryLoaded(convId) {
+  if (!convId || convHistoryHydrated.has(convId)) return;
+  const existingMem = convHistory.get(convId) || [];
+  if (existingMem.length >= 3) {
+    convHistoryHydrated.add(convId);
+    return;
+  }
+  convHistoryHydrated.add(convId);
+  try {
+    let rawMsgs = await fb('GET', ws('botMessages'), `orderBy="convId"&equalTo=${encodeURIComponent(JSON.stringify(convId))}`);
+    if (!rawMsgs || typeof rawMsgs !== 'object') {
+      rawMsgs = await fb('GET', ws('botMessages'), 'orderBy="$key"&limitToLast=250');
+    }
+    if (!rawMsgs || typeof rawMsgs !== 'object') return;
+    const matched = Object.values(rawMsgs)
+      .filter(m => m && m.convId === convId && !m.deleted && m.text)
+      .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0))
+      .slice(-10)
+      .map(m => ({
+        role: m.direction === 'out' ? 'bot' : 'user',
+        text: String(m.text || '').slice(0, 600)
+      }));
+    if (matched.length === 0) return;
+
+    // Evitar duplicar si el último mensaje recién entrante ya se empujó en memoria
+    for (const mem of existingMem) {
+      const last = matched[matched.length - 1];
+      if (!last || last.role !== mem.role || last.text !== mem.text) {
+        matched.push(mem);
+      }
+    }
+    convHistory.set(convId, matched.slice(-12));
+  } catch (err) {
+    logger.warn({ convId, err: err.message }, 'No se pudo hidratar convHistory desde Firebase');
+  }
 }
 
 const DEFAULT_PAYMENT_METHODS = [
@@ -374,52 +413,193 @@ function isAuthorizedPartner(phoneOrJid) {
   return null;
 }
 
-async function sendTelegramAlert(text) {
-  try {
-    const tgToken = process.env.TELEGRAM_BOT_TOKEN;
-    const tgChatId = process.env.TELEGRAM_CHAT_ID;
-    if (tgToken && tgChatId) {
-      await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: tgChatId, text: text })
-      });
-      return true;
-    }
-  } catch (e) {
-    logger.warn({ err: e.message }, 'No se pudo enviar alerta por Telegram');
-  }
-  return false;
+let cachedTgConfig = { data: null, fetchedAt: 0 };
+const tgConvCallbackMap = new Map(); // shortKey -> full convId (garantiza <= 64 bytes en callback_data de Telegram)
+
+function makeTgShortConvKey(convId) {
+  if (!convId) return '';
+  if (Buffer.byteLength(convId, 'utf8') <= 44) return convId;
+  const shortKey = 'k_' + crypto.createHash('sha1').update(String(convId)).digest('hex').slice(0, 16);
+  tgConvCallbackMap.set(shortKey, convId);
+  return shortKey;
 }
 
-async function notifyPartners(text, alertKey = null) {
-  // Enviar a Telegram de inmediato si está configurado (100% libre de riesgos de baneo)
-  sendTelegramAlert(text).catch(() => {});
+function resolveTgShortConvKey(shortKey) {
+  if (!shortKey) return '';
+  return tgConvCallbackMap.get(shortKey) || shortKey;
+}
+
+async function getTelegramAndAntiBanConfig(forceRefresh = false) {
+  if (!forceRefresh && cachedTgConfig.data && Date.now() - cachedTgConfig.fetchedAt < 4000) {
+    return cachedTgConfig.data;
+  }
+  const cfg = (await fb('GET', ws('meta/botConfig'))) || {};
+  const token = String(cfg.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const chatIdsSet = new Set();
+
+  const rawEnvIds = String(process.env.TELEGRAM_CHAT_ID || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  for (const id of rawEnvIds) chatIdsSet.add(id);
+
+  if (cfg.telegramChatId) {
+    for (const id of String(cfg.telegramChatId).split(/[,\s]+/).map(s => s.trim()).filter(Boolean)) {
+      chatIdsSet.add(id);
+    }
+  }
+  if (cfg.telegramSubscribers && typeof cfg.telegramSubscribers === 'object') {
+    for (const sub of Object.values(cfg.telegramSubscribers)) {
+      if (sub && sub.chatId) chatIdsSet.add(String(sub.chatId).trim());
+    }
+  }
+
+  const out = {
+    token,
+    chatIds: [...chatIdsSet],
+    // Modo Anti-Baneo Estricto activo por defecto: NUNCA inicia mensajes de alerta no solicitados por WhatsApp
+    antiBanStrictMode: cfg.antiBanStrictMode !== false,
+    botConfig: cfg
+  };
+  cachedTgConfig = { data: out, fetchedAt: Date.now() };
+  return out;
+}
+
+function buildTelegramInlineButtons(alertKey, options = {}) {
+  const key = String(alertKey || '');
+  let convId = options.convId || '';
+  if (!convId) {
+    const m = key.match(/^(?:pay|coord|delivery|human|alert|sale|vo|brandnew|uncorr)_(.+)$/);
+    if (m) convId = m[1];
+  }
+  const cleanPhone = String(options.cleanPhone || '').replace(/\D/g, '');
+  const shortId = convId ? makeTgShortConvKey(convId) : '';
+  const rows = [];
+
+  if (shortId) {
+    if (key.startsWith('pay_')) {
+      rows.push([{ text: '✅ Verificar Pago y Avisar al Cliente', callback_data: `vpay:${shortId}` }]);
+    } else if (key.startsWith('delivery_')) {
+      rows.push([
+        { text: '🚚 $2', callback_data: `qdel:${shortId}:2` },
+        { text: '🚚 $3', callback_data: `qdel:${shortId}:3` },
+        { text: '🚚 $4', callback_data: `qdel:${shortId}:4` },
+        { text: '🚚 $5', callback_data: `qdel:${shortId}:5` }
+      ]);
+    } else if (key.startsWith('coord_')) {
+      rows.push([{ text: '📦 Marcar Pedido como Entregado', callback_data: `mdel:${shortId}` }]);
+    } else if (/^(?:human|alert|sale|vo|brandnew|uncorr)_/.test(key)) {
+      rows.push([{ text: '✅ Quitar Alerta (Ya Atendido)', callback_data: `calr:${shortId}` }]);
+    }
+  }
+
+  if (cleanPhone && cleanPhone.length >= 10) {
+    rows.push([{ text: '💬 Abrir WhatsApp del Cliente', url: `https://wa.me/${cleanPhone}` }]);
+  }
+
+  return rows.length > 0 ? { inline_keyboard: rows } : undefined;
+}
+
+async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId = null) {
+  try {
+    const tg = await getTelegramAndAntiBanConfig();
+    if (!tg.token) return false;
+    const targets = specificChatId ? [String(specificChatId)] : tg.chatIds;
+    if (!targets || targets.length === 0) return false;
+
+    let anySent = false;
+    for (const chatId of targets) {
+      const payload = {
+        chat_id: chatId,
+        text: String(text || ''),
+        disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
+      };
+      const res = await fetch(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) anySent = true;
+      else {
+        const errBody = await res.text().catch(() => '');
+        logger.warn({ chatId, status: res.status, errBody: errBody.slice(0, 160) }, 'Telegram sendMessage rechazado');
+      }
+    }
+    return anySent;
+  } catch (e) {
+    logger.warn({ err: e.message }, 'No se pudo enviar alerta por Telegram');
+    return false;
+  }
+}
+
+async function sendTelegramDocument(chatId, pdfBuffer, fileName, caption = '') {
+  try {
+    const tg = await getTelegramAndAntiBanConfig();
+    if (!tg.token || !chatId || !pdfBuffer) return false;
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    if (caption) form.append('caption', String(caption).slice(0, 1020));
+    form.append('document', new Blob([pdfBuffer], { type: 'application/pdf' }), fileName || 'Documento_Doomlater.pdf');
+    const res = await fetch(`https://api.telegram.org/bot${tg.token}/sendDocument`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(12000),
+      body: form
+    });
+    return res.ok;
+  } catch (e) {
+    logger.warn({ err: e.message }, 'No se pudo enviar PDF por Telegram');
+    return false;
+  }
+}
+
+async function notifyPartners(text, alertKey = null, options = {}) {
+  const tg = await getTelegramAndAntiBanConfig();
+
+  if (alertKey) {
+    const tgCooldownMs = 25 * 1000; // Evita duplicados idénticos en menos de 25s
+    const last = partnerAlertCooldown.get(`tg_${alertKey}`) || 0;
+    if (Date.now() - last < tgCooldownMs) return;
+    partnerAlertCooldown.set(`tg_${alertKey}`, Date.now());
+  }
+
+  const replyMarkup = buildTelegramInlineButtons(alertKey, options);
+  const sentViaTelegram = await sendTelegramAlert(text, replyMarkup);
+
+  // BLINDAJE ANTI-BANEO TOTAL:
+  // Si el Modo Anti-Baneo Estricto está activo (por defecto) o ya se entregó por Telegram,
+  // JAMÁS enviamos alertas automáticas salientes por WhatsApp para proteger el número al 100%.
+  if (tg.antiBanStrictMode || sentViaTelegram) {
+    return;
+  }
 
   if (!waSock || waState !== 'connected') return;
   if (alertKey) {
-    const isAlert = String(alertKey).startsWith('pay_') || String(alertKey).startsWith('human_') || String(alertKey).startsWith('alert_') || String(alertKey).startsWith('coord_');
-    const cooldownMs = isAlert ? 5 * 60 * 1000 : (15 * 60 * 1000);
-    const last = partnerAlertCooldown.get(alertKey) || 0;
-    if (Date.now() - last < cooldownMs) return; // Cooldown mínimo de 5 min para evitar que Meta clasifique como masivo
-    partnerAlertCooldown.set(alertKey, Date.now());
+    const cooldownMs = 15 * 60 * 1000;
+    const lastWa = partnerAlertCooldown.get(`wa_${alertKey}`) || 0;
+    if (Date.now() - lastWa < cooldownMs) return;
+    partnerAlertCooldown.set(`wa_${alertKey}`, Date.now());
   }
 
   for (let idx = 0; idx < PARTNER_ACCOUNTS.length; idx++) {
     const p = PARTNER_ACCOUNTS[idx];
-    if (idx > 0) await new Promise(r => setTimeout(r, 1200)); // Pausa humana entre socios
+    if (idx > 0) await new Promise(r => setTimeout(r, 1800));
     for (const jid of p.jids) {
       try {
         await waSend(jid, { text });
-        break; // Enviado con éxito a este socio
+        break;
       } catch (err) {
-        logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar alerta por este JID, probando alternativo');
+        logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar alerta por este JID');
       }
     }
   }
 }
 
 async function notifySinglePartner(target, text) {
+  const tg = await getTelegramAndAntiBanConfig();
+  if (tg.token && tg.chatIds.length > 0) {
+    await sendTelegramAlert(text);
+    if (tg.antiBanStrictMode) return { success: true };
+  }
+  if (tg.antiBanStrictMode) return { success: false, reason: 'anti_ban_strict' };
   return sendPartnerDirectMessage('Doom Bot', target, text);
 }
 
@@ -427,6 +607,22 @@ async function notifySinglePartner(target, text) {
  * Envío directo e inmediato de mensajes o documentos PDF a uno de los socios.
  */
 async function sendPartnerDirectMessage(fromPartnerName, toTarget, text, pdfAttachment = null) {
+  const tg = await getTelegramAndAntiBanConfig();
+  if (tg.token && tg.chatIds.length > 0) {
+    if (pdfAttachment && pdfAttachment.buffer) {
+      for (const cid of tg.chatIds) {
+        await sendTelegramDocument(cid, pdfAttachment.buffer, pdfAttachment.fileName, text);
+      }
+    } else {
+      await sendTelegramAlert(text);
+    }
+    if (tg.antiBanStrictMode) {
+      return { success: true, targetName: 'Telegram Socios', targetPhone: 'Telegram' };
+    }
+  }
+  if (tg.antiBanStrictMode) {
+    return { success: false, error: 'Modo Anti-Baneo activo: vincula Telegram para envíos directos automáticos.' };
+  }
   if (!waSock || waState !== 'connected') {
     return { success: false, error: 'WhatsApp no está conectado' };
   }
@@ -788,26 +984,48 @@ function generateDoomContractPdf({ clientName, serviceName, equipment, requester
 }
 
 async function checkLowStockAndAlert() {
-  if (!isOwner || waState !== 'connected') return;
+  if (!isOwner) return;
   try {
-    const stockRaw = await fb('GET', ws('stockItems'));
+    const tg = await getTelegramAndAntiBanConfig();
+    if (!tg.token && waState !== 'connected') return;
+
+    const [stockRaw, persistedAlerts] = await Promise.all([
+      fb('GET', ws('stockItems')),
+      fb('GET', ws('meta/lowStockAlerted'))
+    ]);
     if (!stockRaw) return;
+
     const items = Object.values(stockRaw).filter(i => i && !i.deleted);
+    const prevMap = (persistedAlerts && typeof persistedAlerts === 'object') ? persistedAlerts : {};
+    const now = Date.now();
+    const cooldownMs = 24 * 60 * 60 * 1000; // 1 vez cada 24h persistido en Firebase (inmune a reinicios de Render)
+    const triggeredLines = [];
+    const patchMap = {};
+
     for (const it of items) {
       const stockNum = Number(it.stock) || 0;
-      const minStock = Number(it.minStock) || 2;
+      const minStock = it.minStock !== undefined ? Number(it.minStock) : 1;
       if (stockNum <= minStock) {
-        const key = `stock_low_${it.id}_${stockNum}`;
-        const last = partnerAlertCooldown.get(key) || 0;
-        if (Date.now() - last < 8 * 60 * 60 * 1000) continue; // máximo 1 alerta cada 8 horas por nivel de stock
-        partnerAlertCooldown.set(key, Date.now());
-
-        const alertMsg = stockNum <= 0
-          ? `🚨 *DOOMLATER ALERT: Producto AGOTADO* 📦\n\nEl producto/insumo *${it.name}* se quedó sin stock (0 unidades).\n👉 _Atento para reposición._`
-          : `⚠️ *DOOMLATER ALERT: Stock Crítico* 📦\n\nEl producto/insumo *${it.name}* tiene solo *${stockNum} unidad(es)* disponibles.\n👉 _Atento para reposición._`;
-
-        await notifyPartners(alertMsg, key);
+        const key = `${safeId(it.id)}_${stockNum}`;
+        const last = Number(prevMap[key] || partnerAlertCooldown.get(`stock_${key}`) || 0);
+        if (now - last < cooldownMs) continue;
+        partnerAlertCooldown.set(`stock_${key}`, now);
+        patchMap[key] = now;
+        triggeredLines.push(
+          stockNum <= 0
+            ? `• 🚨 *AGOTADO:* ${it.name} (0 uds)`
+            : `• ⚠️ *Stock bajo:* ${it.name} (${stockNum} ud)`
+        );
       }
+    }
+
+    if (triggeredLines.length > 0) {
+      await fb('PATCH', ws('meta/lowStockAlerted'), patchMap);
+      const alertMsg =
+        `📦 *DOOMLATER ALERT: Resumen de Inventario Crítico*\n\n` +
+        triggeredLines.join('\n') +
+        `\n\n👉 _Atento para reposición en el panel de Stock._`;
+      await notifyPartners(alertMsg, `stock_batch_${Math.floor(now / 60000)}`);
     }
   } catch (e) {
     logger.warn({ err: e.message }, 'Error en chequeo de stock bajo');
@@ -1900,19 +2118,30 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     }
 
     await commitAndVerifyWebSync(patchUpdates, `Pago de ${targetConv.customerName} verificado`);
+    alertedConvsTrack.delete(`pay_${targetConv.id}`);
+    alertedConvsTrack.delete(`alert_${targetConv.id}`);
 
-    const clientConfirmMsg = `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por el equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater! ✨`;
+    const clientConfirmMsg = `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por nuestro equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater! ✨`;
 
     if (targetConv.customerJid && waSock && waState === 'connected') {
       try {
+        await waPresence('composing', targetConv.customerJid);
+        await new Promise(r => setTimeout(r, 700));
         await waSend(targetConv.customerJid, { text: clientConfirmMsg });
+        await waPresence('paused', targetConv.customerJid);
       } catch (e) {
         logger.warn({ err: e.message }, 'No se pudo enviar mensaje de confirmación al cliente por WhatsApp');
       }
     }
+    pushHistory(targetConv.id, 'bot', clientConfirmMsg);
+    await recordOutgoing(targetConv.id, {
+      id: `bmsg_wa_payverif_${Date.now()}`,
+      text: clientConfirmMsg,
+      sentBy: 'Doomlater Bot',
+      createdAt: Date.now()
+    });
 
-    const bossGreeting = isAnthony ? 'Jefe' : partnerName;
-    return `✅ *¡Listo, ${bossGreeting}! Pago VERIFICADO con éxito* 🎉\n\n` +
+    return `✅ *¡Listo, ${partnerName}! Pago VERIFICADO con éxito* 🎉\n\n` +
       `• *Cliente:* ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})\n` +
       `• *Monto Acreditado:* *${formattedAmt}*\n` +
       `• *Referencia:* ${targetConv.pendingPaymentRef || 'S/N'}\n\n` +
@@ -1922,7 +2151,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `  3. Se le envió la confirmación oficial al cliente en su chat.`;
   }
 
-  // 0.0001. COTIZACIÓN DE DELIVERY VIA WHATSAPP POR EL SOCIO
+  // 0.0001. COTIZACIÓN DE DELIVERY VIA WHATSAPP O TELEGRAM POR EL SOCIO
   // Sintaxis: "(número) delivery (precio)" o "delivery (número) (precio)"
   const deliveryCmdMatch = lower.match(/(?:(?:(\+?58\d{10}|0?4\d{9,10})\s+delivery\s+([\d\.,]+))|(?:delivery\s+(\+?58\d{10}|0?4\d{9,10})\s+([\d\.,]+)))/i);
   if (deliveryCmdMatch) {
@@ -1952,32 +2181,39 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     const rateParalelo = rates.paralelo || 1000;
     const rateBcv = rates.bcv || 890;
 
+    await ensureConvHistoryLoaded(targetConv.id);
     const hist = convHistory.get(targetConv.id) || [];
     const histTexts = hist.map(h => h.text);
-    const orderItemStr = detectWhatCustomerBought(targetConv, histTexts, (adminCtx && adminCtx.sellables) || [], []);
-    
-    let baseUsdt = 0;
-    const priceMatch = orderItemStr.match(/\$(\d+(?:\.\d+)?)/);
-    if (priceMatch) {
-      baseUsdt = parseFloat(priceMatch[1]);
+    const orderItemStr = detectWhatCustomerBought(targetConv, histTexts, (adminCtx && adminCtx.sellables) || [], adminCtx?.botConfig?.serviceInsumosMap || []);
+
+    let baseUsdt = Number(targetConv.expectedOrderUsdt) || 0;
+    if (baseUsdt <= 0) {
+      const priceMatch = orderItemStr.match(/\$(\d+(?:\.\d+)?)/);
+      if (priceMatch) baseUsdt = parseFloat(priceMatch[1]);
     }
     const totalUsdt = (baseUsdt > 0 ? baseUsdt : 0) + deliveryFee;
-    const totalBs = totalUsdt * rateParalelo;
-    const totalBcv = rateBcv > 0 ? (totalBs / rateBcv) : totalUsdt;
+    const totalBs = +(totalUsdt * rateParalelo).toFixed(2);
+    const totalBcv = rateBcv > 0 ? +(totalBs / rateBcv).toFixed(2) : totalUsdt;
 
     const clientMsg = `¡Hola! Nuestro equipo ha calculado el costo de delivery para tu zona:\n\n` +
       `• *Costo de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
       (baseUsdt > 0 ? `• *Pedido:* ${orderItemStr} ($${baseUsdt.toFixed(2)} USD)\n` : '') +
-      `• *Total a Cancelar:* *$${totalUsdt.toFixed(2)} USD* (~Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} | $${totalBcv.toFixed(2)} a tasa BCV)\n\n` +
+      `• *Total a Cancelar:* *$${totalUsdt.toFixed(2)} USDT* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | $${totalBcv.toFixed(2)} a tasa BCV)\n\n` +
       `¿Nos confirmas por favor el día y la hora exacta que más te convenga para agendar tu entrega? 🙌`;
 
     if (targetConv.customerJid && waSock && waState === 'connected') {
       try {
+        await waPresence('composing', targetConv.customerJid);
+        await new Promise(r => setTimeout(r, 800));
         await waSend(targetConv.customerJid, { text: clientMsg });
+        await waPresence('paused', targetConv.customerJid);
       } catch (e) {
         logger.warn({ err: e.message }, 'No se pudo enviar mensaje de delivery al cliente');
       }
     }
+
+    pushHistory(targetConv.id, 'bot', clientMsg);
+    alertedConvsTrack.delete(`alert_${targetConv.id}`);
 
     await recordOutgoing(targetConv.id, {
       id: `bmsg_wa_delivery_${Date.now()}`,
@@ -1989,8 +2225,11 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     await fb('PATCH', ws(`botConversations/${targetConv.id}`), {
       deliveryQuotedFee: deliveryFee,
       deliveryQuotedTotalUsdt: totalUsdt,
+      expectedOrderUsdt: totalUsdt,
+      expectedOrderBs: totalBs,
       deliveryStatus: 'quoted',
       needsAttention: false,
+      attentionReason: null,
       updatedAt: Date.now()
     });
 
@@ -2794,8 +3033,13 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
 }
 
 async function checkPartnerReminders() {
-  if (!isOwner || !waSock || waState !== 'connected') return;
+  if (!isOwner) return;
   try {
+    const tg = await getTelegramAndAntiBanConfig();
+    const canSendTg = Boolean(tg.token && tg.chatIds.length > 0);
+    const canSendWa = Boolean(!tg.antiBanStrictMode && waSock && waState === 'connected');
+    if (!canSendTg && !canSendWa) return;
+
     const raw = await fb('GET', ws('partnerReminders'));
     if (!raw || typeof raw !== 'object') return;
     const now = Date.now();
@@ -2806,12 +3050,15 @@ async function checkPartnerReminders() {
         rem.sentAt = now;
         await fb('PATCH', ws(`partnerReminders/${key}`), { sent: true, sentAt: now });
 
-        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
-        const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
-        await waSend(destJid, { text: msgText });
-
-        const confirmSender = `✅ *Recordatorio entregado:* Ya le envié el mensaje a tu socio @${rem.to}:\n"${rem.text}"`;
-        notifySinglePartner(rem.from, confirmSender).catch(() => {});
+        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from} PARA @${rem.to}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
+        if (canSendTg) {
+          await sendTelegramAlert(msgText);
+        } else if (canSendWa) {
+          const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
+          await waSend(destJid, { text: msgText });
+          const confirmSender = `✅ *Recordatorio entregado:* Ya le envié el mensaje a tu socio @${rem.to}:\n"${rem.text}"`;
+          notifySinglePartner(rem.from, confirmSender).catch(() => {});
+        }
         await touchMeta(`Recordatorio entregado a @${rem.to}`);
       }
     }
@@ -3015,9 +3262,14 @@ async function loadAiContext() {
 }
 
 function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {}, exchangeRate = 1000, rates = {} }) {
+  // SOLO exponer productos comerciales para la venta con stock > 0 (NUNCA insumos internos de taller como chips HwFly o memorias de taller)
   const stock = stockItems
-    .filter(i => !i.deleted && (i.kind === 'para_vender' || i.kind === 'insumo'))
-    .map(i => `- ${i.name}: stock ${i.stock} | precio $${Number(i.salePrice || i.purchaseCost || 0).toFixed(2)}${i.extraDetail || i.notes ? ` | ${i.extraDetail || i.notes}` : ''}`)
+    .filter(i => !i.deleted && i.kind === 'para_vender' && Number(i.stock) > 0)
+    .map(i => `- ${i.name}: disponible (${i.stock} en stock) | Precio: $${Number(i.salePrice || 0).toFixed(2)} USDT${i.extraDetail || i.notes ? ` | ${i.extraDetail || i.notes}` : ''}`)
+    .join('\n');
+  const outOfStock = stockItems
+    .filter(i => !i.deleted && i.kind === 'para_vender' && Number(i.stock) <= 0)
+    .map(i => `- ${i.name} (agotado temporalmente)`)
     .join('\n');
   const faq = knowledgeBaseFaq.map(f => `P: ${f.question}\nR: ${f.answer}`).join('\n\n');
   const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
@@ -3030,7 +3282,7 @@ function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botCo
       const labor = Number(s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0)).toFixed(2);
       const total = Number(s.totalCost !== undefined ? s.totalCost : labor).toFixed(2);
       const customMsg = s.customMessage ? ` | Mensaje oficial personalizado para responder: "${s.customMessage}"` : '';
-      return `- ${s.serviceName}: Presupuesto $${total} USD (Mano de obra $${labor} USD, Insumos: ${insList})${customMsg}`;
+      return `- ${s.serviceName}: Presupuesto $${total} USDT (Mano de obra $${labor} USD, Incluye: ${insList})${customMsg}`;
     })
     .join('\n');
 
@@ -3042,10 +3294,10 @@ ${botConfig.customAiRules}
   const rateParalelo = Number(rates?.paralelo || exchangeRate || 1000);
   const rateBcv = Number(rates?.bcv || 890);
 
-  return `Eres el asistente oficial de atención al cliente de Doomlater.
-Nos especializamos en consolas de videojuegos (PlayStation, Nintendo, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
-Responde siempre en español, con tono amable, cálido, profesional y completo.
-REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final.
+  return `Eres el asistente oficial de ventas y atención al cliente de Doomlater.
+Nos especializamos en consolas de videojuegos (PlayStation, Nintendo Switch, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
+Responde siempre en español, con tono amable, cálido, ágil, profesional y resolutivo, enfocado en cerrar la venta o agendar el servicio de principio a fin sin necesitar intervención humana salvo en los casos estrictos indicados abajo.
+REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final o emoji apropiado.
 No digas que eres una IA salvo que te lo pregunten directamente.
 ${customRules}
 === INFORMACIÓN Y PREGUNTAS FRECUENTES ===
@@ -3061,52 +3313,53 @@ ${pm}
 === SERVICIOS TÉCNICOS Y PRESUPUESTOS OFICIALES ===
 ${services || '(Consulta de presupuestos técnicos con el equipo)'}
 
-=== STOCK DISPONIBLE ACTUAL ===
-${stock || '(Catálogo general de consolas, accesorios y servicio técnico bajo consulta de modelo)'}
+=== PRODUCTOS PARA LA VENTA EN STOCK ACTUAL ===
+${stock || '(Sin productos físicos cargados en inventario comercial)'}
+${outOfStock ? `\n=== PRODUCTOS AGOTADOS TEMPORALMENTE (NO VENDER COMO DISPONIBLES) ===\n${outOfStock}` : ''}
 
-Instrucciones de respuesta y comportamiento:
-0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA): Habla SIEMPRE en nombre de "el equipo", "nuestro equipo técnico" o "el equipo de Doomlater". NUNCA menciones nombres propios de personas, dueños o técnicos (como Anthony o Sebastián) a los clientes bajo ninguna circunstancia.
-1. Saludos o bienvenida: Saluda con entusiasmo, calidez y presenta brevemente lo que ofrece Doomlater (consolas de videojuegos, accesorios y servicio técnico especializado). LOS SALUDOS, BIENVENIDAS Y MENSAJES DE CORTESÍA NUNCA SON PREGUNTAS SIN RESPUESTA Y BAJO NINGUNA CIRCUNSTANCIA DEBEN LLEVAR [FLAG_REQUIERE_HUMANO].
-2. PROHIBICIÓN ESTRICTA DE LA PALABRA "ALERTA": ¡BAJO NINGUNA CIRCUNSTANCIA ESCRIBAS LA PALABRA "Alerta" NI AGREGUES COLETILLAS COMO "Alerta" O "Doom Alert" AL FINAL O DENTRO DE TUS MENSAJES DIRIGIDOS A LOS CLIENTES! Toda respuesta al cliente debe ser 100% limpia y natural.
-3. PRESUPUESTO EN BOLÍVARES Y CONVERSIÓN BCV (MENSAJE APARTE TRAS DATOS DE PAGO):
-   - Todos los precios base oficiales de productos y servicios están fijados en USD / USDT (ej: Cargador $5 USDT, etc.).
-   - REGLA CONDICIONAL ESTRICTA: SOLO debes calcular y enviar el desglose del monto si el cliente YA cotizó, pidió o confirmó que seguro quiere un producto o servicio específico. Si el cliente únicamente preguntó de forma genérica qué métodos de pago tenemos o números de cuenta y NO ha pedido nada ni confirmado un pedido, ENVÍA ÚNICAMENTE los métodos de pago y NO envíes ningún mensaje de conversión ni monto.
-   - Si el cliente SÍ tiene un pedido o cotización activa:
-     1. Primero redacta los datos de pago oficiales requeridos.
-     2. Coloca obligatoriamente la etiqueta [SEPARADOR_MENSAJE].
-     3. En el segundo mensaje, calcula y envía el presupuesto con la fórmula oficial:
-        Monto en Bs = Precio en USDT * ${rateParalelo.toFixed(2)} Bs/USDT.
-        Monto en $ a tasa BCV = Monto en Bs / ${rateBcv.toFixed(2)} Bs/USD.
-        Formato exacto:
-        📌 *Detalle de tu Pedido:*
-        • Monto a transferir en Bs: *Bs. ${(montoUsdt => (montoUsdt * rateParalelo).toFixed(2))(5)}*
-        • Monto en $ (a tasa oficial BCV): *$${(montoUsdt => ((montoUsdt * rateParalelo) / rateBcv).toFixed(2))(5)}*
-        • Precio base en USDT: *5.00 USDT*
+Instrucciones de cierre autónomo y comportamiento:
+0. REGLA ESTRICTA DE IDENTIDAD (OBLIGATORIA):
+   - La empresa se llama única y exclusivamente *Doomlater*.
+   - Habla SIEMPRE en nombre de "nuestro equipo", "nuestro equipo técnico" o "el equipo de Doomlater". NUNCA menciones nombres propios (como Anthony o Sebastián) a los clientes.
+1. Saludos, cortesía y seguimiento natural:
+   - Saluda con calidez y pregunta en qué consola, accesorio o servicio técnico puedes ayudarle.
+   - Saludos, agradecimientos ("gracias", "dale", "ok", "perfecto", "entendido") y despedidas NUNCA llevan [FLAG_REQUIERE_HUMANO].
+2. PROHIBICIÓN ESTRICTA DE LA PALABRA "ALERTA":
+   - ¡BAJO NINGUNA CIRCUNSTANCIA escribas la palabra "Alerta" ni "Doom Alert" en tus mensajes al cliente!
+3. FLUJO AUTÓNOMO DE CIERRE DE VENTA (DE PRINCIPIO A FIN):
+   - Paso A (Cotización): Al informar el precio de un producto en stock o servicio técnico oficial, invita cordialmente al cliente a concretar preguntándole si desea adquirirlo/agendarlo y qué método de pago prefiere (Pago Móvil, Binance USDT o Efectivo $) o si prefiere entrega gratuita en *La Previsora* / *CC El Líder*.
+   - Paso B (Si elige Efectivo $): Indícale amablemente que aceptamos efectivo en divisas en buen estado al momento de la entrega personal gratuita en *La Previsora* o *CC El Líder*, y pregúntale qué punto, día y hora le conviene para agendarlo enseguida (NO uses ninguna etiqueta de alerta todavía mientras solo estés preguntando día/hora).
+   - Paso C (Si pide datos de pago / elige Pago Móvil o Binance):
+     • REGLA CONDICIONAL ESTRICTA: Si el cliente SOLO preguntó de forma genérica qué métodos de pago aceptamos y AÚN NO ha elegido ni cotizado un producto o servicio concreto, envía ÚNICAMENTE los métodos de pago oficiales SIN [SEPARADOR_MENSAJE] ni monto.
+     • Si el cliente SÍ tiene un producto o servicio concreto cotizado o confirmado en la conversación y pide pagar o saber cuánto es en Bolívares / BCV:
+       1. En la primera parte escribe los datos oficiales de pago (Pago Móvil y/o Binance según solicitó).
+       2. Escribe exactamente la etiqueta [SEPARADOR_MENSAJE] y al final incluye [MONTO_ORDEN_USDT: <numero_total_en_usdt>] (ejemplo: [MONTO_ORDEN_USDT: 5] o [MONTO_ORDEN_USDT: 100]; si lleva varias unidades multiplica cantidad por precio unitario).
+       3. Después de [SEPARADOR_MENSAJE], nuestro sistema formateará automáticamente al centavo el desglose exacto en Bs (multiplicado por ${rateParalelo.toFixed(2)}), en $ a tasa BCV (dividido entre ${rateBcv.toFixed(2)}) y en USDT.
 4. COORDINACIÓN DE ENTREGA EN PERSONA O DELIVERY:
-   - Puntos de encuentro gratuitos: La Previsora y CC El Líder.
-   - Si el cliente coordina entrega personal en La Previsora o CC El Líder (ej: "Previsora mañana a las 2pm" o en Líder):
-     Confirma cordialmente que el equipo estará coordinando la entrega para ese lugar, fecha y hora, y coloca al final la etiqueta [FLAG_COORDINACION_ENTREGA]. Recuerda: NO coloques la palabra "Alerta".
-   - Si el cliente solicita delivery o entrega fuera de las zonas gratuitas (a domicilio u otra zona de la ciudad):
-     Indica amablemente que con gusto se le coordina el delivery y que nuestro equipo calculará la tarifa del servicio para confirmársela enseguida 🙌. Coloca la etiqueta [FLAG_DELIVERY_EXTERNO: <zona>].
+   - Puntos de encuentro gratuitos: *La Previsora* (Sabana Grande) y *CC El Líder* (La California). También realizamos envíos nacionales cobro en destino por MRW, Zoom y Tealca.
+   - Si el cliente confirma lugar + día/hora en La Previsora o CC El Líder (ej: "En La Previsora mañana a las 2pm"): confirma cordialmente que nuestro equipo queda agendado para ese punto, día y hora, y coloca al final [FLAG_COORDINACION_ENTREGA].
+   - Si el cliente solicita delivery a domicilio o en otra zona fuera de La Previsora / CC El Líder: indícale amablemente que con gusto coordinamos el delivery y que nuestro equipo calculará la tarifa exacta para su zona enseguida 🙌, y coloca al final [FLAG_DELIVERY_EXTERNO: <zona indicada>].
 5. REPORTE DE PAGO / COMPROBANTE:
-   - Si el cliente envía una imagen o comprobante de pago, indica:
-     "¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌"
-     y finaliza obligatoriamente tu mensaje con [FLAG_PAGO_REPORTADO].
+   - Si el cliente envía comprobante o avisa que ya realizó el pago, responde:
+     "¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌"
+     y coloca al final [FLAG_PAGO_REPORTADO].
 6. OFERTAS DE VENTA DE CONSOLAS O EQUIPOS USADOS POR PARTE DEL CLIENTE:
-   - Si el cliente escribe ofreciendo vender una consola, accesorio o equipo:
-     Responde cordialmente: "¡Excelente! Con gusto evaluamos tu equipo. Por favor indícanos el modelo exacto, estado y accesorios con los que viene; nuestro equipo estará verificándolo para darte una cotización en breve 🙌" y finaliza con la etiqueta [FLAG_VENTA_EQUIPO].
+   - Si el cliente ofrece VENDER su consola, juego o equipo (o darlo como parte de pago):
+     Responde cordialmente: "¡Excelente! Con gusto evaluamos tu equipo. Por favor indícanos el modelo exacto, estado físico/funcional y accesorios con los que cuenta; nuestro equipo lo estará verificando para darte una cotización en breve 🙌" y finaliza con [FLAG_VENTA_EQUIPO].
 7. TRATO ANTE INSULTOS O AGRESIVIDAD:
-   - Si el cliente insulta, usa malas palabras o se muestra agresivo, contesta siempre de manera impecablemente respetuosa, educada, con excelente léxico y calma profesional. Nunca respondas con hostilidad ni ironía.
-8. Servicios Técnicos (Pestaña Servicios): Cuando un cliente consulte por un servicio técnico de la lista oficial (por ejemplo magia o chipeo para Switch OLED, V1, V2, Lite, mantenimiento, etc.):
-   - Si el servicio cuenta con un "mensaje oficial personalizado para responder", ENVÍA OBLIGATORIAMENTE ESE MENSAJE PERSONALIZADO de forma íntegra y exacta, sin modificar precios ni recortar información.
-   - NUNCA uses [FLAG_REQUIERE_HUMANO] para servicios que ya forman parte de la lista oficial.
-9. REGLA ESTRICTA DE PREGUNTAS SIN RESPUESTA O FUERA DE CATÁLOGO:
-   - Saludos, agradecimientos ("gracias", "muchas gracias"), confirmaciones ("ok", "dale", "perfecto") y preguntas de cortesía NUNCA son preguntas sin respuesta. Responde amablemente y NUNCA uses [FLAG_REQUIERE_HUMANO].
-   - Si la consulta ya está respondida en Preguntas Frecuentes, Métodos de Pago, Servicios Técnicos o Stock, NUNCA uses [FLAG_REQUIERE_HUMANO].
-   - ÚNICAMENTE si el cliente hace una PREGUNTA ESPECÍFICA sobre un producto, consola o servicio que NO existe en el catálogo ni en la base de datos: responde con amabilidad indicando que consultarás con el equipo técnico para brindarle respuesta exacta y coloca obligatoriamente al final la etiqueta [FLAG_REQUIERE_HUMANO].
-10. Productos en stock: Si el producto está en la lista de stock, informa el precio y disponibilidad. Si preguntan por un modelo que no está en stock, infórmale con amabilidad que consultarás con los técnicos y finaliza con [FLAG_REQUIERE_HUMANO].
-11. Reglas de Negocio y Descuentos: NUNCA ofrezcas, prometas ni admitas ningún tipo de descuento o rebaja en productos ni servicios bajo ninguna circunstancia. Todos los precios son fijos.
-12. Información confidencial: Si preguntan cuánto dinero tiene la empresa, saldos bancarios o márgenes internos, indícales con cortesía que es información confidencial administrativa y ofréceles información de productos o servicios.`;
+   - Si el cliente insulta o escribe con hostilidad, responde SIEMPRE con serenidad absoluta, educación impecable y léxico de alto nivel profesional.
+8. SERVICIOS TÉCNICOS OFICIALES (CON Y SIN MEMORIA):
+   - Cuando consulten por chipeo/magia (Switch OLED, Lite, V1/V2) o mantenimiento:
+     • Si el cliente dice que YA TIENE su propia memoria SD / pide solo instalación sin memoria, usa el servicio "(SOLO)" correspondiente.
+     • Si pregunta por mejora a memoria de 256GB, suma el adicional indicado en Preguntas Frecuentes (+$15 USDT).
+     • Si el servicio tiene un "Mensaje oficial personalizado para responder", úsalo respetando íntegramente sus precios y condiciones.
+     • NUNCA uses [FLAG_REQUIERE_HUMANO] para servicios que están en la lista oficial o en las FAQs.
+9. CUÁNDO LLAMAR A UN HUMANO ([FLAG_REQUIERE_HUMANO]):
+   - NUNCA uses [FLAG_REQUIERE_HUMANO] para dudas ya cubiertas en Stock, Servicios, FAQs, garantía, horarios, puntos de entrega, envíos nacionales o métodos de pago.
+   - ÚNICAMENTE usa [FLAG_REQUIERE_HUMANO] cuando el cliente pregunte por un producto agotado/inexistente en el catálogo o una falla técnica muy específica que NO esté en Servicios ni FAQs, indicando amablemente que consultarás con nuestro equipo técnico para confirmarle enseguida.
+10. PRECIOS FIJOS Y CONFIDENCIALIDAD:
+   - NUNCA ofrezcas ni aceptes descuentos o rebajas; todos los precios son fijos.
+   - NUNCA reveles saldos, ganancias, márgenes ni insumos internos de taller.`;
 }
 
 function parseAIResponseFlags(text) {
@@ -3118,18 +3371,32 @@ function parseAIResponseFlags(text) {
   const deliveryExternMatch = clean.match(/\[FLAG_DELIVERY_EXTERNO:\s*([^\]]+)\]/i);
   const deliveryExternalZone = deliveryExternMatch ? deliveryExternMatch[1].trim() : null;
 
+  let orderAmountUsdt = null;
+  const montoTagMatch = clean.match(/\[MONTO_ORDEN_USDT:\s*\$?([\d.,]+)\]/i);
+  if (montoTagMatch) {
+    const parsedAmt = parseFloat(String(montoTagMatch[1]).replace(',', '.'));
+    if (Number.isFinite(parsedAmt) && parsedAmt > 0) orderAmountUsdt = parsedAmt;
+  } else if (clean.includes('[SEPARADOR_MENSAJE]')) {
+    const fallbackUsdtMatch = clean.match(/Precio\s+base\s+en\s+USDT:\s*\*?\$?([\d.,]+)\s*USDT/i);
+    if (fallbackUsdtMatch) {
+      const parsedAmt = parseFloat(String(fallbackUsdtMatch[1]).replace(',', '.'));
+      if (Number.isFinite(parsedAmt) && parsedAmt > 0) orderAmountUsdt = parsedAmt;
+    }
+  }
+
   clean = clean
     .replace(/\[FLAG_PAGO_REPORTADO\]/g, '')
     .replace(/\[FLAG_REQUIERE_HUMANO\]/g, '')
     .replace(/\[FLAG_COORDINACION_ENTREGA\]/g, '')
     .replace(/\[FLAG_VENTA_EQUIPO\]/g, '')
     .replace(/\[FLAG_DELIVERY_EXTERNO:[^\]]+\]/g, '')
+    .replace(/\[MONTO_ORDEN_USDT:[^\]]+\]/gi, '')
     .trim();
 
   // Limpieza estricta: retirar cualquier residuo de palabra "Alerta", ". Alerta", "Alerta.", etc.
   clean = clean.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|ALERTA)[\.\s]*$/i, '.').trim();
   clean = clean.replace(/\.\s*\.$/, '.');
-  return { reply: clean, isPayment, needsHuman, isCoordination, isEquipmentSale, deliveryExternalZone };
+  return { reply: clean, isPayment, needsHuman, isCoordination, isEquipmentSale, deliveryExternalZone, orderAmountUsdt };
 }
 
 /**
@@ -3284,9 +3551,23 @@ function parseCoordinationDetails(text) {
   };
 }
 
+function isClientOfferingEquipmentForSale(text) {
+  if (!text || typeof text !== 'string') return false;
+  const clean = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return /(?:les?\s*vendo|te\s*vendo|quiero\s*vender(?:les|te)?|estoy\s*vendiendo|(?:tengo|poseo)\s*(?:una?|mi)\s*(?:ps[2345]|play\s*(?:station)?\s*[2345]?|switch|nintendo|xbox|consola|control|wii|3ds|psp|vita)[^?.!]{0,45}(?:en\s*venta|para\s*vender|por\s*si\s*(?:la\s*)?compran)|compran\s*(?:consolas?|ps[2345]|switch|xbox|equipos?|controles?|juegos?\s*usados?)|aceptan\s*(?:consolas?|ps[2345]|switch|xbox|equipos?)?\s*como\s*parte\s*de\s*pago)/i.test(clean);
+}
+
 async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
   // Respuesta inmediata para saludos simples (sin necesidad de llamar a la API ni alertar)
   if (!mediaAttachment && isGreetingOrSmallTalk(userMessage)) {
+    const isThanks = /^(?:gracias|muchas gracias|vale|ok|okay|dale|listo|perfecto|entendido|graciass?)/i.test(String(userMessage || '').trim());
+    if (isThanks) {
+      return {
+        reply: '¡A la orden! Con muchísimo gusto 🙌 Si deseas concretar tu pedido o tienes cualquier otra consulta sobre nuestras consolas y servicios técnicos, aquí estamos para ayudarte.',
+        isPayment: false,
+        needsHuman: false
+      };
+    }
     return {
       reply: '¡Hola! Bienvenido a Doomlater 🎮. Con gusto te atendemos. ¿En qué producto, consola o servicio técnico podemos ayudarte hoy? 🙌',
       isPayment: false,
@@ -3294,9 +3575,13 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
     };
   }
 
-  // Respuesta inmediata con el mensaje personalizado si es consulta directa de un servicio técnico configurado
+  // Hidratar historial desde Firebase si Render se reinició recientemente
+  await ensureConvHistoryLoaded(convId);
+
+  // Respuesta inmediata con el mensaje personalizado SOLO si es consulta simple del servicio (sin preguntas compuestas de pago, 256gb, entrega, etc.)
+  const hasCompoundFollowup = /(?:256|512|pago|efectivo|binance|bol[ií]vares|\bbs\b|previsora|l[ií]der|delivery|garant[ií]a|env[ií]o|mrw|zoom|tealca|cu[aá]nto\s*tarda|tiempo|quiero\s*hacerlo|agendar)/i.test(String(userMessage || ''));
   const directService = findServiceMatch(userMessage, ctx.botConfig?.serviceInsumosMap || []);
-  if (!mediaAttachment && directService && directService.customMessage && directService.customMessage.trim() && String(userMessage || '').trim().length < 90) {
+  if (!mediaAttachment && !hasCompoundFollowup && !isClientOfferingEquipmentForSale(userMessage) && directService && directService.customMessage && directService.customMessage.trim() && String(userMessage || '').trim().length < 90) {
     return { reply: directService.customMessage.trim(), isPayment: false, needsHuman: false };
   }
 
@@ -3304,7 +3589,7 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
   if (!apiKey) return fallbackRuleBasedBot(userMessage, ctx);
 
   const history = (convHistory.get(convId) || []).slice(-10);
-  
+
   // Merge consecutive turns with same role so Gemini alternating turn rule is NEVER violated
   const contents = [];
   for (const h of history) {
@@ -3365,7 +3650,7 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: buildSystemPrompt(ctx) }] },
           contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 1024 }
+          generationConfig: { temperature: 0.25, maxOutputTokens: 1024 }
         })
       });
       if (res.status === 404) continue;
@@ -3375,7 +3660,14 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
       }
       const data = await res.json();
       const reply = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-      if (reply) return parseAIResponseFlags(reply);
+      if (reply) {
+        const parsed = parseAIResponseFlags(reply);
+        if (isClientOfferingEquipmentForSale(userMessage)) {
+          parsed.isEquipmentSale = true;
+          parsed.needsHuman = true;
+        }
+        return parsed;
+      }
     } catch (err) {
       logger.error({ model, err: err.message }, 'Gemini error');
       continue;
@@ -3414,15 +3706,25 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
     };
   }
 
+  // 2.5. Cliente ofrece vender su consola o equipo
+  if (isClientOfferingEquipmentForSale(userMessage)) {
+    return {
+      reply: '¡Excelente! Con gusto evaluamos tu equipo. Por favor indícanos el modelo exacto, estado físico/funcional y accesorios con los que cuenta; nuestro equipo lo estará verificando para darte una cotización en breve 🙌',
+      isPayment: false,
+      needsHuman: true,
+      isEquipmentSale: true
+    };
+  }
+
   // 3. Comprobantes de pago
   if (/(ya pagu|ya pagué|transfer|comprobante|capture|pago realizado)/.test(msg)) {
-    return { reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌', isPayment: true, needsHuman: true };
+    return { reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌', isPayment: true, needsHuman: true };
   }
 
   // 4. Métodos de pago
   if (/(m[eé]todo|c[oó]mo pag|datos de pago|pago m[oó]vil|binance|zelle|cuenta)/.test(msg)) {
     const pm = paymentMethods.map(p => `• ${p.name}: ${p.details}`).join('\n');
-    return { reply: `¡Claro! Nuestros métodos de pago son:\n\n${pm || '• Pago Móvil\n• Binance Pay\n• Efectivo'}\n\nCuando pagues, envíanos el comprobante por aquí.`, isPayment: false, needsHuman: false };
+    return { reply: `¡Claro! Nuestros métodos de pago son:\n\n${pm || '• Pago Móvil\n• Binance Pay\n• Efectivo'}\n\nCuando pagues, envíanos el comprobante por aquí 🙌`, isPayment: false, needsHuman: false };
   }
 
   // 5. Servicios Técnicos (Pestaña "Servicios"): Usar mensaje personalizado si está configurado
@@ -3437,7 +3739,7 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
       : (matchedService.defaultInsumoName || 'Insumos de taller');
     const total = matchedService.totalCost !== undefined ? matchedService.totalCost : (matchedService.defaultLaborPrice || 0);
     return {
-      reply: `¡Hola! El presupuesto para *${matchedService.serviceName}* es de *$${Number(total || 0).toFixed(2)} USD* (Incluye: ${insList}). ¿Te gustaría agendar cita o traer tu consola a nuestro local comercial? ✨`,
+      reply: `¡Hola! El presupuesto para *${matchedService.serviceName}* es de *$${Number(total || 0).toFixed(2)} USDT* (Incluye: ${insList}). ¿Te gustaría agendar tu entrega en La Previsora o CC El Líder? ✨`,
       isPayment: false,
       needsHuman: false
     };
@@ -3449,10 +3751,13 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
     return { reply: matchedFaq.answer, isPayment: false, needsHuman: false };
   }
 
-  // 7. Productos en stock
-  const item = stockItems.find(i => !i.deleted && i.name && msg.includes(String(i.name).toLowerCase()));
+  // 7. Productos comerciales en stock (estrictamente para_vender)
+  const item = stockItems.find(i => !i.deleted && i.kind === 'para_vender' && i.name && msg.includes(String(i.name).toLowerCase()));
   if (item) {
-    return { reply: `¡Sí! Tenemos ${item.name} (${item.stock} disponible(s)) a $${Number(item.salePrice || 0).toFixed(2)}. ¿Te gustaría adquirirlo?`, isPayment: false, needsHuman: false };
+    if (Number(item.stock) > 0) {
+      return { reply: `¡Sí! Tenemos *${item.name}* disponible (${item.stock} en stock) a *$${Number(item.salePrice || 0).toFixed(2)} USDT*. ¿Deseas adquirirlo con Pago Móvil, Binance o Efectivo? 🙌`, isPayment: false, needsHuman: false };
+    }
+    return { reply: `Por el momento *${item.name}* se encuentra agotado temporalmente, pero ya le consulto a nuestro equipo si nos llega nueva mercancía pronto 🙌`, isPayment: false, needsHuman: true };
   }
 
   // 8. Fallback: SOLO si es una pregunta explícita que no sabemos responder se alerta al equipo
@@ -3701,15 +4006,33 @@ async function recordOutgoing(convId, { id, text, sentBy = 'bot', deliveryStatus
 /* Agrupa mensajes seguidos del cliente y responde una sola vez tras el retraso "escribiendo..." */
 const replyQueue = new Map();
 function scheduleAiReply(convId, text, ctx) {
-  const q = replyQueue.get(convId) || { texts: [], hasImage: false };
+  const q = replyQueue.get(convId) || { texts: [], hasImage: false, ctx: null };
   clearTimeout(q.timer);
   if (text) q.texts.push(text);
   q.hasImage = q.hasImage || Boolean(ctx.hasImage);
-  q.ctx = ctx;
+  const prevCtx = q.ctx || {};
+  const incomingIsPay = Boolean(ctx.paymentAnalysis && ctx.paymentAnalysis.isPayment);
+  const prevIsPay = Boolean(prevCtx.paymentAnalysis && prevCtx.paymentAnalysis.isPayment);
+
+  q.ctx = {
+    ...prevCtx,
+    ...ctx,
+    wasBrandNewConv: Boolean(prevCtx.wasBrandNewConv || ctx.wasBrandNewConv),
+    previousExpectedBs: prevCtx.previousExpectedBs || ctx.previousExpectedBs || 0,
+    previousExpectedUsdt: prevCtx.previousExpectedUsdt || ctx.previousExpectedUsdt || 0,
+    imageBuffer: ctx.imageBuffer || prevCtx.imageBuffer || null,
+    imageMime: ctx.imageBuffer ? ctx.imageMime : (prevCtx.imageMime || ctx.imageMime || 'image/jpeg'),
+    paymentAnalysis: incomingIsPay
+      ? ctx.paymentAnalysis
+      : (prevIsPay ? prevCtx.paymentAnalysis : (ctx.paymentAnalysis || prevCtx.paymentAnalysis || null)),
+    destWalletId: incomingIsPay ? ctx.destWalletId : (prevIsPay ? prevCtx.destWalletId : (ctx.destWalletId || prevCtx.destWalletId)),
+    destWalletName: incomingIsPay ? ctx.destWalletName : (prevIsPay ? prevCtx.destWalletName : (ctx.destWalletName || prevCtx.destWalletName))
+  };
+
   q.timer = setTimeout(() => {
     replyQueue.delete(convId);
     runAiReply(convId, q).catch(err => logger.error({ err: err.message, convId }, 'Error respondiendo con IA'));
-  }, ctx.delayMs);
+  }, q.ctx.delayMs);
   replyQueue.set(convId, q);
 }
 
@@ -3738,8 +4061,9 @@ function validateReceiptTargetAccount(pa) {
 function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services = []) {
   const allText = (historyTexts || []).join(' ').toLowerCase();
 
-  for (const it of stockItems || []) {
-    if (!it || it.deleted) continue;
+  // Priorizar estrictamente productos comerciales para la venta (nunca insumos internos de taller)
+  const retailItems = (stockItems || []).filter(it => it && !it.deleted && it.kind === 'para_vender');
+  for (const it of retailItems) {
     const nameLow = String(it.name || '').toLowerCase();
     const cleanName = nameLow.replace(/[^a-z0-9]/g, ' ');
     const words = cleanName.split(/\s+/).filter(w => w.length >= 4);
@@ -3754,12 +4078,20 @@ function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services 
     return 'Cargador (Precio: $5.00 USD c/u)';
   }
 
+  // Buscar primero con findServiceMatch para respetar variantes con/sin memoria (SOLO)
+  const matchedSrv = findServiceMatch(allText, services || []);
+  if (matchedSrv) {
+    const srvPrice = Number(matchedSrv.totalCost !== undefined ? matchedSrv.totalCost : (matchedSrv.laborPrice !== undefined ? matchedSrv.laborPrice : (matchedSrv.defaultLaborPrice || 0))).toFixed(2);
+    return `Servicio Técnico: ${matchedSrv.serviceName} ($${srvPrice} USD)`;
+  }
+
   for (const s of services || []) {
     if (!s) continue;
     const sName = String(s.serviceName || '').toLowerCase();
     const words = sName.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length >= 4);
     if (words.some(w => allText.includes(w))) {
-      return `Servicio Técnico: ${s.serviceName} ($${Number(s.defaultLaborPrice || 0).toFixed(2)} USD)`;
+      const srvPrice = Number(s.totalCost !== undefined ? s.totalCost : (s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0))).toFixed(2);
+      return `Servicio Técnico: ${s.serviceName} ($${srvPrice} USD)`;
     }
   }
   if (/(magia|chipeo|instalaci[oó]n|mantenimiento)/i.test(allText)) {
@@ -3782,10 +4114,11 @@ async function runAiReply(convId, q) {
       loadAdminExecutiveContext()
     ]);
   } else {
-    // Revisa interruptores antes de responder a clientes
+    // Revisa interruptores e hidrata historial antes de responder a clientes
     [conv, aiCtx] = await Promise.all([
       fb('GET', ws(`botConversations/${convId}`)),
-      loadAiContext()
+      loadAiContext(),
+      ensureConvHistoryLoaded(convId)
     ]);
     if (!conv || conv.deleted) return;
     if (aiCtx.botConfig.globalBotEnabled === false || conv.botActive === false) {
@@ -3797,28 +4130,22 @@ async function runAiReply(convId, q) {
   const userText = q.texts.join('\n').trim();
   const mediaAttachment = q.ctx.imageBuffer ? { buffer: q.ctx.imageBuffer, mimeType: q.ctx.imageMime } : null;
 
-  const isBrandNewChat = !conv || !conv.lastMessageAt || (convHistory.get(convId) || []).length <= 1;
+  const prevBotTurns = (convHistory.get(convId) || []).filter(h => h.role === 'bot').length;
+  const isBrandNewChat = Boolean(q.ctx.wasBrandNewConv) || (prevBotTurns === 0 && (!conv?.createdAt || Date.now() - Number(conv.createdAt) < 45000));
   const onlyPhotosNoText = q.hasImage && (!userText || !/[a-zA-Z0-9]{3,}/.test(userText));
-  const isBrandNewPhotoChat = !q.ctx.isPartner && isBrandNewChat && onlyPhotosNoText;
+  const isBrandNewPhotoChat = !q.ctx.isPartner && isBrandNewChat && onlyPhotosNoText && !(q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment);
 
   let result;
   if (q.ctx.isPartner) {
     result = await queryAdminAI(convId, userText || 'hola', adminCtx, q.ctx.partnerName || 'Socio', mediaAttachment);
-  } else if (isBrandNewPhotoChat) {
-    // Chat totalmente nuevo enviando fotos sin texto tras el debounce de 2.5s
-    result = {
-      reply: '¡Hola! Te damos una cordial bienvenida a Doomlater 🎮. Hemos recibido tus fotos; en breve uno de nuestros asesores técnicos las estará revisando para atenderte. Si deseas comentarnos alguna duda o lo que necesitas, con gusto puedes escribirnos mientras te atendemos 🙌',
-      needsHuman: true,
-      isBrandNewPhotoNotice: true
-    };
   } else if (q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isPayment) {
     const pa = q.ctx.paymentAnalysis;
     const acctCheck = validateReceiptTargetAccount(pa);
     let replyText = '';
     if (!acctCheck.matched) {
-      replyText = `Hemos recibido tu comprobante, pero notamos que los datos destino (cédula/teléfono/banco) no parecen coincidir con las cuentas oficiales de Doomlater. El equipo estará revisando la transacción para verificarla contigo en breve 🙌`;
+      replyText = `Hemos recibido tu comprobante, pero notamos que los datos destino (cédula/teléfono/banco) no parecen coincidir con las cuentas oficiales de Doomlater. Nuestro equipo estará revisando la transacción para verificarla contigo en breve 🙌`;
     } else {
-      replyText = `¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌`;
+      replyText = aiCtx?.botConfig?.paymentReceiptReplyMessage || `¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌`;
     }
 
     result = {
@@ -3826,6 +4153,13 @@ async function runAiReply(convId, q) {
       isPayment: true,
       needsHuman: true,
       acctCheck
+    };
+  } else if (isBrandNewPhotoChat) {
+    // Chat totalmente nuevo enviando fotos sin texto tras el debounce de 2.5s
+    result = {
+      reply: '¡Hola! Te damos una cordial bienvenida a Doomlater 🎮. Hemos recibido tus fotos; en breve uno de nuestros asesores técnicos las estará revisando para atenderte. Si deseas comentarnos alguna duda o lo que necesitas, con gusto puedes escribirnos mientras te atendemos 🙌',
+      needsHuman: true,
+      isBrandNewPhotoNotice: true
     };
   } else if (!q.ctx.isPartner && q.hasImage && q.ctx.paymentAnalysis && q.ctx.paymentAnalysis.isRelevant === false && !q.ctx.paymentAnalysis.isLocationOrMeetingPlace && !q.ctx.paymentAnalysis.isConsoleOrEquipment && (!userText || userText.length < 5)) {
     // Imagen sin correlación alguna con pagos, lugares ni consolas: No responder y alertar a los socios
@@ -3837,7 +4171,7 @@ async function runAiReply(convId, q) {
     };
   } else if (q.hasImage && !/[a-z]{4,}/i.test(userText) && (!mediaAttachment || !mediaAttachment.buffer)) {
     result = {
-      reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. El equipo estará revisando la transacción y te confirmamos en breve 🙌',
+      reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌',
       isPayment: true,
       needsHuman: true
     };
@@ -3854,9 +4188,38 @@ async function runAiReply(convId, q) {
 
   // Saludos, bienvenidas, agradecimientos o confirmaciones de cortesía NUNCA son preguntas sin respuesta ni requieren humano
   const isGreetingOrPolite = isGreetingOrSmallTalk(userText);
-  if (isGreetingOrPolite) {
+  if (isGreetingOrPolite && !q.hasImage) {
     result.needsHuman = false;
     result.isPayment = false;
+  }
+
+  // Cálculo determinista exacto en JS cuando hay orden cotizada para pago (Bs / BCV / USDT)
+  let quotedOrderUsdtToSave = null;
+  let quotedOrderBsToSave = null;
+  if (!q.ctx.isPartner && result.orderAmountUsdt && Number(result.orderAmountUsdt) > 0) {
+    const rateParalelo = Number(aiCtx?.rates?.paralelo || aiCtx?.exchangeRate || 1000);
+    const rateBcv = Number(aiCtx?.rates?.bcv || 890);
+    const orderUsdt = +Number(result.orderAmountUsdt).toFixed(2);
+    const exactBs = +(orderUsdt * rateParalelo).toFixed(2);
+    const exactBcv = rateBcv > 0 ? +(exactBs / rateBcv).toFixed(2) : orderUsdt;
+    quotedOrderUsdtToSave = orderUsdt;
+    quotedOrderBsToSave = exactBs;
+
+    const breakdownBlock =
+      `📌 *Detalle de tu Pedido:*\n` +
+      `• Monto a transferir en Bs: *Bs. ${exactBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
+      `• Monto en $ (a tasa oficial BCV): *$${exactBcv.toFixed(2)}*\n` +
+      `• Precio base en USDT: *${orderUsdt.toFixed(2)} USDT*\n\n` +
+      `Una vez realizado el pago, envíanos el comprobante por aquí para verificarlo enseguida 🙌`;
+
+    if (result.reply && result.reply.includes('[SEPARADOR_MENSAJE]')) {
+      const firstPart = result.reply.split('[SEPARADOR_MENSAJE]')[0].trim();
+      result.reply = firstPart ? `${firstPart}\n[SEPARADOR_MENSAJE]\n${breakdownBlock}` : breakdownBlock;
+    } else if (result.reply) {
+      result.reply = `${result.reply.trim()}\n[SEPARADOR_MENSAJE]\n${breakdownBlock}`;
+    } else {
+      result.reply = breakdownBlock;
+    }
   }
 
   // Si a una pregunta no se le sabe la respuesta y se configuró mensaje personalizado de fallback
@@ -3972,7 +4335,8 @@ async function runAiReply(convId, q) {
         `• *Plataforma:* ${platformName}\n` +
         `• *Detalle:* Chat totalmente nuevo que envió imágenes sin texto. Se le envió bienvenida y espera por un asesor.\n` +
         `💡 _El bot continúa 100% activo y responderá con normalidad a cualquier texto que el cliente envíe._`;
-      notifyPartners(brandNewAlert, `brandnew_${convId}`).catch(() => {});
+      alertedConvsTrack.add(`alert_${convId}`);
+      notifyPartners(brandNewAlert, `brandnew_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isUncorrelatedImage) {
       const uncorrAlert =
         `🚨 *DOOMLATER ALERT: Imagen no correlacionada* 🖼️\n\n` +
@@ -3980,7 +4344,8 @@ async function runAiReply(convId, q) {
         `• *Plataforma:* ${platformName}\n` +
         `• *Detalle:* El cliente envió una imagen sin correlación con pagos, lugares ni equipos: "${result.imageDescription}". No se envió respuesta automática.\n\n` +
         `👉 _El chat está marcado con alerta en la Web para revisar qué sucede._`;
-      notifyPartners(uncorrAlert, `uncorr_${convId}`).catch(() => {});
+      alertedConvsTrack.add(`alert_${convId}`);
+      notifyPartners(uncorrAlert, `uncorr_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isPayment) {
       const pa = q.ctx.paymentAnalysis || {};
       const amt = Number(pa.amount || conv.pendingPaymentAmount || 0);
@@ -3995,12 +4360,21 @@ async function runAiReply(convId, q) {
       }
 
       let montoVerifStr = '';
-      if (cur === 'VES' && Number(conv.pendingPaymentAmount) > 0) {
-        const diff = Math.abs(amt - Number(conv.pendingPaymentAmount));
+      const expectedBsToCheck = Number(q.ctx.previousExpectedBs || conv.expectedOrderBs || 0);
+      const expectedUsdtToCheck = Number(q.ctx.previousExpectedUsdt || conv.expectedOrderUsdt || 0);
+      if (cur === 'VES' && expectedBsToCheck > 0) {
+        const diff = Math.abs(amt - expectedBsToCheck);
         if (diff <= 1.50) {
-          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (Diferencia: Bs. ${diff.toFixed(2)} dentro de tolerancia ±1.50 Bs)`;
+          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (Esperado: Bs. ${expectedBsToCheck.toFixed(2)} | Dif: Bs. ${diff.toFixed(2)} dentro de ±1.50 Bs)`;
         } else {
-          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó Bs. ${amt.toFixed(2)} vs esperado Bs. ${Number(conv.pendingPaymentAmount).toFixed(2)} (Diferencia: Bs. ${diff.toFixed(2)})`;
+          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó Bs. ${amt.toFixed(2)} vs esperado Bs. ${expectedBsToCheck.toFixed(2)} (Diferencia: Bs. ${diff.toFixed(2)})`;
+        }
+      } else if (cur === 'USDT' && expectedUsdtToCheck > 0) {
+        const diffUsdt = Math.abs(amt - expectedUsdtToCheck);
+        if (diffUsdt <= 0.05) {
+          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (${expectedUsdtToCheck.toFixed(2)} USDT)`;
+        } else {
+          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó ${amt.toFixed(2)} USDT vs esperado ${expectedUsdtToCheck.toFixed(2)} USDT`;
         }
       }
 
@@ -4023,20 +4397,20 @@ async function runAiReply(convId, q) {
         `• *Motivo:* El cliente reportó un pago o envió un comprobante. Verifícalo\n` +
         `• *Qué compró:* ${queCompro}\n` +
         `${cuentaValStr}\n\n` +
-        `⚠️ _El chat está marcado con alerta en la Web. Entra a la Web para responder o verificar._\n` +
-        `💡 _O responde directamente a este WhatsApp:_\n` +
-        `*${cleanPhone} pago verificado*\n` +
-        `_para aprobarlo y quitar la alerta de la Web automáticamente._`;
+        `💡 _Toca el botón *✅ Verificar Pago* aquí abajo (o escribe *${cleanPhone} pago verificado*) para aprobarlo, registrar el ingreso y avisar al cliente automáticamente._`;
 
-      notifyPartners(alertMsg, `pay_${convId}`).catch(() => {});
+      alertedConvsTrack.add(`pay_${convId}`);
+      alertedConvsTrack.add(`alert_${convId}`);
+      notifyPartners(alertMsg, `pay_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isEquipmentSale) {
       const saleAlertMsg =
         `🎮 *DOOMLATER ALERT: Cliente ofrece vender equipo/consola* 🕹️\n\n` +
         `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
         `• *Plataforma:* ${platformName}\n` +
         `• *Mensaje del Cliente:* "${userText.slice(0, 150)}"\n\n` +
-        `💡 _El bot le indicó que el equipo estará evaluándolo para darle una cotización. Revisa el chat en la Web o WhatsApp._`;
-      notifyPartners(saleAlertMsg, `sale_${convId}`).catch(() => {});
+        `💡 _El bot le indicó que nuestro equipo estará evaluándolo para darle una cotización._`;
+      alertedConvsTrack.add(`alert_${convId}`);
+      notifyPartners(saleAlertMsg, `sale_${convId}`, { convId, cleanPhone }).catch(() => {});
       result.needsHuman = true;
     } else if (result.deliveryExternalZone) {
       const deliveryAlertMsg =
@@ -4045,9 +4419,10 @@ async function runAiReply(convId, q) {
         `• *Plataforma:* ${platformName}\n` +
         `• *Zona Solicitada:* *${result.deliveryExternalZone}*\n` +
         `• *Mensaje:* "${userText.slice(0, 120)}"\n\n` +
-        `💡 _Para cotizarle y sumarle el delivery al cliente, responde a este WhatsApp:_\n` +
+        `💡 _Toca un monto rápido abajo o escribe aquí mismo:_\n` +
         `*${cleanPhone} delivery <precio>*  (ej: *${cleanPhone} delivery 3*)`;
-      notifyPartners(deliveryAlertMsg, `delivery_${convId}`).catch(() => {});
+      alertedConvsTrack.add(`alert_${convId}`);
+      notifyPartners(deliveryAlertMsg, `delivery_${convId}`, { convId, cleanPhone }).catch(() => {});
       result.needsHuman = true;
     } else {
       // Detección precisa de coordinación de entrega (Lugar + Fecha/Hora escogida)
@@ -4068,11 +4443,11 @@ async function runAiReply(convId, q) {
           `  - *Modalidad:* ${modalidad}\n` +
           `  - *Fecha y Hora:* *${fechaHora}*\n` +
           `• *Último mensaje del Cliente:* "${userText.slice(0, 160)}"\n\n` +
-          `⚠️ _El chat está marcado con alerta de Entrega en la Web hasta que se marque como entregado el pedido._`;
+          `⚠️ _El chat queda marcado con alerta de Entrega hasta tocar "Marcar Pedido como Entregado"._`;
 
-        notifyPartners(coordAlertMsg, `coord_${convId}`).catch(() => {});
         alertedConvsTrack.add(`coord_${convId}`);
         alertedConvsTrack.add(`alert_${convId}`);
+        notifyPartners(coordAlertMsg, `coord_${convId}`, { convId, cleanPhone }).catch(() => {});
         result.needsHuman = true;
         result.isCoordination = true;
         result.deliveryLugar = lugar;
@@ -4082,10 +4457,10 @@ async function runAiReply(convId, q) {
           `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
           `• *Plataforma:* ${platformName}\n` +
           `• *Último mensaje del Cliente:* "${userText.slice(0, 140)}"\n\n` +
-          `👉 _Se requiere la intervención de un socio en el chat._`;
-        notifyPartners(alertMsg, `human_${convId}`).catch(() => {});
+          `👉 _Consulta fuera del catálogo o requiere respuesta directa de un socio._`;
         alertedConvsTrack.add(`human_${convId}`);
         alertedConvsTrack.add(`alert_${convId}`);
+        notifyPartners(alertMsg, `human_${convId}`, { convId, cleanPhone }).catch(() => {});
       }
     }
   }
@@ -4108,6 +4483,10 @@ async function runAiReply(convId, q) {
     }
     if (result.isBrandNewPhotoNotice) {
       patch.botActive = true; // El bot nunca se desactiva en este caso
+    }
+    if (quotedOrderUsdtToSave !== null && quotedOrderBsToSave !== null) {
+      patch.expectedOrderUsdt = quotedOrderUsdtToSave;
+      patch.expectedOrderBs = quotedOrderBsToSave;
     }
     if (result.isPayment) {
       patch.pendingPayment = true;
@@ -4138,7 +4517,7 @@ async function runAiReply(convId, q) {
 
 function typingDelayMs(botConfig) {
   const sec = Number(botConfig && botConfig.typingDelaySec);
-  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 1.5)) * 1000;
+  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 2.5)) * 1000;
 }
 
 /* --------------------------------------------------------------------------
@@ -4164,25 +4543,47 @@ function saveSentMessage(id, message) {
 function rememberSent(id) {
   if (!id) return;
   botSentIds.add(id);
-  if (botSentIds.size > 500) botSentIds.delete(botSentIds.values().next().value);
+  if (botSentIds.size > 2000) botSentIds.delete(botSentIds.values().next().value);
 }
+
+let lastGlobalWaSendAt = 0;
+let waSendChain = Promise.resolve();
 
 async function waSend(jid, content) {
   if (!waSock || waState !== 'connected') throw new Error('WhatsApp no está conectado en este momento.');
-  const sent = await waSock.sendMessage(jid, content);
-  rememberSent(sent?.key?.id);
-  if (sent?.key?.id && sent?.message) {
-    saveSentMessage(sent.key.id, sent.message);
-  }
-  return sent;
+  // Cola anti-ráfaga (Anti-Ban): garantiza separación humana natural entre envíos consecutivos
+  const run = async () => {
+    if (!waSock || waState !== 'connected') throw new Error('WhatsApp no está conectado en este momento.');
+    const minGapMs = 950 + Math.floor(Math.random() * 450);
+    const elapsed = Date.now() - lastGlobalWaSendAt;
+    if (elapsed < minGapMs) {
+      await new Promise(r => setTimeout(r, minGapMs - elapsed));
+    }
+    const sent = await waSock.sendMessage(jid, content);
+    lastGlobalWaSendAt = Date.now();
+    rememberSent(sent?.key?.id);
+    if (sent?.key?.id && sent?.message) {
+      saveSentMessage(sent.key.id, sent.message);
+    }
+    return sent;
+  };
+  const next = waSendChain.then(run, run);
+  waSendChain = next.catch(() => {});
+  return next;
 }
 async function waPresence(type, jid) {
   try { if (waSock && waState === 'connected' && jid) await waSock.sendPresenceUpdate(type, jid); } catch (e) {}
 }
-async function waRead(key) {
+async function waRead(key, humanDelay = false) {
   if (!waSock || waState !== 'connected' || !key) return;
   try {
-    await waSock.readMessages([key]);
+    if (humanDelay) {
+      const jitterMs = 750 + Math.floor(Math.random() * 900);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
+    if (waSock && waState === 'connected') {
+      await waSock.readMessages([key]);
+    }
   } catch (e) {}
 }
 
@@ -4351,7 +4752,7 @@ async function handleWaMessage(msg, type) {
   if (!msg.key.fromMe) {
     if (type !== 'notify' && type !== 'append') return;
     if (Date.now() - tsMs > 10 * 60 * 1000) return;
-    waRead(msg.key).catch(() => {});
+    waRead(msg.key, true).catch(() => {}); // Pausa humana realista (0.75s - 1.65s) antes del doble check azul
   }
 
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
@@ -4402,7 +4803,7 @@ async function handleWaMessage(msg, type) {
         customerName: partner ? partner.name : (targetPhone ? `+${targetPhone}` : 'Cliente WhatsApp'),
         customerPhone: targetPhone ? `+${targetPhone}` : '',
         customerJid: jid,
-        botActive: partner ? true : false,
+        botActive: true,
         needsAttention: false,
         unreadCount: 0,
         deleted: false,
@@ -4416,6 +4817,14 @@ async function handleWaMessage(msg, type) {
       await fb('PATCH', ws(`botConversations/${targetConvId}`), { deleted: false, deletedAt: null });
     }
 
+    if (text) pushHistory(targetConvId, 'bot', text);
+
+    const manualPatch = {};
+    if (!partner && existing && existing.needsAttention && !existing.pendingPayment && existing.deliveryStatus !== 'pending_delivery') {
+      manualPatch.needsAttention = false;
+      manualPatch.attentionReason = null;
+    }
+
     await recordOutgoing(targetConvId, {
       id: msgId,
       text,
@@ -4423,9 +4832,7 @@ async function handleWaMessage(msg, type) {
       deliveryStatus: 'sent',
       mediaKey,
       createdAt: tsMs || Date.now()
-    }, partner ? {} : {
-      botActive: false
-    });
+    }, manualPatch);
     return;
   }
 
@@ -4503,6 +4910,11 @@ async function handleWaMessage(msg, type) {
   logger.info({ convId: targetConvId, pushName, text }, 'WhatsApp entrante');
   pushHistory(targetConvId, 'user', caption || label);
 
+  const prevConvState = existingConvs[targetConvId] || null;
+  const wasBrandNewConv = !prevConvState;
+  const previousExpectedBs = Number(prevConvState?.expectedOrderBs || 0);
+  const previousExpectedUsdt = Number(prevConvState?.expectedOrderUsdt || 0);
+
   const incomingBase = {
     platform: 'whatsapp',
     platformAccount: 'shared',
@@ -4523,10 +4935,10 @@ async function handleWaMessage(msg, type) {
     incomingBase.pendingPaymentWalletName = destWalletName;
     incomingBase.pendingPaymentBank = paymentAnalysis.bank || '';
     incomingBase.needsAttention = true;
-    incomingBase.attentionReason = `Comprobante detectado: Ref ${paymentAnalysis.reference || 'S/N'} de ${paymentAnalysis.currency === 'VED' ? 'Bs.' : '$'} ${paymentAnalysis.amount} al número ${paymentAnalysis.targetPhoneOrId || 'N/A'}`;
+    incomingBase.attentionReason = `Comprobante detectado: Ref ${paymentAnalysis.reference || 'S/N'} de ${(paymentAnalysis.currency === 'VED' || paymentAnalysis.currency === 'VES') ? 'Bs.' : '$'} ${paymentAnalysis.amount} al número ${paymentAnalysis.targetPhoneOrId || 'N/A'}`;
   }
 
-  // 1. Detección de Stickers: Responder "¡Estamos a la orden! 🙌"
+  // 1. Detección de Stickers: Responder "¡Estamos a la orden! 🙌" con pausa humana natural
   if (ctype === 'stickerMessage' && !partner) {
     const conv = await recordIncoming({
       convId: targetConvId,
@@ -4537,7 +4949,11 @@ async function handleWaMessage(msg, type) {
 
     if (botConfig.globalBotEnabled !== false && conv.botActive !== false) {
       try {
+        if (botConfig.showTypingIndicator !== false) await waPresence('composing', jid);
+        await new Promise(r => setTimeout(r, 650 + Math.floor(Math.random() * 400)));
         await waSend(jid, { text: '¡Estamos a la orden! 🙌' });
+        await waPresence('paused', jid);
+        pushHistory(targetConvId, 'bot', '¡Estamos a la orden! 🙌');
         await recordOutgoing(targetConvId, {
           id: `bmsg_bot_${Date.now().toString(36)}_${crypto.randomBytes(2).toString('hex')}`,
           text: '¡Estamos a la orden! 🙌',
@@ -4567,17 +4983,31 @@ async function handleWaMessage(msg, type) {
         `🚨 *DOOMLATER ALERT: Archivo de una sola vez (x1)* 📸\n\n` +
         `• *Cliente:* *${pushName || targetPhone || 'Cliente'}* (+${cleanPhone})\n` +
         `• *Detalle:* El cliente envió una foto, audio o video en modo "ver una sola vez" (x1). No se envió respuesta automática al cliente.\n\n` +
-        `👉 _Revisa el chat directamente en tu WhatsApp para ver el contenido antes de que expire._`;
-      notifyPartners(voAlert, `vo_${targetConvId}`).catch(() => {});
+        `👉 _Revisa el chat directamente en tu teléfono para ver el contenido antes de que expire._`;
+      alertedConvsTrack.add(`alert_${targetConvId}`);
+      notifyPartners(voAlert, `vo_${targetConvId}`, { convId: targetConvId, cleanPhone }).catch(() => {});
       return;
     } else {
       const voAlert =
         `🚨 *DOOMLATER ALERT: Archivo de una sola vez (x1) con texto* 📸\n\n` +
         `• *Cliente:* *${pushName || targetPhone || 'Cliente'}* (+${cleanPhone})\n` +
         `• *Texto del cliente:* "${caption}"\n\n` +
-        `👉 _El bot responderá al texto con normalidad, pero revisa el archivo x1 en tu WhatsApp antes de que expire._`;
-      notifyPartners(voAlert, `vo_${targetConvId}`).catch(() => {});
+        `👉 _El bot responderá al texto con normalidad, pero revisa el archivo x1 en tu teléfono antes de que expire._`;
+      alertedConvsTrack.add(`alert_${targetConvId}`);
+      notifyPartners(voAlert, `vo_${targetConvId}`, { convId: targetConvId, cleanPhone }).catch(() => {});
     }
+  }
+
+  // 2.5. Detección de GIF animado sin texto: Registrar silenciosamente sin responder ni alertar
+  const isGifWithoutCaption = ctype === 'videoMessage' && Boolean(content?.videoMessage?.gifPlayback) && (!caption || !caption.trim());
+  if (!partner && isGifWithoutCaption) {
+    await recordIncoming({
+      convId: targetConvId,
+      base: incomingBase,
+      msg: { id: msgId, text: '🎞️ GIF', sentBy: pushName || 'Cliente', createdAt: tsMs || Date.now(), platform: 'whatsapp' },
+      label: `🎞️ ${pushName || targetPhone || 'Cliente'} (WhatsApp): GIF`
+    });
+    return;
   }
 
   // 3. Detección de Solo Emojis o Emoticonos: Registrar en la conversación pero no responder nada
@@ -4612,6 +5042,9 @@ async function handleWaMessage(msg, type) {
       paymentAnalysis: paymentAnalysis || null,
       destWalletId,
       destWalletName,
+      wasBrandNewConv,
+      previousExpectedBs,
+      previousExpectedUsdt,
       delayMs: partner ? 100 : typingDelayMs(botConfig),
       isPartner: Boolean(partner),
       partnerName: partner ? partner.name : null
@@ -4754,20 +5187,46 @@ async function handleMetaEvent(object, entry, ev) {
   const msgId = `bmsg_${platform === 'instagram' ? 'ig' : 'fb'}_${safeId(mid)}`;
   const createdAt = Number(ev.timestamp) || Date.now();
 
+  const [profile, botConfigRaw, prevMetaConv] = await Promise.all([
+    metaProfile(platform, senderId),
+    fb('GET', ws('meta/botConfig')),
+    fb('GET', ws(`botConversations/${convId}`))
+  ]);
+  const botConfig = botConfigRaw || {};
+  const apiKey = botConfig.geminiApiKey || GEMINI_API_KEY_ENV;
+
   const attachments = ev.message.attachments || [];
   let mediaKey = null;
+  let downloadedImageBuffer = null;
+  let downloadedImageMime = 'image/jpeg';
+  let paymentAnalysis = null;
+  let destWalletId = 'w_banco';
+  let destWalletName = 'Pago Móvil / Banco';
+
   const img = attachments.find(a => a.type === 'image' && a.payload?.url);
   if (img) {
     try {
       const r = await fetch(img.payload.url);
-      if (r.ok) mediaKey = await saveMedia(msgId, r.headers.get('content-type') || 'image/jpeg', Buffer.from(await r.arrayBuffer()));
+      if (r.ok) {
+        downloadedImageMime = r.headers.get('content-type') || 'image/jpeg';
+        downloadedImageBuffer = Buffer.from(await r.arrayBuffer());
+        mediaKey = await saveMedia(msgId, downloadedImageMime, downloadedImageBuffer);
+        if (platform === 'instagram' && apiKey && downloadedImageBuffer) {
+          paymentAnalysis = await analyzePaymentCaptureWithGemini(downloadedImageBuffer, downloadedImageMime, apiKey);
+          if (paymentAnalysis && paymentAnalysis.isPayment) {
+            const rawCur = String(paymentAnalysis.currency || 'USD').toUpperCase();
+            paymentAnalysis.currency = (rawCur === 'VED' || rawCur === 'VES') ? 'VES' : rawCur;
+            if (paymentAnalysis.currency === 'USDT') {
+              destWalletId = 'w_binance';
+              destWalletName = 'Binance (USDT)';
+            }
+          }
+        }
+      }
     } catch (e) {}
   }
   const caption = ev.message.text || '';
   const text = caption || (attachments.length ? `📎 ${attachments.map(a => a.type).join(', ')}` : '[Mensaje]');
-
-  const profile = await metaProfile(platform, senderId);
-  const botConfig = (await fb('GET', ws('meta/botConfig'))) || {};
 
   let platformAccount = 'shared';
   if (platform === 'messenger') {
@@ -4793,6 +5252,8 @@ async function handleMetaEvent(object, entry, ev) {
   });
   logger.info({ platform, convId, text }, 'Mensaje de Meta guardado en el inbox');
 
+  if (!img && isOnlyEmojisOrEmoticons(caption)) return;
+
   const aiOn = botConfig.globalBotEnabled !== false && conv.botActive !== false;
   if (!aiOn) return;
 
@@ -4808,7 +5269,20 @@ async function handleMetaEvent(object, entry, ev) {
     return;
   }
 
-  scheduleAiReply(convId, caption, { platform: 'instagram', recipientId: senderId, hasImage: Boolean(img), delayMs: typingDelayMs(botConfig) });
+  scheduleAiReply(convId, caption, {
+    platform: 'instagram',
+    recipientId: senderId,
+    hasImage: Boolean(img),
+    imageBuffer: downloadedImageBuffer,
+    imageMime: downloadedImageMime,
+    paymentAnalysis: paymentAnalysis || null,
+    destWalletId,
+    destWalletName,
+    wasBrandNewConv: !prevMetaConv,
+    previousExpectedBs: Number(prevMetaConv?.expectedOrderBs || 0),
+    previousExpectedUsdt: Number(prevMetaConv?.expectedOrderUsdt || 0),
+    delayMs: typingDelayMs(botConfig)
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -4880,8 +5354,8 @@ async function processOutbox() {
     if (item.type === 'delete_message') {
       outboxBusy.add(key);
       try {
-        if (item.whatsappKey && sock) {
-          await sock.sendMessage(item.to, { delete: item.whatsappKey });
+        if (item.whatsappKey && waSock && waState === 'connected') {
+          await waSock.sendMessage(item.to, { delete: item.whatsappKey });
         }
       } catch (delErr) {
         logger.warn({ err: delErr.message }, 'No se pudo eliminar mensaje en WhatsApp remotamente');
@@ -4907,12 +5381,15 @@ async function processOutbox() {
         for (const targetJid of candidateJids) {
           try {
             await waPresence('composing', targetJid);
+            const humanDelay = Math.min(1400, Math.max(450, Math.floor(String(item.text || '').length * 8)));
+            await new Promise(r => setTimeout(r, humanDelay));
             if (mediaPayload) {
               await waSend(targetJid, mediaPayload);
             } else {
               await waSend(targetJid, { text: item.text || '' });
             }
             await waPresence('paused', targetJid);
+            if (item.convId && item.text) pushHistory(item.convId, 'bot', item.text);
             sentOk = true;
             break;
           } catch (err) {
@@ -4993,6 +5470,262 @@ async function pollCommands() {
       waStopped = false;
       scheduleWaRestart(500);
     }
+    if (botCfg.requestTelegramTest) {
+      await fb('PATCH', ws('meta/botConfig'), { requestTelegramTest: null });
+      await runTelegramConnectionDiagnostic();
+    }
+  }
+}
+
+async function runTelegramConnectionDiagnostic() {
+  const tg = await getTelegramAndAntiBanConfig(true);
+  if (!tg.token) {
+    await fb('PATCH', ws('meta/botConfig'), {
+      telegramStatus: { ok: false, error: 'Falta pegar el Token del Bot de Telegram.', checkedAt: Date.now() }
+    });
+    return;
+  }
+  try {
+    const meRes = await fetch(`https://api.telegram.org/bot${tg.token}/getMe`, { signal: AbortSignal.timeout(8000) });
+    const meJson = await meRes.json().catch(() => ({}));
+    if (!meRes.ok || !meJson.ok) {
+      await fb('PATCH', ws('meta/botConfig'), {
+        telegramStatus: { ok: false, error: meJson.description || 'Token inválido en Telegram.', checkedAt: Date.now() }
+      });
+      return;
+    }
+    const botUser = meJson.result?.username || '';
+    const botName = meJson.result?.first_name || 'Doomlater Bot';
+    let sent = false;
+    if (tg.chatIds.length > 0) {
+      sent = await sendTelegramAlert(
+        `🛡️ *DOOMLATER ANTI-BAN ACTIVO* ✅\n\n` +
+        `• *Bot:* @${botUser} (${botName})\n` +
+        `• *Dispositivos vinculados:* ${tg.chatIds.length}\n` +
+        `• *WhatsApp Blindado:* Cero alertas salientes por WhatsApp.\n\n` +
+        `Aquí recibirás al instante pagos, entregas coordinadas y consultas especiales con botones de 1 toque.`
+      );
+    }
+    await fb('PATCH', ws('meta/botConfig'), {
+      telegramBotUsername: botUser,
+      telegramStatus: {
+        ok: true,
+        username: botUser,
+        name: botName,
+        subscribersCount: tg.chatIds.length,
+        testSent: sent,
+        checkedAt: Date.now()
+      }
+    });
+  } catch (err) {
+    await fb('PATCH', ws('meta/botConfig'), {
+      telegramStatus: { ok: false, error: err.message, checkedAt: Date.now() }
+    });
+  }
+}
+
+/* --------------------------------------------------------------------------
+   TELEGRAM: AUTO-VINCULACIÓN, BOTONES DE 1 TOQUE Y COMANDOS EJECUTIVOS
+   -------------------------------------------------------------------------- */
+let tgUpdateOffset = 0;
+let tgLastInitializedToken = '';
+let tgPollingBusy = false;
+
+async function answerTgCallback(token, callbackQueryId, text, showAlert = false) {
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text: String(text || '').slice(0, 190), show_alert: showAlert })
+    });
+  } catch (e) {}
+}
+
+async function handleTelegramCallbackAction(tg, cq) {
+  const data = String(cq.data || '');
+  const chatId = cq.message?.chat?.id;
+  const fromName = cq.from?.first_name || cq.from?.username || 'Socio';
+  const partnerName = /seba/i.test(fromName) ? 'Sebastián' : 'Anthony';
+
+  if (data.startsWith('vpay:')) {
+    const convId = resolveTgShortConvKey(data.slice(5));
+    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    if (!conv) {
+      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
+      return;
+    }
+    const cleanDigits = String(conv.customerPhone || '').replace(/\D/g, '');
+    const adminCtx = await loadAdminExecutiveContext();
+    const cmdText = cleanDigits ? `${cleanDigits} pago verificado` : 'pago verificado';
+    const reply = await handlePartnerCommands(cmdText, adminCtx, partnerName);
+    await answerTgCallback(tg.token, cq.id, '✅ ¡Pago verificado y cliente notificado!');
+    if (chatId && reply) {
+      await sendTelegramAlert(typeof reply === 'string' ? reply : reply.reply, undefined, chatId);
+    }
+    return;
+  }
+
+  if (data.startsWith('qdel:')) {
+    const parts = data.slice(5).split(':');
+    const fee = parts.pop();
+    const convId = resolveTgShortConvKey(parts.join(':'));
+    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    if (!conv) {
+      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
+      return;
+    }
+    const cleanDigits = String(conv.customerPhone || '').replace(/\D/g, '');
+    if (!cleanDigits) {
+      await answerTgCallback(tg.token, cq.id, 'Este chat no tiene teléfono válido para comando automático.', true);
+      return;
+    }
+    const adminCtx = await loadAdminExecutiveContext();
+    const reply = await handlePartnerCommands(`${cleanDigits} delivery ${fee}`, adminCtx, partnerName);
+    await answerTgCallback(tg.token, cq.id, `🚚 Delivery $${fee} cotizado al cliente!`);
+    if (chatId && reply) {
+      await sendTelegramAlert(typeof reply === 'string' ? reply : reply.reply, undefined, chatId);
+    }
+    return;
+  }
+
+  if (data.startsWith('mdel:')) {
+    const convId = resolveTgShortConvKey(data.slice(5));
+    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    if (!conv) {
+      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
+      return;
+    }
+    const now = Date.now();
+    await commitAndVerifyWebSync({
+      [`botConversations/${convId}/deliveryStatus`]: 'delivered',
+      [`botConversations/${convId}/deliveredAt`]: now,
+      [`botConversations/${convId}/needsAttention`]: false,
+      [`botConversations/${convId}/attentionReason`]: null,
+      [`botConversations/${convId}/updatedAt`]: now,
+      'meta/updatedAt': now,
+      'meta/rev': now,
+      'meta/lastLabel': `Pedido de ${conv.customerName || 'Cliente'} marcado entregado desde Telegram`
+    }, 'Entrega completada');
+    alertedConvsTrack.delete(`coord_${convId}`);
+    alertedConvsTrack.delete(`alert_${convId}`);
+    await answerTgCallback(tg.token, cq.id, '📦 ¡Pedido marcado como entregado!');
+    if (chatId) {
+      await sendTelegramAlert(`✅ *Pedido marcado como ENTREGADO*\n• Cliente: ${conv.customerName || 'Cliente'} (${conv.customerPhone || ''})\n• Alerta retirada de la Web.`, undefined, chatId);
+    }
+    return;
+  }
+
+  if (data.startsWith('calr:')) {
+    const convId = resolveTgShortConvKey(data.slice(5));
+    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    const now = Date.now();
+    await fb('PATCH', ROOT, {
+      [`botConversations/${convId}/needsAttention`]: false,
+      [`botConversations/${convId}/attentionReason`]: null,
+      [`botConversations/${convId}/updatedAt`]: now,
+      'meta/updatedAt': now,
+      'meta/rev': now
+    });
+    alertedConvsTrack.delete(`alert_${convId}`);
+    alertedConvsTrack.delete(`human_${convId}`);
+    await answerTgCallback(tg.token, cq.id, '✅ Alerta retirada de la Web.');
+    if (chatId) {
+      await sendTelegramAlert(`✅ Alerta retirada para *${conv?.customerName || convId}* (por ${fromName}).`, undefined, chatId);
+    }
+  }
+}
+
+async function pollTelegramUpdates() {
+  if (!isOwner || tgPollingBusy) return;
+  const tg = await getTelegramAndAntiBanConfig();
+  if (!tg.token) return;
+
+  tgPollingBusy = true;
+  try {
+    if (tgLastInitializedToken !== tg.token) {
+      tgLastInitializedToken = tg.token;
+      await fetch(`https://api.telegram.org/bot${tg.token}/deleteWebhook`, { signal: AbortSignal.timeout(6000) }).catch(() => {});
+      await runTelegramConnectionDiagnostic().catch(() => {});
+    }
+
+    const url = `https://api.telegram.org/bot${tg.token}/getUpdates?timeout=0&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'callback_query']))}${tgUpdateOffset ? `&offset=${tgUpdateOffset}` : ''}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return;
+    const json = await res.json().catch(() => ({}));
+    if (!json.ok || !Array.isArray(json.result) || json.result.length === 0) return;
+
+    for (const upd of json.result) {
+      tgUpdateOffset = Math.max(tgUpdateOffset, Number(upd.update_id) + 1);
+
+      if (upd.callback_query) {
+        await handleTelegramCallbackAction(tg, upd.callback_query).catch(err => logger.warn({ err: err.message }, 'Error en callback de Telegram'));
+        continue;
+      }
+
+      const msg = upd.message;
+      if (!msg || !msg.chat) continue;
+      const chatId = String(msg.chat.id);
+      const text = String(msg.text || msg.caption || '').trim();
+      if (!text) continue;
+
+      const fromFirst = msg.from?.first_name || '';
+      const fromUser = msg.from?.username || '';
+      const chatTitle = msg.chat.title || `${fromFirst} ${msg.from?.last_name || ''}`.trim() || fromUser || 'Socio';
+
+      // Auto-vinculación inmediata con /start o /vincular
+      if (/^\/(?:start|vincular)\b/i.test(text)) {
+        const subEntry = {
+          chatId,
+          name: chatTitle,
+          username: fromUser,
+          type: msg.chat.type || 'private',
+          linkedAt: Date.now()
+        };
+        await fb('PUT', ws(`meta/botConfig/telegramSubscribers/tg_${safeId(chatId)}`), subEntry);
+        cachedTgConfig.fetchedAt = 0; // refrescar caché inmediata
+        const freshTg = await getTelegramAndAntiBanConfig(true);
+        await fb('PATCH', ws('meta/botConfig/telegramStatus'), {
+          ok: true,
+          subscribersCount: freshTg.chatIds.length,
+          lastLinkedName: chatTitle,
+          checkedAt: Date.now()
+        });
+
+        await sendTelegramAlert(
+          `✅ *¡Dispositivo vinculado a Doomlater con éxito!*\n\n` +
+          `👤 *Socio / Chat:* ${chatTitle}\n` +
+          `🛡️ *Blindaje Anti-Baneo:* Activo (Tu WhatsApp ya NO enviará alertas automáticas salientes).\n\n` +
+          `*¿Qué puedes hacer aquí mismo en Telegram?*\n` +
+          `• Recibirás al instante pagos, entregas coordinadas y dudas con *botones de 1 toque*.\n` +
+          `• Consultar cualquier servicio (con o sin memoria), stock o saldos.\n` +
+          `• Escribir *0414... pago verificado* o *0414... delivery 4*.\n` +
+          `• Pedir *facturas* y *contratos* en PDF directo aquí.`,
+          undefined,
+          chatId
+        );
+        continue;
+      }
+
+      // Solo responder consultas ejecutivas a chats ya vinculados (seguridad total)
+      const refreshedTg = await getTelegramAndAntiBanConfig();
+      if (!refreshedTg.chatIds.includes(chatId)) {
+        await sendTelegramAlert(`🔒 Envía */start* primero para vincular este chat como socio de Doomlater.`, undefined, chatId);
+        continue;
+      }
+
+      const partnerName = /seba/i.test(`${fromFirst} ${fromUser}`) ? 'Sebastián' : 'Anthony';
+      const adminCtx = await loadAdminExecutiveContext();
+      const aiRes = await queryAdminAI(`conv_tg_${safeId(chatId)}`, text, adminCtx, partnerName);
+      if (aiRes?.pdfAttachment?.buffer) {
+        await sendTelegramDocument(chatId, aiRes.pdfAttachment.buffer, aiRes.pdfAttachment.fileName, aiRes.reply || '');
+      } else if (aiRes?.reply) {
+        await sendTelegramAlert(aiRes.reply, undefined, chatId);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Error en pollTelegramUpdates');
+  } finally {
+    tgPollingBusy = false;
   }
 }
 
@@ -5066,15 +5799,47 @@ app.post('/api/whatsapp/reset', async (_req, res) => {
    MONITOR PROACTIVO DE CHATS EN ALERTA (WEB Y BOT)
    -------------------------------------------------------------------------- */
 const alertedConvsTrack = new Set();
+let initialAlertScanDone = false;
 
 async function checkAttentionAlertsAndNotify() {
-  if (!waSock || waState !== 'connected') return;
+  if (!isOwner) return;
+  const tg = await getTelegramAndAntiBanConfig();
+  const canSendTg = Boolean(tg.token && tg.chatIds.length > 0);
+  const canSendWa = Boolean(!tg.antiBanStrictMode && waSock && waState === 'connected');
+  if (!canSendTg && !canSendWa) return;
+
   try {
     const convsRaw = await fb('GET', ws('botConversations'));
     if (!convsRaw) return;
     const convs = Object.values(convsRaw).filter(c => c && !c.deleted);
 
+    // En el primer escaneo tras iniciar el servidor, registramos alertas viejas ya existentes
+    // para NUNCA re-disparar alertas antiguas en cada reinicio de Render.
+    if (!initialAlertScanDone) {
+      for (const c of convs) {
+        if (c.needsAttention || c.pendingPayment) {
+          alertedConvsTrack.add(`alert_${c.id}`);
+          alertedConvsTrack.add(`${c.id}_${Boolean(c.needsAttention)}_${Boolean(c.pendingPayment)}`);
+          if (c.pendingPayment) alertedConvsTrack.add(`pay_${c.id}`);
+          if (c.deliveryStatus === 'pending_delivery') alertedConvsTrack.add(`coord_${c.id}`);
+        }
+      }
+      initialAlertScanDone = true;
+      return;
+    }
+
     for (const c of convs) {
+      if (!c.needsAttention && !c.pendingPayment && c.deliveryStatus !== 'pending_delivery') {
+        alertedConvsTrack.delete(`alert_${c.id}`);
+        alertedConvsTrack.delete(`coord_${c.id}`);
+        alertedConvsTrack.delete(`pay_${c.id}`);
+        alertedConvsTrack.delete(`human_${c.id}`);
+        alertedConvsTrack.delete(`${c.id}_true_false`);
+        alertedConvsTrack.delete(`${c.id}_true_true`);
+        alertedConvsTrack.delete(`${c.id}_false_true`);
+        continue;
+      }
+
       if (c.needsAttention || c.pendingPayment) {
         // Excluir chats directos entre socios a menos que sea una simulación
         const isPartnerPhone = c.customerPhone === '584142005801' || c.customerPhone === '584264181643';
@@ -5113,10 +5878,10 @@ async function checkAttentionAlertsAndNotify() {
         const alertMsg = `🚨 *DOOMLATER ALERT: ${alertTag}* 🧾\n\n` +
           `• *Cliente:* *${custName}*${custPhone}\n` +
           `• *Plataforma:* ${(c.platform || 'WhatsApp').toUpperCase()}${amtStr}${reason}${lastMsg}\n\n` +
-          `⚠️ _El chat está marcado con alerta en la Web. Entra a "Bot & Inbox" para responder o verificar._` +
-          (isPayment && cleanCustPhone ? `\n💡 _O responde directamente a este WhatsApp:_\n*${cleanCustPhone} pago verificado*\n_para aprobarlo y quitar la alerta de la Web automáticamente._` : '');
+          `⚠️ _El chat está marcado con alerta en la Web._` +
+          (isPayment ? `\n💡 _Toca *✅ Verificar Pago* abajo${cleanCustPhone ? ` o escribe *${cleanCustPhone} pago verificado*` : ''} para aprobarlo automáticamente._` : '');
 
-        await notifyPartners(alertMsg, `alert_${c.id}`);
+        await notifyPartners(alertMsg, isPayment ? `pay_${c.id}` : `alert_${c.id}`, { convId: c.id, cleanPhone: cleanCustPhone });
       }
     }
   } catch (err) {
@@ -5138,6 +5903,7 @@ app.listen(PORT, async () => {
   setInterval(() => heartbeat().catch(() => {}), 15000);
   setInterval(() => pollCommands().catch(() => {}), 3000);
   setInterval(() => processOutbox().catch(() => {}), 3000);
+  setInterval(() => pollTelegramUpdates().catch(() => {}), 2500);
   setInterval(() => backupAuthNow().catch(() => {}), 30000);
   setInterval(() => checkLowStockAndAlert().catch(() => {}), 5 * 60 * 1000);
   setInterval(() => checkPartnerReminders().catch(() => {}), 20000);

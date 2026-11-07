@@ -67,15 +67,14 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
 const GEMINI_API_KEY_ENV = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL_ENV = process.env.GEMINI_MODEL || '';
 
-/** Modelos de Gemini verificados con razonamiento y alta velocidad en orden de prioridad */
+/** Modelos de Gemini verificados con razonamiento y ultra-alta velocidad (<800ms) en orden de prioridad */
 const WORKING_GEMINI_MODELS = [
-  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
-  'gemini-3.6-flash',
   'gemini-flash-lite-latest',
-  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
   'gemini-3.7-flash',
-  'gemini-flash-latest'
+  'gemini-3.8-flash'
 ];
 const WA_AUTH_SECRET = process.env.WA_AUTH_SECRET || '';
 const WA_DISABLED = process.env.WA_DISABLED === '1';
@@ -375,17 +374,40 @@ function isAuthorizedPartner(phoneOrJid) {
   return null;
 }
 
+async function sendTelegramAlert(text) {
+  try {
+    const tgToken = process.env.TELEGRAM_BOT_TOKEN;
+    const tgChatId = process.env.TELEGRAM_CHAT_ID;
+    if (tgToken && tgChatId) {
+      await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: tgChatId, text: text })
+      });
+      return true;
+    }
+  } catch (e) {
+    logger.warn({ err: e.message }, 'No se pudo enviar alerta por Telegram');
+  }
+  return false;
+}
+
 async function notifyPartners(text, alertKey = null) {
+  // Enviar a Telegram de inmediato si está configurado (100% libre de riesgos de baneo)
+  sendTelegramAlert(text).catch(() => {});
+
   if (!waSock || waState !== 'connected') return;
   if (alertKey) {
-    const isAlert = String(alertKey).startsWith('pay_') || String(alertKey).startsWith('human_') || String(alertKey).startsWith('alert_');
-    const cooldownMs = isAlert ? 30 * 1000 : (15 * 60 * 1000);
+    const isAlert = String(alertKey).startsWith('pay_') || String(alertKey).startsWith('human_') || String(alertKey).startsWith('alert_') || String(alertKey).startsWith('coord_');
+    const cooldownMs = isAlert ? 5 * 60 * 1000 : (15 * 60 * 1000);
     const last = partnerAlertCooldown.get(alertKey) || 0;
-    if (Date.now() - last < cooldownMs) return; // Cooldown de 30s para alertas críticas, 15 min para otras
+    if (Date.now() - last < cooldownMs) return; // Cooldown mínimo de 5 min para evitar que Meta clasifique como masivo
     partnerAlertCooldown.set(alertKey, Date.now());
   }
 
-  for (const p of PARTNER_ACCOUNTS) {
+  for (let idx = 0; idx < PARTNER_ACCOUNTS.length; idx++) {
+    const p = PARTNER_ACCOUNTS[idx];
+    if (idx > 0) await new Promise(r => setTimeout(r, 1200)); // Pausa humana entre socios
     for (const jid of p.jids) {
       try {
         await waSend(jid, { text });
@@ -3902,6 +3924,8 @@ async function runAiReply(convId, q) {
           for (const targetJid of candidateJids) {
             try {
               await waPresence('composing', targetJid);
+              const typingMs = Math.min(1600, Math.max(500, Math.floor(textPart.length * 8)));
+              await new Promise(r => setTimeout(r, typingMs)); // Pausa natural simulando escritura humana
               if (idx === 0 && result.pdfAttachment && result.pdfAttachment.buffer) {
                 await waSend(targetJid, {
                   document: result.pdfAttachment.buffer,
@@ -4114,7 +4138,7 @@ async function runAiReply(convId, q) {
 
 function typingDelayMs(botConfig) {
   const sec = Number(botConfig && botConfig.typingDelaySec);
-  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 2.5)) * 1000;
+  return Math.min(15, Math.max(1, Number.isFinite(sec) && sec > 0 ? sec : 1.5)) * 1000;
 }
 
 /* --------------------------------------------------------------------------
@@ -4155,6 +4179,12 @@ async function waSend(jid, content) {
 async function waPresence(type, jid) {
   try { if (waSock && waState === 'connected' && jid) await waSock.sendPresenceUpdate(type, jid); } catch (e) {}
 }
+async function waRead(key) {
+  if (!waSock || waState !== 'connected' || !key) return;
+  try {
+    await waSock.readMessages([key]);
+  } catch (e) {}
+}
 
 function stopWhatsApp(reason) {
   waStopped = true;
@@ -4194,8 +4224,8 @@ async function startWhatsApp() {
     ...(version ? { version } : {}),
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, silentLogger) },
     logger: silentLogger,
-    browser: Browsers.ubuntu('Chrome'),
-    markOnlineOnConnect: true,
+    browser: Browsers.windows('Desktop'),
+    markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
     getMessage: async (key) => {
@@ -4321,6 +4351,7 @@ async function handleWaMessage(msg, type) {
   if (!msg.key.fromMe) {
     if (type !== 'notify' && type !== 'append') return;
     if (Date.now() - tsMs > 10 * 60 * 1000) return;
+    waRead(msg.key).catch(() => {});
   }
 
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
@@ -5057,8 +5088,8 @@ async function checkAttentionAlertsAndNotify() {
           continue;
         }
 
-        const trackKey = `${c.id}_${Boolean(c.needsAttention)}_${Boolean(c.pendingPayment)}_${c.lastMessageAt || c.updatedAt || 0}`;
-        if (alertedConvsTrack.has(trackKey)) continue;
+        const trackKey = `${c.id}_${Boolean(c.needsAttention)}_${Boolean(c.pendingPayment)}`;
+        if (alertedConvsTrack.has(trackKey) || alertedConvsTrack.has(`alert_${c.id}`)) continue;
         alertedConvsTrack.add(trackKey);
         alertedConvsTrack.add(`alert_${c.id}`);
 

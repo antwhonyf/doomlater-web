@@ -343,10 +343,7 @@ async function ensureConvHistoryLoaded(convId) {
   }
   convHistoryHydrated.add(convId);
   try {
-    let rawMsgs = await fb('GET', ws('botMessages'), `orderBy="convId"&equalTo=${encodeURIComponent(JSON.stringify(convId))}`);
-    if (!rawMsgs || typeof rawMsgs !== 'object') {
-      rawMsgs = await fb('GET', ws('botMessages'), 'orderBy="$key"&limitToLast=250');
-    }
+    const rawMsgs = await fb('GET', ws('botMessages'), undefined, 'orderBy="$key"&limitToLast=250');
     if (!rawMsgs || typeof rawMsgs !== 'object') return;
     const matched = Object.values(rawMsgs)
       .filter(m => m && m.convId === convId && !m.deleted && m.text)
@@ -430,9 +427,14 @@ function isAuthorizedPartner(phoneOrJid) {
 let cachedTgConfig = { data: null, fetchedAt: 0 };
 const tgConvCallbackMap = new Map(); // shortKey -> full convId (garantiza <= 64 bytes en callback_data de Telegram)
 
-function makeTgShortConvKey(convId) {
-  if (!convId) return '';
+function makeTgShortConvKey(convId, cleanPhone = '') {
+  if (!convId) return cleanPhone ? `p_${cleanPhone}` : '';
   if (Buffer.byteLength(convId, 'utf8') <= 44) return convId;
+  if (cleanPhone && cleanPhone.length >= 8) {
+    const pKey = `p_${cleanPhone}`;
+    tgConvCallbackMap.set(pKey, convId);
+    return pKey;
+  }
   const shortKey = 'k_' + crypto.createHash('sha1').update(String(convId)).digest('hex').slice(0, 16);
   tgConvCallbackMap.set(shortKey, convId);
   return shortKey;
@@ -487,7 +489,7 @@ function buildTelegramInlineButtons(alertKey, options = {}) {
     if (m) convId = m[1];
   }
   const cleanPhone = String(options.cleanPhone || '').replace(/\D/g, '');
-  const shortId = convId ? makeTgShortConvKey(convId) : '';
+  const shortId = convId ? makeTgShortConvKey(convId, cleanPhone) : '';
   const rows = [];
 
   if (shortId) {
@@ -495,10 +497,18 @@ function buildTelegramInlineButtons(alertKey, options = {}) {
       rows.push([{ text: '✅ Verificar Pago y Avisar al Cliente', callback_data: `vpay:${shortId}` }]);
     } else if (key.startsWith('delivery_')) {
       rows.push([
+        { text: '🚚 $1', callback_data: `qdel:${shortId}:1` },
         { text: '🚚 $2', callback_data: `qdel:${shortId}:2` },
         { text: '🚚 $3', callback_data: `qdel:${shortId}:3` },
         { text: '🚚 $4', callback_data: `qdel:${shortId}:4` },
         { text: '🚚 $5', callback_data: `qdel:${shortId}:5` }
+      ]);
+      rows.push([
+        { text: '🚚 $6', callback_data: `qdel:${shortId}:6` },
+        { text: '🚚 $7', callback_data: `qdel:${shortId}:7` },
+        { text: '🚚 $8', callback_data: `qdel:${shortId}:8` },
+        { text: '🚚 $9', callback_data: `qdel:${shortId}:9` },
+        { text: '🚚 $10', callback_data: `qdel:${shortId}:10` }
       ]);
     } else if (key.startsWith('coord_')) {
       rows.push([{ text: '📦 Marcar Pedido como Entregado', callback_data: `mdel:${shortId}` }]);
@@ -2028,6 +2038,305 @@ function parseContractInputText(rawText) {
   return { personName, personId, title };
 }
 
+function findTargetCustomerConv(allConvs = [], { convId = '', rawPhone = '', fallbackPredicate = null } = {}) {
+  const active = (allConvs || []).filter(c => c && !c.deleted);
+  if (convId) {
+    if (String(convId).startsWith('p_')) {
+      rawPhone = String(convId).slice(2);
+    } else {
+      const exact = active.find(c => c.id === convId);
+      if (exact) return exact;
+    }
+  }
+
+  const cleanDigits = String(rawPhone || '').replace(/\D/g, '');
+  if (cleanDigits && cleanDigits.length >= 7) {
+    const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+    const matches = active.filter(c => {
+      const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
+      const cJid = String(c.customerJid || '').replace(/\D/g, '');
+      const cId = String(c.id || '');
+      const phoneMatch = cPhone.length >= 8 && (cPhone.endsWith(last10) || (last10.length >= 8 && last10.endsWith(cPhone)));
+      const jidMatch = cJid.length >= 8 && cJid.includes(last10);
+      const idMatch = cId.includes(last10);
+      return phoneMatch || jidMatch || idMatch;
+    });
+    if (matches.length > 0) {
+      matches.sort((a, b) => (Number(b.lastMessageAt || b.updatedAt) || 0) - (Number(a.lastMessageAt || a.updatedAt) || 0));
+      return matches[0];
+    }
+  }
+
+  if (!cleanDigits && typeof fallbackPredicate === 'function') {
+    const candidates = active
+      .filter(fallbackPredicate)
+      .sort((a, b) => (Number(b.lastMessageAt || b.updatedAt) || 0) - (Number(a.lastMessageAt || a.updatedAt) || 0));
+    return candidates[0] || null;
+  }
+  return null;
+}
+
+async function sendDirectToCustomerConv(targetConv, text) {
+  if (!targetConv || !text) return { sent: false, error: 'Conversación o mensaje vacío.' };
+  const platform = String(targetConv.platform || 'whatsapp').toLowerCase();
+
+  if (platform === 'whatsapp') {
+    if (!waSock || waState !== 'connected') {
+      return { sent: false, error: 'WhatsApp no está conectado en este instante.' };
+    }
+    const candidateJids = [];
+    const cleanPhone = String(targetConv.customerPhone || '').replace(/\D/g, '');
+    // Priorizar JID estándar @s.whatsapp.net si tenemos teléfono válido, más @lid como respaldo (y viceversa)
+    if (targetConv.customerJid) candidateJids.push(targetConv.customerJid);
+    if (cleanPhone && cleanPhone.length >= 10) {
+      const pnJid = `${cleanPhone.startsWith('0') ? '58' + cleanPhone.slice(1) : cleanPhone}@s.whatsapp.net`;
+      if (!candidateJids.includes(pnJid)) candidateJids.push(pnJid);
+    }
+    if (candidateJids.length === 0) {
+      return { sent: false, error: 'El chat no tiene JID ni teléfono válido de WhatsApp.' };
+    }
+
+    let lastErr = null;
+    for (const jid of candidateJids) {
+      try {
+        await waPresence('composing', jid);
+        const pauseMs = Math.min(1400, Math.max(550, Math.floor(text.length * 7)));
+        await new Promise(r => setTimeout(r, pauseMs));
+        await waSend(jid, { text });
+        await waPresence('paused', jid);
+        return { sent: true, jid };
+      } catch (err) {
+        lastErr = err;
+        logger.warn({ jid, err: err.message }, 'Reintentando envío directo al cliente con JID alternativo');
+      }
+    }
+    return { sent: false, error: lastErr ? lastErr.message : 'No se pudo entregar por WhatsApp.' };
+  }
+
+  if (platform === 'instagram' || platform === 'messenger') {
+    const recipientId = targetConv.recipientId || targetConv.customerJid || '';
+    if (!recipientId) return { sent: false, error: 'Sin destinatario de Meta.' };
+    try {
+      await graphSend(platform, recipientId, { text });
+      return { sent: true };
+    } catch (err) {
+      return { sent: false, error: err.message };
+    }
+  }
+
+  return { sent: false, error: `Plataforma no soportada: ${platform}` };
+}
+
+async function executeVerifyPaymentAction({ convId = '', rawPhone = '', partnerName = 'Socio' } = {}) {
+  const convsRaw = await fb('GET', ws('botConversations'));
+  const allConvs = convsRaw ? Object.values(convsRaw) : [];
+  const targetConv = findTargetCustomerConv(allConvs, {
+    convId,
+    rawPhone,
+    fallbackPredicate: c => c.pendingPayment || c.needsAttention
+  });
+
+  const cleanDigits = String(rawPhone || targetConv?.customerPhone || '').replace(/\D/g, '');
+  if (!targetConv) {
+    return `⚠️ No encontré ninguna conversación pendiente ${cleanDigits ? `con el número *${cleanDigits}*` : 'con pagos por verificar'}.\nEscribe el número completo (ej: *04141234567 pago verificado*).`;
+  }
+
+  const amt = Number(targetConv.pendingPaymentAmount || targetConv.expectedOrderUsdt || 0);
+  const cur = targetConv.pendingPaymentAmount
+    ? (targetConv.pendingPaymentCurrency || 'VES')
+    : 'USDT';
+  const formattedAmt = amt > 0
+    ? (cur === 'VES'
+        ? `Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`
+        : (cur === 'USDT' ? `${amt.toFixed(2)} USDT` : `$${amt.toFixed(2)} USD`))
+    : 'tu pedido';
+
+  const isAnthony = partnerName === 'Anthony';
+  const profileUser = isAnthony ? 'doom1' : 'doom2';
+  const now = Date.now();
+
+  const patchUpdates = {
+    [`botConversations/${targetConv.id}/botActive`]: true,
+    [`botConversations/${targetConv.id}/needsAttention`]: false,
+    [`botConversations/${targetConv.id}/pendingPayment`]: false,
+    [`botConversations/${targetConv.id}/attentionReason`]: null,
+    [`botConversations/${targetConv.id}/paymentVerified`]: true,
+    [`botConversations/${targetConv.id}/paymentVerifiedAt`]: now,
+    [`botConversations/${targetConv.id}/updatedAt`]: now,
+    'meta/updatedAt': now,
+    'meta/rev': now,
+    'meta/lastLabel': `Pago de ${targetConv.customerName || 'Cliente'} verificado por @${profileUser} vía Telegram`,
+    'meta/lastClientId': 'bot_bridge',
+    'meta/updatedBy': profileUser
+  };
+
+  if (Number(targetConv.pendingPaymentAmount) > 0) {
+    const realAmt = Number(targetConv.pendingPaymentAmount);
+    const realCur = targetConv.pendingPaymentCurrency || 'VES';
+    const txId = `tx_wa_vpay_${now.toString(36)}`;
+    const targetWallet = targetConv.pendingPaymentWalletId || (realCur === 'VES' ? 'w_banco' : (realCur === 'USDT' ? 'w_binance' : 'w_efectivo'));
+    patchUpdates[`transactions/${txId}`] = {
+      id: txId,
+      title: `Pago verificado: ${targetConv.customerName || 'Cliente'}`,
+      amount: realAmt,
+      currency: realCur,
+      type: 'income',
+      walletId: targetWallet,
+      category: 'cat_ventas',
+      description: `Pago verificado vía Telegram por @${partnerName}. Ref: ${targetConv.pendingPaymentRef || 'S/N'}. Cliente: ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})`,
+      date: new Date(now).toISOString().slice(0, 10),
+      time: new Date(now).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false }),
+      createdAt: now,
+      createdBy: profileUser
+    };
+  }
+
+  await commitAndVerifyWebSync(patchUpdates, `Pago de ${targetConv.customerName || 'Cliente'} verificado`);
+  alertedConvsTrack.delete(`pay_${targetConv.id}`);
+  alertedConvsTrack.delete(`alert_${targetConv.id}`);
+
+  const alreadyCoordinated = targetConv.deliveryStatus === 'pending_delivery' && targetConv.deliveryLugar && targetConv.deliveryFechaHora;
+  const followupLine = alreadyCoordinated
+    ? `Quedamos agendados para tu entrega en *${targetConv.deliveryLugar}* (${targetConv.deliveryFechaHora}). ¡Muchas gracias por tu compra en Doomlater! 🙌`
+    : (targetConv.deliveryLugar
+        ? `Para dejar agendado tu envío en *${targetConv.deliveryLugar}*, ¿nos confirmas tu dirección/punto de referencia y qué día y hora te conviene? 🙌`
+        : `Para coordinar tu entrega, ¿en cuál punto gratuito te queda mejor vernos (*La Previsora* o *CC El Líder*, o prefieres *delivery*) y qué día y hora te conviene? 🙌`);
+
+  const clientConfirmMsg = `✅ ¡Tu pago de *${formattedAmt}* ha sido verificado con éxito por nuestro equipo!\n\n${followupLine}`;
+
+  const sendRes = await sendDirectToCustomerConv(targetConv, clientConfirmMsg);
+  pushHistory(targetConv.id, 'bot', clientConfirmMsg);
+  await recordOutgoing(targetConv.id, {
+    id: `bmsg_wa_payverif_${Date.now()}`,
+    text: clientConfirmMsg,
+    sentBy: 'Doomlater Bot',
+    deliveryStatus: sendRes.sent ? 'sent' : 'error',
+    deliveryError: sendRes.error || '',
+    createdAt: Date.now()
+  }, { botActive: true, needsAttention: false, pendingPayment: false });
+
+  return `✅ *Pago VERIFICADO con éxito*\n\n` +
+    `• *Cliente:* ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})\n` +
+    `• *Monto:* *${formattedAmt}*\n` +
+    `• *WhatsApp al cliente:* ${sendRes.sent ? '✅ Confirmación enviada y coordinando entrega' : `⚠️ No se pudo enviar (${sendRes.error})`}`;
+}
+
+async function executeDeliveryQuoteAction({ convId = '', rawPhone = '', deliveryFee = 0, adminCtx = null, partnerName = 'Socio' } = {}) {
+  const fee = +(Number(deliveryFee) || 0).toFixed(2);
+  if (fee <= 0) {
+    return `⚠️ Indica un monto de delivery válido mayor a $0 (ej: *04141234567 delivery 5*).`;
+  }
+
+  const convsRaw = await fb('GET', ws('botConversations'));
+  const allConvs = convsRaw ? Object.values(convsRaw) : [];
+  const targetConv = findTargetCustomerConv(allConvs, {
+    convId,
+    rawPhone,
+    fallbackPredicate: c => String(c.attentionReason || '').toLowerCase().includes('delivery') || Boolean(c.deliveryZoneRequested)
+  });
+
+  const cleanDigits = String(targetConv?.customerPhone || rawPhone || '').replace(/\D/g, '');
+  if (!targetConv) {
+    return `⚠️ No encontré ninguna conversación activa ${cleanDigits ? `con el número *${cleanDigits}*` : 'esperando cotización de delivery'}.\nUsa: *04141234567 delivery 5*`;
+  }
+
+  const ctx = adminCtx || await loadAdminExecutiveContext();
+  const rates = await getLiveExchangeRates();
+  const rateParalelo = Number(rates?.paralelo) || 1000;
+  const rateBcv = Number(rates?.bcv) || 890;
+
+  await ensureConvHistoryLoaded(targetConv.id);
+  const hist = convHistory.get(targetConv.id) || [];
+  const histTexts = hist.map(h => h.text);
+  if (targetConv.lastCustomerMessage && !histTexts.includes(targetConv.lastCustomerMessage)) {
+    histTexts.push(targetConv.lastCustomerMessage);
+  }
+
+  // Si antes ya se había sumado un delivery previo en este mismo pedido, descontarlo para recalcular sobre la base limpia
+  const prevDelivery = Number(targetConv.deliveryQuotedFee || 0);
+  const rawExpected = Number(targetConv.expectedOrderUsdt || 0);
+  let baseUsdt = rawExpected > prevDelivery ? +(rawExpected - prevDelivery).toFixed(2) : rawExpected;
+
+  const orderItemRaw = detectWhatCustomerBought(
+    { ...targetConv, expectedOrderUsdt: baseUsdt, deliveryQuotedFee: 0 },
+    histTexts,
+    ctx?.sellables || ctx?.stock || [],
+    ctx?.botConfig?.serviceInsumosMap || [],
+    baseUsdt
+  );
+
+  if (baseUsdt <= 0 && orderItemRaw) {
+    const priceMatch = orderItemRaw.match(/\$(\d+(?:\.\d+)?)/);
+    if (priceMatch) baseUsdt = parseFloat(priceMatch[1]);
+  }
+
+  const cleanItemName = orderItemRaw
+    ? orderItemRaw.replace(/\s*\(\$[\d.,]+\s*USD\)\s*$/i, '').trim()
+    : null;
+
+  const totalUsdt = +((baseUsdt > 0 ? baseUsdt : 0) + fee).toFixed(2);
+  const totalBs = +(totalUsdt * rateParalelo).toFixed(2);
+  const totalBcv = rateBcv > 0 ? +(totalBs / rateBcv).toFixed(2) : totalUsdt;
+
+  const zoneFromReason = String(targetConv.attentionReason || '').match(/Delivery solicitado:\s*(.+)$/i)?.[1]?.trim();
+  const zoneName = targetConv.deliveryZoneRequested || zoneFromReason || (targetConv.deliveryLugar ? targetConv.deliveryLugar.replace(/^Delivery en\s+/i, '') : '');
+  const deliveryLabel = zoneName ? `Delivery (${zoneName})` : 'Costo de Delivery';
+  const lugarToSave = zoneName ? `Delivery en ${zoneName}` : (targetConv.deliveryLugar || 'Delivery a domicilio');
+
+  const itemBullet = baseUsdt > 0
+    ? `• Pedido: *${cleanItemName || 'Productos / Servicio'}* ($${baseUsdt.toFixed(2)} USDT)\n`
+    : (cleanItemName ? `• Pedido: *${cleanItemName}*\n` : '');
+
+  const closingPrompt = targetConv.paymentVerified
+    ? `Como tu pedido base ya estaba verificado, solo quedaría el monto del delivery (*$${fee.toFixed(2)} USD*). ¿Nos confirmas tu dirección/punto de referencia y qué día y hora te conviene para agendar el envío? 🙌`
+    : `Si estás de acuerdo, puedes realizar el pago total por *Pago Móvil o Binance USDT* (enviándonos por aquí la captura del comprobante) o cancelar en *efectivo* al recibir 🙌 ¿Cómo prefieres pagar y qué día, hora y punto de referencia te conviene para llevártelo?`;
+
+  const clientMsg =
+    `¡Hola! Nuestro equipo ya calculó tu presupuesto completo incluyendo el delivery${zoneName ? ` hacia *${zoneName}*` : ''} 🚚:\n\n` +
+    `📌 *Presupuesto Total:*\n` +
+    itemBullet +
+    `• ${deliveryLabel}: *$${fee.toFixed(2)} USDT*\n` +
+    `• *Total en USDT:* *${totalUsdt.toFixed(2)} USDT*\n` +
+    `• *Monto total a transferir en Bs:* *Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
+    `• *Equivalente en $ (a tasa oficial BCV):* *$${totalBcv.toFixed(2)}*\n\n` +
+    closingPrompt;
+
+  const sendRes = await sendDirectToCustomerConv(targetConv, clientMsg);
+  pushHistory(targetConv.id, 'bot', clientMsg);
+  alertedConvsTrack.delete(`alert_${targetConv.id}`);
+  alertedConvsTrack.delete(`delivery_${targetConv.id}`);
+
+  const now = Date.now();
+  const convPatch = {
+    botActive: true,
+    deliveryQuotedFee: fee,
+    deliveryQuotedTotalUsdt: totalUsdt,
+    deliveryLugar: lugarToSave,
+    ...(zoneName ? { deliveryZoneRequested: zoneName } : {}),
+    expectedOrderUsdt: totalUsdt,
+    expectedOrderBs: totalBs,
+    deliveryStatus: 'quoted',
+    needsAttention: false,
+    attentionReason: null
+  };
+
+  await recordOutgoing(targetConv.id, {
+    id: `bmsg_wa_delivery_${now}`,
+    text: clientMsg,
+    sentBy: 'Doomlater Bot',
+    deliveryStatus: sendRes.sent ? 'sent' : 'error',
+    deliveryError: sendRes.error || '',
+    createdAt: now
+  }, convPatch);
+
+  return `🚚 *Presupuesto Total con Delivery Enviado* ✅\n\n` +
+    `• *Cliente:* ${targetConv.customerName || 'Cliente'}${cleanDigits ? ` (+${cleanDigits})` : ''}\n` +
+    (cleanItemName ? `• *Pedido:* ${cleanItemName} ($${baseUsdt.toFixed(2)} USD)\n` : '') +
+    `• *Delivery${zoneName ? ` (${zoneName})` : ''}:* *$${fee.toFixed(2)} USD*\n` +
+    `• *Gran Total:* *$${totalUsdt.toFixed(2)} USDT* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n` +
+    `• *Estado en WhatsApp:* ${sendRes.sent ? '✅ Presupuesto enviado y bot activo para cerrar pago/hora' : `⚠️ Falló envío (${sendRes.error})`}`;
+}
+
 async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = null) {
   const text = String(userText || '').trim();
   const lower = text.toLowerCase();
@@ -2077,227 +2386,47 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     return lines.join('\n');
   }
 
-  // 0.000. VERIFICACIÓN DE PAGO VIA WHATSAPP POR EL SOCIO
+  // 0.000. VERIFICACIÓN DE PAGO DESDE TELEGRAM POR EL SOCIO
   // Sintaxis: "(número) pago verificado", "pago verificado (número)", o simplemente "pago verificado"
-  const verifyPaymentMatch = lower.match(/(?:(?:(\+?58\d{10}|0?4\d{9,10})\s+pago\s*verificado)|(?:pago\s*verificado\s+(\+?58\d{10}|0?4\d{9,10}))|^pago\s*verificado$)/i);
+  const verifyPaymentMatch = lower.match(/(?:(?:(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13})\s+pago\s*verificado)|(?:pago\s*verificado\s+(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13}))|^pago\s*verificado$)/i);
   if (verifyPaymentMatch) {
     const rawPhone = verifyPaymentMatch[1] || verifyPaymentMatch[2] || '';
-    const cleanDigits = rawPhone.replace(/\D/g, '');
-    const convsRaw = await fb('GET', ws('botConversations'));
-    const allConvs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
-
-    let targetConv = null;
-    if (cleanDigits) {
-      const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
-      targetConv = allConvs.find(c => {
-        const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
-        const cJid = String(c.customerJid || '').replace(/\D/g, '');
-        return cPhone.endsWith(last10) || last10.endsWith(cPhone) || cJid.includes(last10) || String(c.id || '').includes(last10);
-      });
-    } else {
-      const candidates = allConvs.filter(c => c.pendingPayment || c.needsAttention)
-        .sort((a, b) => (b.lastMessageAt || b.updatedAt || 0) - (a.lastMessageAt || a.updatedAt || 0));
-      targetConv = candidates[0];
-    }
-
-    if (!targetConv) {
-      return `⚠️ No encontré ninguna conversación pendiente ${cleanDigits ? `con el número *${cleanDigits}*` : 'con pagos por verificar'}.\nRevisa los chats en la Web o escribe el número completo (ej: *04141234567 pago verificado*).`;
-    }
-
-    const amt = Number(targetConv.pendingPaymentAmount) || 0;
-    const cur = targetConv.pendingPaymentCurrency || 'USD';
-    const formattedAmt = cur === 'VES'
-      ? `Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`
-      : (cur === 'USDT' ? `${amt.toFixed(2)} USDT` : `$${amt.toFixed(2)}`);
-
-    const isAnthony = partnerName === 'Anthony';
-    const profileUser = isAnthony ? 'doom1' : 'doom2';
-    const now = Date.now();
-
-    const patchUpdates = {
-      [`botConversations/${targetConv.id}/needsAttention`]: false,
-      [`botConversations/${targetConv.id}/pendingPayment`]: false,
-      [`botConversations/${targetConv.id}/attentionReason`]: null,
-      [`botConversations/${targetConv.id}/paymentVerified`]: true,
-      [`botConversations/${targetConv.id}/paymentVerifiedAt`]: now,
-      [`botConversations/${targetConv.id}/updatedAt`]: now,
-      'meta/updatedAt': now,
-      'meta/rev': now,
-      'meta/lastLabel': `Pago de ${targetConv.customerName || 'Cliente'} verificado por @${profileUser} vía Telegram`,
-      'meta/lastClientId': 'bot_bridge',
-      'meta/updatedBy': profileUser
-    };
-
-    if (amt > 0) {
-      const txId = `tx_wa_vpay_${now.toString(36)}`;
-      const targetWallet = targetConv.pendingPaymentWalletId || (cur === 'VES' ? 'w_banco' : (cur === 'USDT' ? 'w_binance' : 'w_efectivo'));
-      patchUpdates[`transactions/${txId}`] = {
-        id: txId,
-        title: `Pago verificado: ${targetConv.customerName || 'Cliente'}`,
-        amount: amt,
-        currency: cur,
-        type: 'income',
-        walletId: targetWallet,
-        category: 'cat_ventas',
-        description: `Pago verificado vía Telegram por @${partnerName}. Ref: ${targetConv.pendingPaymentRef || 'S/N'}. Cliente: ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})`,
-        date: new Date(now).toISOString().slice(0, 10),
-        time: new Date(now).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false }),
-        createdAt: now,
-        createdBy: profileUser
-      };
-    }
-
-    await commitAndVerifyWebSync(patchUpdates, `Pago de ${targetConv.customerName} verificado`);
-    alertedConvsTrack.delete(`pay_${targetConv.id}`);
-    alertedConvsTrack.delete(`alert_${targetConv.id}`);
-
-    const clientConfirmMsg = `✅ ¡Tu pago de ${formattedAmt} ha sido verificado con éxito por nuestro equipo! Hemos procesado tu orden con éxito. ¡Muchas gracias por tu compra en Doomlater! ✨`;
-
-    if (targetConv.customerJid && waSock && waState === 'connected') {
-      try {
-        await waPresence('composing', targetConv.customerJid);
-        await new Promise(r => setTimeout(r, 700));
-        await waSend(targetConv.customerJid, { text: clientConfirmMsg });
-        await waPresence('paused', targetConv.customerJid);
-      } catch (e) {
-        logger.warn({ err: e.message }, 'No se pudo enviar mensaje de confirmación al cliente por WhatsApp');
-      }
-    }
-    pushHistory(targetConv.id, 'bot', clientConfirmMsg);
-    await recordOutgoing(targetConv.id, {
-      id: `bmsg_wa_payverif_${Date.now()}`,
-      text: clientConfirmMsg,
-      sentBy: 'Doomlater Bot',
-      createdAt: Date.now()
-    });
-
-    return `✅ *¡Listo, ${partnerName}! Pago VERIFICADO con éxito* 🎉\n\n` +
-      `• *Cliente:* ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})\n` +
-      `• *Monto Acreditado:* *${formattedAmt}*\n` +
-      `• *Referencia:* ${targetConv.pendingPaymentRef || 'S/N'}\n\n` +
-      `👉 *Acciones ejecutadas:*\n` +
-      `  1. Se quitó la etiqueta de alerta en la Web.\n` +
-      `  2. Se sumó el ingreso al Dashboard y a la caja.\n` +
-      `  3. Se le envió la confirmación oficial al cliente en su chat.`;
+    return executeVerifyPaymentAction({ rawPhone, partnerName });
   }
 
-  // 0.0001. COTIZACIÓN DE DELIVERY VIA WHATSAPP O TELEGRAM POR EL SOCIO
-  // Sintaxis: "(número) delivery (precio)" o "delivery (número) (precio)"
-  const deliveryCmdMatch = lower.match(/(?:(?:(\+?58\d{10}|0?4\d{9,10})\s+delivery\s+([\d\.,]+))|(?:delivery\s+(\+?58\d{10}|0?4\d{9,10})\s+([\d\.,]+)))/i);
+  // 0.0001. COTIZACIÓN DE DELIVERY DESDE TELEGRAM POR EL SOCIO (BOTONES $1-$10 O TEXTO LIBRE)
+  // Sintaxis soportadas:
+  //   • "04141234567 delivery 5" / "+584141234567 delivery $5" / "0414-123-4567 delivery 5$" / "584141234567 delivery 7.5 usd"
+  //   • "delivery 04141234567 5" / "delivery a 04141234567 $5"
+  //   • "delivery 5" / "delivery $5" (toma automáticamente el chat más reciente que pidió delivery)
+  const deliveryCmdMatch = lower.match(/^(?:(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13})\s+delivery(?:\s+(?:de|por|en|a))?\s+\$?\s*([\d.,]+)\s*(?:\$|usd|usdt)?|delivery(?:\s+(?:para|a|al))?\s+(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13})\s+\$?\s*([\d.,]+)\s*(?:\$|usd|usdt)?|delivery(?:\s+(?:de|por|en))?\s+\$?\s*([\d.,]+)\s*(?:\$|usd|usdt)?)$/i);
   if (deliveryCmdMatch) {
     const rawPhone = deliveryCmdMatch[1] || deliveryCmdMatch[3] || '';
-    const rawPrice = deliveryCmdMatch[2] || deliveryCmdMatch[4] || '0';
+    const rawPrice = deliveryCmdMatch[2] || deliveryCmdMatch[4] || deliveryCmdMatch[5] || '0';
     const deliveryFee = Number(String(rawPrice).replace(',', '.')) || 0;
-    const cleanDigits = rawPhone.replace(/\D/g, '');
-
-    const convsRaw = await fb('GET', ws('botConversations'));
-    const allConvs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
-
-    let targetConv = null;
-    if (cleanDigits) {
-      const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
-      targetConv = allConvs.find(c => {
-        const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
-        const cJid = String(c.customerJid || '').replace(/\D/g, '');
-        return cPhone.endsWith(last10) || last10.endsWith(cPhone) || cJid.includes(last10) || String(c.id || '').includes(last10);
-      });
-    }
-
-    if (!targetConv) {
-      return `⚠️ No encontré ninguna conversación con el número *${cleanDigits || 'indicado'}* para enviar la cotización del delivery.\nVerifica el número o el chat en la Web (ej: *04141234567 delivery 5*).`;
-    }
-
-    const rates = await getLiveExchangeRates();
-    const rateParalelo = rates.paralelo || 1000;
-    const rateBcv = rates.bcv || 890;
-
-    await ensureConvHistoryLoaded(targetConv.id);
-    const hist = convHistory.get(targetConv.id) || [];
-    const histTexts = hist.map(h => h.text);
-    const orderItemStr = detectWhatCustomerBought(targetConv, histTexts, (adminCtx && adminCtx.sellables) || [], adminCtx?.botConfig?.serviceInsumosMap || []);
-
-    let baseUsdt = Number(targetConv.expectedOrderUsdt) || 0;
-    if (baseUsdt <= 0) {
-      const priceMatch = orderItemStr.match(/\$(\d+(?:\.\d+)?)/);
-      if (priceMatch) baseUsdt = parseFloat(priceMatch[1]);
-    }
-    const totalUsdt = (baseUsdt > 0 ? baseUsdt : 0) + deliveryFee;
-    const totalBs = +(totalUsdt * rateParalelo).toFixed(2);
-    const totalBcv = rateBcv > 0 ? +(totalBs / rateBcv).toFixed(2) : totalUsdt;
-
-    const clientMsg = `¡Hola! Nuestro equipo ha calculado el costo de delivery para tu zona:\n\n` +
-      `• *Costo de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
-      (baseUsdt > 0 ? `• *Pedido:* ${orderItemStr} ($${baseUsdt.toFixed(2)} USD)\n` : '') +
-      `• *Total a Cancelar:* *$${totalUsdt.toFixed(2)} USDT* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | $${totalBcv.toFixed(2)} a tasa BCV)\n\n` +
-      `¿Nos confirmas por favor el día y la hora exacta que más te convenga para agendar tu entrega? 🙌`;
-
-    if (targetConv.customerJid && waSock && waState === 'connected') {
-      try {
-        await waPresence('composing', targetConv.customerJid);
-        await new Promise(r => setTimeout(r, 800));
-        await waSend(targetConv.customerJid, { text: clientMsg });
-        await waPresence('paused', targetConv.customerJid);
-      } catch (e) {
-        logger.warn({ err: e.message }, 'No se pudo enviar mensaje de delivery al cliente');
-      }
-    }
-
-    pushHistory(targetConv.id, 'bot', clientMsg);
-    alertedConvsTrack.delete(`alert_${targetConv.id}`);
-
-    await recordOutgoing(targetConv.id, {
-      id: `bmsg_wa_delivery_${Date.now()}`,
-      text: clientMsg,
-      sentBy: 'Doomlater Bot',
-      createdAt: Date.now()
-    });
-
-    await fb('PATCH', ws(`botConversations/${targetConv.id}`), {
-      deliveryQuotedFee: deliveryFee,
-      deliveryQuotedTotalUsdt: totalUsdt,
-      expectedOrderUsdt: totalUsdt,
-      expectedOrderBs: totalBs,
-      deliveryStatus: 'quoted',
-      needsAttention: false,
-      attentionReason: null,
-      updatedAt: Date.now()
-    });
-
-    return `🚚 *¡Listo, ${partnerName}! Cotización de Delivery Enviada* ✅\n\n` +
-      `• *Cliente:* *${targetConv.customerName || 'Cliente'}* (+${cleanDigits})\n` +
-      `• *Tarifa de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
-      `• *Total Calculado:* *$${totalUsdt.toFixed(2)} USD* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n\n` +
-      `👉 _Se le envió el mensaje al cliente solicitando confirmación de día y hora. En cuanto confirme te avisaré con la alerta DOOM ALERT ENTREGA._`;
+    return executeDeliveryQuoteAction({ rawPhone, deliveryFee, adminCtx, partnerName });
   }
 
   // 0.00015. RESPUESTA DIRECTA A UN CLIENTE DE WHATSAPP DESDE TELEGRAM (TEXTO O VOZ)
   // Sintaxis: "04141234567 dile que..." | "responde a 04141234567: ..." | "escríbele al cliente 04141234567 que..."
-  const replyClientMatch = text.match(/^(?:(?:responde(?:r|le)?|escr[ií]be(?:le)?|dile|cont[eé]stale)\s+(?:al?\s+cliente\s+|a\s+)?(\+?58\d{10}|0?4\d{9,10})(?:\s+que\b|\s*[:\-]\s*|\s+)(.+)|(\+?58\d{10}|0?4\d{9,10})\s+(?:dile|responde(?:le)?|escr[ií]bele|cont[eé]stale)(?:\s+que\b|\s*[:\-]\s*|\s+)(.+))$/is);
+  const replyClientMatch = text.match(/^(?:(?:responde(?:r|le)?|escr[ií]be(?:le)?|dile|cont[eé]stale)\s+(?:al?\s+cliente\s+|a\s+)?(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13})(?:\s+que\b|\s*[:\-]\s*|\s+)(.+)|(\+?58[\d\s\-]{10,14}|0?4[\d\s\-]{9,13})\s+(?:dile|responde(?:le)?|escr[ií]bele|cont[eé]stale)(?:\s+que\b|\s*[:\-]\s*|\s+)(.+))$/is);
   if (replyClientMatch) {
     const rawPhone = replyClientMatch[1] || replyClientMatch[3] || '';
     const msgToSend = String(replyClientMatch[2] || replyClientMatch[4] || '').trim();
     const cleanDigits = rawPhone.replace(/\D/g, '');
     if (cleanDigits && msgToSend) {
       const convsRaw = await fb('GET', ws('botConversations'));
-      const allConvs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
-      const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
-      const targetConv = allConvs.find(c => {
-        const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
-        const cJid = String(c.customerJid || '').replace(/\D/g, '');
-        return (cPhone && (cPhone.endsWith(last10) || last10.endsWith(cPhone))) || cJid.includes(last10) || String(c.id || '').includes(last10);
-      });
+      const allConvs = convsRaw ? Object.values(convsRaw) : [];
+      const targetConv = findTargetCustomerConv(allConvs, { rawPhone: cleanDigits });
 
-      if (!targetConv || !targetConv.customerJid) {
+      if (!targetConv) {
         return `⚠️ No encontré un chat activo de WhatsApp con el número *${cleanDigits}*.`;
       }
-      if (!waSock || waState !== 'connected') {
-        return `⚠️ WhatsApp no está conectado en este instante para enviar la respuesta.`;
-      }
 
-      await waPresence('composing', targetConv.customerJid);
-      await new Promise(r => setTimeout(r, Math.min(1800, Math.max(700, msgToSend.length * 14))));
-      await waSend(targetConv.customerJid, { text: msgToSend });
-      await waPresence('paused', targetConv.customerJid);
+      const sendRes = await sendDirectToCustomerConv(targetConv, msgToSend);
+      if (!sendRes.sent) {
+        return `⚠️ No se pudo enviar el mensaje por WhatsApp: ${sendRes.error}`;
+      }
 
       pushHistory(targetConv.id, 'bot', msgToSend);
       alertedConvsTrack.delete(`alert_${targetConv.id}`);
@@ -2307,7 +2436,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         text: msgToSend,
         sentBy: `${partnerName} (vía Telegram)`,
         createdAt: Date.now()
-      }, { needsAttention: false, attentionReason: null });
+      }, { botActive: true, needsAttention: false, attentionReason: null });
 
       return `✅ *Respuesta enviada por WhatsApp a ${targetConv.customerName || `+${cleanDigits}`}:*\n\n💬 "${msgToSend}"`;
     }
@@ -3347,7 +3476,7 @@ async function loadAiContext() {
   };
 }
 
-function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {}, exchangeRate = 1000, rates = {} }) {
+function buildSystemPrompt({ stockItems, paymentMethods, knowledgeBaseFaq, botConfig = {}, exchangeRate = 1000, rates = {}, activeConv = null }) {
   // SOLO exponer productos comerciales para la venta con stock > 0 (NUNCA insumos internos de taller como chips HwFly o memorias de taller)
   const stock = stockItems
     .filter(i => !i.deleted && i.kind === 'para_vender' && Number(i.stock) > 0)
@@ -3380,13 +3509,21 @@ ${botConfig.customAiRules}
   const rateParalelo = Number(rates?.paralelo || exchangeRate || 1000);
   const rateBcv = Number(rates?.bcv || 890);
 
+  const hasQuotedDelivery = activeConv && Number(activeConv.deliveryQuotedFee) > 0 && activeConv.deliveryStatus === 'quoted';
+  const activeDeliveryContext = hasQuotedDelivery ? `
+=== PRESUPUESTO CON DELIVERY YA COTIZADO EN ESTE CHAT ===
+• Destino / Zona acordada: ${activeConv.deliveryLugar || activeConv.deliveryZoneRequested || 'Delivery'}
+• Costo de Delivery aprobado: $${Number(activeConv.deliveryQuotedFee).toFixed(2)} USDT
+• Gran Total a cancelar (Pedido + Delivery): $${Number(activeConv.expectedOrderUsdt || activeConv.deliveryQuotedTotalUsdt || 0).toFixed(2)} USDT (Bs. ${Number(activeConv.expectedOrderBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })})
+• REGLA DE CONTINUIDAD: NO vuelvas a usar [FLAG_DELIVERY_EXTERNO] para esta misma zona porque la tarifa YA FUE ENVIADA. Si el cliente pide datos de pago o cuánto transferir, usa el total completo [MONTO_ORDEN_USDT: ${Number(activeConv.expectedOrderUsdt || 0).toFixed(2)}]. Si confirma día/hora y dirección/referencia para recibir su envío, confírmale la cita con cordialidad y coloca [FLAG_COORDINACION_ENTREGA].
+` : '';
+
   return `Eres el asistente oficial de ventas y atención al cliente de Doomlater.
 Nos especializamos en consolas de videojuegos (PlayStation, Nintendo Switch, Xbox), accesorios, videojuegos, servicio técnico y mantenimiento.
 Responde siempre en español, con tono amable, cálido, ágil, profesional y resolutivo, enfocado en cerrar la venta o agendar el servicio de principio a fin sin necesitar intervención humana salvo en los casos estrictos indicados abajo.
 REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final o emoji apropiado.
 No digas que eres una IA salvo que te lo pregunten directamente.
-${customRules}
-=== INFORMACIÓN Y PREGUNTAS FRECUENTES ===
+${customRules}${activeDeliveryContext}=== INFORMACIÓN Y PREGUNTAS FRECUENTES ===
 ${faq}
 
 === MÉTODOS DE PAGO Y CUENTAS OFICIALES ===
@@ -4304,7 +4441,13 @@ function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services 
 }
 
 function extractConsoleForAlert(historyTexts = [], queCompro = '', isEquipmentSale = false) {
-  const joined = [...(historyTexts || []), queCompro || ''].join(' ');
+  // Si la compra actual es un producto o repuesto suelto (ej: "2 unidades — Cargadores 3DS..."), NO lleva consola
+  if (!isEquipmentSale && queCompro && /^\d+\s+(?:unidad|unidades|cargador|cargadores)\b/i.test(String(queCompro).trim())) {
+    return null;
+  }
+
+  const recentSlice = (historyTexts || []).slice(-5);
+  const joined = [...recentSlice, isEquipmentSale ? '' : (queCompro || '')].join(' ');
   const clean = joined.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   // Solo aplica cuando es servicio técnico / taller / reparación / venta de equipo o el cliente menciona llevar su consola
@@ -4346,7 +4489,7 @@ function extractConsoleForAlert(historyTexts = [], queCompro = '', isEquipmentSa
   ];
 
   // Buscar desde el mensaje más reciente hacia atrás para tomar el modelo exacto confirmado
-  const linesRev = [...(historyTexts || []), queCompro || ''].reverse();
+  const linesRev = [...recentSlice, queCompro || ''].reverse();
   for (const line of linesRev) {
     const l = String(line || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     for (const [rx, label] of patterns) {
@@ -4425,6 +4568,7 @@ async function runAiReply(convId, q) {
       ensureConvHistoryLoaded(convId)
     ]);
     if (!conv || conv.deleted) return;
+    aiCtx.activeConv = conv;
     if (aiCtx.botConfig.globalBotEnabled === false || conv.botActive === false) {
       if (q.ctx.platform === 'whatsapp') await waPresence('paused', q.ctx.jid);
       return;
@@ -4784,7 +4928,10 @@ async function runAiReply(convId, q) {
       const isCoordination = Boolean(coordDetectedNow || result.isCoordination);
 
       if (isCoordination) {
-        const lugar = coordDetectedNow?.lugar || result.deliveryLugar || 'La Previsora / CC El Líder';
+        const specificNowPlace = (coordDetectedNow?.lugar && !coordDetectedNow.lugar.includes('Punto por definir'))
+          ? coordDetectedNow.lugar
+          : null;
+        const lugar = specificNowPlace || conv.deliveryLugar || result.deliveryLugar || coordDetectedNow?.lugar || 'La Previsora / CC El Líder';
         const fechaHora = coordDetectedNow?.fechaHora || result.deliveryFechaHora || 'Por confirmar con cliente';
 
         let coordMonto = null;
@@ -4852,6 +4999,10 @@ async function runAiReply(convId, q) {
         : (result.isEquipmentSale ? 'Cliente ofrece consola/equipo en venta'
         : (result.isUncorrelatedImage ? `Imagen por revisar: ${result.imageDescription}`
         : (result.isBrandNewPhotoNotice ? 'Cliente nuevo envió fotos sin texto' : 'Consulta fuera del catálogo')))));
+    }
+    if (result.deliveryExternalZone) {
+      patch.deliveryZoneRequested = result.deliveryExternalZone;
+      patch.deliveryLugar = `Delivery en ${result.deliveryExternalZone}`;
     }
     if (result.isCoordination) {
       patch.deliveryStatus = 'pending_delivery';
@@ -5962,16 +6113,8 @@ async function handleTelegramCallbackAction(tg, cq) {
 
   if (data.startsWith('vpay:')) {
     const convId = resolveTgShortConvKey(data.slice(5));
-    const conv = await fb('GET', ws(`botConversations/${convId}`));
-    if (!conv) {
-      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
-      return;
-    }
-    const cleanDigits = String(conv.customerPhone || '').replace(/\D/g, '');
-    const adminCtx = await loadAdminExecutiveContext();
-    const cmdText = cleanDigits ? `${cleanDigits} pago verificado` : 'pago verificado';
-    const reply = await handlePartnerCommands(cmdText, adminCtx, partnerName);
-    await answerTgCallback(tg.token, cq.id, '✅ ¡Pago verificado y cliente notificado!');
+    await answerTgCallback(tg.token, cq.id, '✅ Verificando pago y avisando al cliente...');
+    const reply = await executeVerifyPaymentAction({ convId, partnerName });
     if (chatId && reply) {
       await sendTelegramAlert(typeof reply === 'string' ? reply : reply.reply, undefined, chatId);
     }
@@ -5980,21 +6123,11 @@ async function handleTelegramCallbackAction(tg, cq) {
 
   if (data.startsWith('qdel:')) {
     const parts = data.slice(5).split(':');
-    const fee = parts.pop();
+    const fee = Number(parts.pop()) || 0;
     const convId = resolveTgShortConvKey(parts.join(':'));
-    const conv = await fb('GET', ws(`botConversations/${convId}`));
-    if (!conv) {
-      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
-      return;
-    }
-    const cleanDigits = String(conv.customerPhone || '').replace(/\D/g, '');
-    if (!cleanDigits) {
-      await answerTgCallback(tg.token, cq.id, 'Este chat no tiene teléfono válido para comando automático.', true);
-      return;
-    }
+    await answerTgCallback(tg.token, cq.id, `🚚 Enviando presupuesto total (+$${fee} delivery)...`);
     const adminCtx = await loadAdminExecutiveContext();
-    const reply = await handlePartnerCommands(`${cleanDigits} delivery ${fee}`, adminCtx, partnerName);
-    await answerTgCallback(tg.token, cq.id, `🚚 Delivery $${fee} cotizado al cliente!`);
+    const reply = await executeDeliveryQuoteAction({ convId, deliveryFee: fee, adminCtx, partnerName });
     if (chatId && reply) {
       await sendTelegramAlert(typeof reply === 'string' ? reply : reply.reply, undefined, chatId);
     }
@@ -6003,25 +6136,27 @@ async function handleTelegramCallbackAction(tg, cq) {
 
   if (data.startsWith('mdel:')) {
     const convId = resolveTgShortConvKey(data.slice(5));
-    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    await answerTgCallback(tg.token, cq.id, '📦 Marcando pedido como entregado...');
+    const convsRaw = await fb('GET', ws('botConversations'));
+    const conv = findTargetCustomerConv(convsRaw ? Object.values(convsRaw) : [], { convId });
     if (!conv) {
-      await answerTgCallback(tg.token, cq.id, 'No se encontró la conversación.', true);
+      if (chatId) await sendTelegramAlert('⚠️ No se encontró la conversación.', undefined, chatId);
       return;
     }
     const now = Date.now();
     await commitAndVerifyWebSync({
-      [`botConversations/${convId}/deliveryStatus`]: 'delivered',
-      [`botConversations/${convId}/deliveredAt`]: now,
-      [`botConversations/${convId}/needsAttention`]: false,
-      [`botConversations/${convId}/attentionReason`]: null,
-      [`botConversations/${convId}/updatedAt`]: now,
+      [`botConversations/${conv.id}/botActive`]: true,
+      [`botConversations/${conv.id}/deliveryStatus`]: 'delivered',
+      [`botConversations/${conv.id}/deliveredAt`]: now,
+      [`botConversations/${conv.id}/needsAttention`]: false,
+      [`botConversations/${conv.id}/attentionReason`]: null,
+      [`botConversations/${conv.id}/updatedAt`]: now,
       'meta/updatedAt': now,
       'meta/rev': now,
       'meta/lastLabel': `Pedido de ${conv.customerName || 'Cliente'} marcado entregado desde Telegram`
     }, 'Entrega completada');
-    alertedConvsTrack.delete(`coord_${convId}`);
-    alertedConvsTrack.delete(`alert_${convId}`);
-    await answerTgCallback(tg.token, cq.id, '📦 ¡Pedido marcado como entregado!');
+    alertedConvsTrack.delete(`coord_${conv.id}`);
+    alertedConvsTrack.delete(`alert_${conv.id}`);
     if (chatId) {
       await sendTelegramAlert(`✅ *Pedido marcado como ENTREGADO*\n• Cliente: ${conv.customerName || 'Cliente'} (${conv.customerPhone || ''})\n• Alerta retirada de la Web.`, undefined, chatId);
     }
@@ -6030,20 +6165,21 @@ async function handleTelegramCallbackAction(tg, cq) {
 
   if (data.startsWith('calr:')) {
     const convId = resolveTgShortConvKey(data.slice(5));
-    const conv = await fb('GET', ws(`botConversations/${convId}`));
+    await answerTgCallback(tg.token, cq.id, '✅ Retirando alerta...');
+    const convsRaw = await fb('GET', ws('botConversations'));
+    const conv = findTargetCustomerConv(convsRaw ? Object.values(convsRaw) : [], { convId });
+    const targetId = conv ? conv.id : convId;
     const now = Date.now();
-    await fb('PATCH', ROOT, {
-      [`botConversations/${convId}/needsAttention`]: false,
-      [`botConversations/${convId}/attentionReason`]: null,
-      [`botConversations/${convId}/updatedAt`]: now,
-      'meta/updatedAt': now,
-      'meta/rev': now
-    });
-    alertedConvsTrack.delete(`alert_${convId}`);
-    alertedConvsTrack.delete(`human_${convId}`);
-    await answerTgCallback(tg.token, cq.id, '✅ Alerta retirada de la Web.');
+    await commitAndVerifyWebSync({
+      [`botConversations/${targetId}/botActive`]: true,
+      [`botConversations/${targetId}/needsAttention`]: false,
+      [`botConversations/${targetId}/attentionReason`]: null,
+      [`botConversations/${targetId}/updatedAt`]: now
+    }, 'Alerta retirada desde Telegram');
+    alertedConvsTrack.delete(`alert_${targetId}`);
+    alertedConvsTrack.delete(`human_${targetId}`);
     if (chatId) {
-      await sendTelegramAlert(`✅ Alerta retirada para *${conv?.customerName || convId}* (por ${fromName}).`, undefined, chatId);
+      await sendTelegramAlert(`✅ Alerta retirada para *${conv?.customerName || targetId}* (por ${fromName}). El bot sigue activo en el chat.`, undefined, chatId);
     }
   }
 }

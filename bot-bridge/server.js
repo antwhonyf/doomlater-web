@@ -620,21 +620,50 @@ async function notifySinglePartner(target, text) {
   return sendPartnerDirectMessage('Doom Bot', target, text);
 }
 
+function resolveTargetPartnerTelegramChatIds(tg, fromPartnerName, toTarget) {
+  const subs = tg?.botConfig?.telegramSubscribers ? Object.values(tg.botConfig.telegramSubscribers).filter(s => s && s.chatId) : [];
+  const targetLower = String(toTarget || '').toLowerCase();
+  const wantsSeba = targetLower.includes('seba') || targetLower.includes('doom2')
+    || (!targetLower.includes('antho') && !targetLower.includes('doom1') && fromPartnerName === 'Anthony');
+
+  const isAnthonySub = (s) => String(s.chatId) === '1016677286' || /antho/i.test(`${s.name || ''} ${s.username || ''}`);
+  const isSebaSub = (s) => /seba/i.test(`${s.name || ''} ${s.username || ''}`) || (!isAnthonySub(s) && s.type === 'private');
+
+  const matched = subs.filter(s => wantsSeba ? isSebaSub(s) : isAnthonySub(s)).map(s => String(s.chatId));
+  // También incluir grupos de Telegram vinculados si hicieron un grupo común de socios
+  for (const s of subs) {
+    if (s.type && s.type !== 'private' && !matched.includes(String(s.chatId))) {
+      matched.push(String(s.chatId));
+    }
+  }
+  return { wantsSeba, expectedName: wantsSeba ? 'Sebastián' : 'Anthony', chatIds: matched };
+}
+
 /**
  * Envío directo e inmediato de mensajes o documentos PDF a uno de los socios.
  */
 async function sendPartnerDirectMessage(fromPartnerName, toTarget, text, pdfAttachment = null) {
-  const tg = await getTelegramAndAntiBanConfig();
-  if (tg.token && tg.chatIds.length > 0) {
-    if (pdfAttachment && pdfAttachment.buffer) {
-      for (const cid of tg.chatIds) {
-        await sendTelegramDocument(cid, pdfAttachment.buffer, pdfAttachment.fileName, text);
+  const tg = await getTelegramAndAntiBanConfig(true);
+  if (tg.token) {
+    const resolved = resolveTargetPartnerTelegramChatIds(tg, fromPartnerName, toTarget);
+    if (resolved.chatIds.length > 0) {
+      for (const cid of resolved.chatIds) {
+        if (pdfAttachment && pdfAttachment.buffer) {
+          await sendTelegramDocument(cid, pdfAttachment.buffer, pdfAttachment.fileName, text);
+        } else {
+          await sendTelegramAlert(text, undefined, cid);
+        }
       }
-    } else {
-      await sendTelegramAlert(text);
-    }
-    if (tg.antiBanStrictMode) {
-      return { success: true, targetName: 'Telegram Socios', targetPhone: 'Telegram' };
+      if (tg.antiBanStrictMode) {
+        return { success: true, via: 'Telegram', targetName: resolved.expectedName, targetPhone: 'Telegram' };
+      }
+    } else if (tg.antiBanStrictMode) {
+      return {
+        success: false,
+        notLinkedYet: true,
+        targetName: resolved.expectedName,
+        error: `${resolved.expectedName} aún no ha pulsado /start en @Doomlater_Alertas_bot desde su celular.`
+      };
     }
   }
   if (tg.antiBanStrictMode) {
@@ -2942,9 +2971,12 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         `_Enviado automáticamente vía Doom Bot IA._`;
 
       const pdfAttachment = wantsPdf ? generateDoomPdf('estado_cuenta', adminCtx, partnerName) : null;
-      await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg, pdfAttachment);
+      const sendRes = await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg, pdfAttachment);
+      if (sendRes && sendRes.notLinkedYet) {
+        return `⚠️ *${sendRes.targetName}* todavía no ha tocado *Iniciar (/start)* en *@Doomlater_Alertas_bot* desde su celular.\n\n👉 Pídele que abra https://t.me/Doomlater_Alertas_bot y pulse *Iniciar* una sola vez para que le lleguen tus avisos y PDFs directo a su Telegram.`;
+      }
 
-      return `✅ *¡Listo ${partnerName}!* Ya le envié el estado de cuenta ${wantsPdf ? 'y el documento PDF ' : ''}por WhatsApp a tu socio @${targetPartnerName} (+${targetPhone}).`;
+      return `✅ *¡Listo ${partnerName}!* Ya le envié el estado de cuenta ${wantsPdf ? 'y el documento PDF ' : ''}directo por Telegram a tu socio *@${targetPartnerName}*.`;
     }
 
     // Subcaso B: Enviar inventario / stock
@@ -2957,9 +2989,12 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         `_Enviado automáticamente vía Doom Bot IA._`;
 
       const pdfAttachment = wantsPdf ? generateDoomPdf('stock', adminCtx, partnerName) : null;
-      await sendPartnerDirectMessage(partnerName, targetPartnerName, stockMsg, pdfAttachment);
+      const sendRes = await sendPartnerDirectMessage(partnerName, targetPartnerName, stockMsg, pdfAttachment);
+      if (sendRes && sendRes.notLinkedYet) {
+        return `⚠️ *${sendRes.targetName}* todavía no ha tocado *Iniciar (/start)* en *@Doomlater_Alertas_bot* desde su celular.\n\n👉 Pídele que abra https://t.me/Doomlater_Alertas_bot y pulse *Iniciar* una sola vez para que le lleguen tus avisos y PDFs directo a su Telegram.`;
+      }
 
-      return `✅ *¡Listo ${partnerName}!* Ya le envié el inventario ${wantsPdf ? 'y el archivo PDF ' : ''}por WhatsApp a tu socio @${targetPartnerName} (+${targetPhone}).`;
+      return `✅ *¡Listo ${partnerName}!* Ya le envié el inventario ${wantsPdf ? 'y el archivo PDF ' : ''}directo por Telegram a tu socio *@${targetPartnerName}*.`;
     }
 
     // Subcaso C: Mensaje directo o recordatorio
@@ -2971,9 +3006,12 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       if (!directText) directText = 'Atento a los pendientes de Doomlater';
 
       const partnerMsg = `🔔 *MENSAJE DE TU SOCIO @${partnerName}:*\n\n"${directText}"\n\n_Enviado en directo vía Doom Bot IA._`;
-      await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg);
+      const sendRes = await sendPartnerDirectMessage(partnerName, targetPartnerName, partnerMsg);
+      if (sendRes && sendRes.notLinkedYet) {
+        return `⚠️ *${sendRes.targetName}* todavía no ha tocado *Iniciar (/start)* en *@Doomlater_Alertas_bot* desde su celular.\n\n👉 Pídele que abra https://t.me/Doomlater_Alertas_bot y pulse *Iniciar* una sola vez; apenas lo haga, todos tus avisos le llegarán directo a su Telegram.`;
+      }
 
-      return `✅ *Mensaje enviado con éxito a tu socio @${targetPartnerName} (+${targetPhone}):*\n\n👉 "${directText}"`;
+      return `✅ *Mensaje enviado directo por Telegram a tu socio @${targetPartnerName}:*\n\n👉 "${directText}"`;
     }
   }
 
@@ -3042,7 +3080,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
     await fb('PUT', ws(`partnerReminders/${remId}`), remData);
     await touchMeta(`Recordatorio programado para @${targetPartner}`);
 
-    return `⏰ *¡Recordatorio programado!* 🔔\n\nA las *${timeLabel}* le enviaré este mensaje por WhatsApp a tu socio @${targetPartner}:\n\n` +
+    return `⏰ *¡Recordatorio programado!* 🔔\n\nA las *${timeLabel}* le enviaré este mensaje directo por Telegram a tu socio @${targetPartner === 'Socio' ? 'Sebastián' : targetPartner}:\n\n` +
       `👉 "${reminderText}"`;
   }
 
@@ -3067,9 +3105,14 @@ async function checkPartnerReminders() {
         rem.sentAt = now;
         await fb('PATCH', ws(`partnerReminders/${key}`), { sent: true, sentAt: now });
 
-        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from} PARA @${rem.to}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
+        const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from} PARA @${rem.to === 'Socio' ? 'Sebastián' : rem.to}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
         if (canSendTg) {
-          await sendTelegramAlert(msgText);
+          const resolved = resolveTargetPartnerTelegramChatIds(tg, rem.from || 'Anthony', rem.to || '');
+          if (resolved.chatIds.length > 0) {
+            for (const cid of resolved.chatIds) await sendTelegramAlert(msgText, undefined, cid);
+          } else {
+            await sendTelegramAlert(msgText);
+          }
         } else if (canSendWa) {
           const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
           await waSend(destJid, { text: msgText });
@@ -3185,8 +3228,11 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
         const target = sendMatch[1].trim();
         const textToSend = sendMatch[2].trim();
         const partnerMsg = `🔔 *MENSAJE DE TU SOCIO @${partnerName}:*\n\n"${textToSend}"\n\n_Enviado en directo vía Doom Bot IA._`;
-        sendPartnerDirectMessage(partnerName, target, partnerMsg).catch(e => logger.warn({ err: e.message }, 'Error enviando accion directa'));
+        const sendRes = await sendPartnerDirectMessage(partnerName, target, partnerMsg).catch(e => ({ success: false, error: e.message }));
         reply = reply.replace(sendMatch[0], '').trim();
+        if (sendRes && sendRes.notLinkedYet) {
+          reply = `⚠️ *${sendRes.targetName}* todavía no ha pulsado *Iniciar (/start)* en *@Doomlater_Alertas_bot* desde su celular.\n\n👉 Pídele que entre a https://t.me/Doomlater_Alertas_bot y toque *Iniciar* una sola vez para poder escribirle directo por Telegram.`;
+        }
       }
 
       // 2. Generar y enviar PDF al socio
@@ -3197,8 +3243,11 @@ async function queryAdminAI(convId, userMessage, adminCtx, partnerName, mediaAtt
         const note = (pdfSocioMatch[3] || '').trim();
         const pdfAttachment = generateDoomPdf(pdfType, adminCtx, partnerName);
         const caption = note ? `🔔 *REPORTE DE TU SOCIO @${partnerName}:*\n\n${note}` : `🔔 *REPORTE OFICIAL DOOMLATER*\nEnviado por tu socio @${partnerName}`;
-        sendPartnerDirectMessage(partnerName, target, caption, pdfAttachment).catch(e => logger.warn({ err: e.message }, 'Error enviando PDF a socio'));
+        const sendRes = await sendPartnerDirectMessage(partnerName, target, caption, pdfAttachment).catch(e => ({ success: false, error: e.message }));
         reply = reply.replace(pdfSocioMatch[0], '').trim();
+        if (sendRes && sendRes.notLinkedYet) {
+          reply = `⚠️ *${sendRes.targetName}* todavía no ha pulsado *Iniciar (/start)* en *@Doomlater_Alertas_bot* desde su celular.\n\n👉 Pídele que entre a https://t.me/Doomlater_Alertas_bot y toque *Iniciar* una sola vez para recibir reportes PDF en su Telegram.`;
+        }
       }
 
       // 3. Generar PDF para el socio que lo solicitó directamente en este chat

@@ -514,6 +514,41 @@ function buildTelegramInlineButtons(alertKey, options = {}) {
   return rows.length > 0 ? { inline_keyboard: rows } : undefined;
 }
 
+async function sendTelegramChatAction(token, chatId, action = 'typing') {
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(4000),
+      body: JSON.stringify({ chat_id: String(chatId), action })
+    });
+  } catch (e) {}
+}
+
+async function downloadTelegramFileBuffer(token, fileId) {
+  if (!token || !fileId) return null;
+  try {
+    const metaRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`, {
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!metaRes.ok) return null;
+    const metaJson = await metaRes.json().catch(() => ({}));
+    const filePath = metaJson?.result?.file_path;
+    if (!metaJson?.ok || !filePath) return null;
+
+    const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!fileRes.ok) return null;
+    const arrBuf = await fileRes.arrayBuffer();
+    return Buffer.from(arrBuf);
+  } catch (e) {
+    logger.warn({ err: e.message, fileId }, 'Error descargando archivo multimedia de Telegram');
+    return null;
+  }
+}
+
 async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId = null) {
   try {
     const tg = await getTelegramAndAntiBanConfig();
@@ -521,20 +556,31 @@ async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId =
     const targets = specificChatId ? [String(specificChatId)] : tg.chatIds;
     if (!targets || targets.length === 0) return false;
 
+    const msgStr = String(text || '');
     let anySent = false;
     for (const chatId of targets) {
-      const payload = {
+      const basePayload = {
         chat_id: chatId,
-        text: String(text || ''),
+        text: msgStr,
         disable_web_page_preview: true,
         ...(replyMarkup ? { reply_markup: replyMarkup } : {})
       };
-      const res = await fetch(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
+      // Intentar primero con formato enriquecido Markdown (*negrita* / _cursiva_)
+      let res = await fetch(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(8000),
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ ...basePayload, parse_mode: 'Markdown' })
       });
+      // Si hay algún carácter especial sin cerrar (ej: @usuario_con_guion), reintentar inmediato en texto limpio
+      if (!res.ok) {
+        res = await fetch(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify(basePayload)
+        });
+      }
       if (res.ok) anySent = true;
       else {
         const errBody = await res.text().catch(() => '');
@@ -552,15 +598,25 @@ async function sendTelegramDocument(chatId, pdfBuffer, fileName, caption = '') {
   try {
     const tg = await getTelegramAndAntiBanConfig();
     if (!tg.token || !chatId || !pdfBuffer) return false;
-    const form = new FormData();
-    form.append('chat_id', String(chatId));
-    if (caption) form.append('caption', String(caption).slice(0, 1020));
-    form.append('document', new Blob([pdfBuffer], { type: 'application/pdf' }), fileName || 'Documento_Doomlater.pdf');
-    const res = await fetch(`https://api.telegram.org/bot${tg.token}/sendDocument`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(12000),
-      body: form
-    });
+    await sendTelegramChatAction(tg.token, chatId, 'upload_document');
+
+    const tryUpload = async (useMarkdown) => {
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      if (caption) {
+        form.append('caption', String(caption).slice(0, 1020));
+        if (useMarkdown) form.append('parse_mode', 'Markdown');
+      }
+      form.append('document', new Blob([pdfBuffer], { type: 'application/pdf' }), fileName || 'Documento_Doomlater.pdf');
+      return fetch(`https://api.telegram.org/bot${tg.token}/sendDocument`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+        body: form
+      });
+    };
+
+    let res = await tryUpload(true);
+    if (!res.ok && caption) res = await tryUpload(false);
     return res.ok;
   } catch (e) {
     logger.warn({ err: e.message }, 'No se pudo enviar PDF por Telegram');
@@ -569,8 +625,6 @@ async function sendTelegramDocument(chatId, pdfBuffer, fileName, caption = '') {
 }
 
 async function notifyPartners(text, alertKey = null, options = {}) {
-  const tg = await getTelegramAndAntiBanConfig();
-
   if (alertKey) {
     const tgCooldownMs = 25 * 1000; // Evita duplicados idénticos en menos de 25s
     const last = partnerAlertCooldown.get(`tg_${alertKey}`) || 0;
@@ -579,44 +633,11 @@ async function notifyPartners(text, alertKey = null, options = {}) {
   }
 
   const replyMarkup = buildTelegramInlineButtons(alertKey, options);
-  const sentViaTelegram = await sendTelegramAlert(text, replyMarkup);
-
-  // BLINDAJE ANTI-BANEO TOTAL:
-  // Si el Modo Anti-Baneo Estricto está activo (por defecto) o ya se entregó por Telegram,
-  // JAMÁS enviamos alertas automáticas salientes por WhatsApp para proteger el número al 100%.
-  if (tg.antiBanStrictMode || sentViaTelegram) {
-    return;
-  }
-
-  if (!waSock || waState !== 'connected') return;
-  if (alertKey) {
-    const cooldownMs = 15 * 60 * 1000;
-    const lastWa = partnerAlertCooldown.get(`wa_${alertKey}`) || 0;
-    if (Date.now() - lastWa < cooldownMs) return;
-    partnerAlertCooldown.set(`wa_${alertKey}`, Date.now());
-  }
-
-  for (let idx = 0; idx < PARTNER_ACCOUNTS.length; idx++) {
-    const p = PARTNER_ACCOUNTS[idx];
-    if (idx > 0) await new Promise(r => setTimeout(r, 1800));
-    for (const jid of p.jids) {
-      try {
-        await waSend(jid, { text });
-        break;
-      } catch (err) {
-        logger.warn({ target: p.name, jid, err: err.message }, 'No se pudo enviar alerta por este JID');
-      }
-    }
-  }
+  // 100% EXCLUSIVO POR TELEGRAM: WhatsApp queda limpio solo para clientes reales (cero riesgo de baneo)
+  await sendTelegramAlert(text, replyMarkup);
 }
 
 async function notifySinglePartner(target, text) {
-  const tg = await getTelegramAndAntiBanConfig();
-  if (tg.token && tg.chatIds.length > 0) {
-    await sendTelegramAlert(text);
-    if (tg.antiBanStrictMode) return { success: true };
-  }
-  if (tg.antiBanStrictMode) return { success: false, reason: 'anti_ban_strict' };
   return sendPartnerDirectMessage('Doom Bot', target, text);
 }
 
@@ -640,68 +661,30 @@ function resolveTargetPartnerTelegramChatIds(tg, fromPartnerName, toTarget) {
 }
 
 /**
- * Envío directo e inmediato de mensajes o documentos PDF a uno de los socios.
+ * Envío directo e inmediato de mensajes o documentos PDF a uno de los socios (100% vía Telegram).
  */
 async function sendPartnerDirectMessage(fromPartnerName, toTarget, text, pdfAttachment = null) {
   const tg = await getTelegramAndAntiBanConfig(true);
-  if (tg.token) {
-    const resolved = resolveTargetPartnerTelegramChatIds(tg, fromPartnerName, toTarget);
-    if (resolved.chatIds.length > 0) {
-      for (const cid of resolved.chatIds) {
-        if (pdfAttachment && pdfAttachment.buffer) {
-          await sendTelegramDocument(cid, pdfAttachment.buffer, pdfAttachment.fileName, text);
-        } else {
-          await sendTelegramAlert(text, undefined, cid);
-        }
-      }
-      if (tg.antiBanStrictMode) {
-        return { success: true, via: 'Telegram', targetName: resolved.expectedName, targetPhone: 'Telegram' };
-      }
-    } else if (tg.antiBanStrictMode) {
-      return {
-        success: false,
-        notLinkedYet: true,
-        targetName: resolved.expectedName,
-        error: `${resolved.expectedName} aún no ha pulsado /start en @Doomlater_Alertas_bot desde su celular.`
-      };
-    }
+  if (!tg.token) {
+    return { success: false, error: 'Token de Telegram no configurado.' };
   }
-  if (tg.antiBanStrictMode) {
-    return { success: false, error: 'Modo Anti-Baneo activo: vincula Telegram para envíos directos automáticos.' };
-  }
-  if (!waSock || waState !== 'connected') {
-    return { success: false, error: 'WhatsApp no está conectado' };
-  }
-  const targetLower = String(toTarget || '').toLowerCase();
-  let toPartner = null;
-  if (targetLower.includes('seba') || targetLower.includes('socio') || targetLower.includes('doom2') || fromPartnerName === 'Anthony') {
-    toPartner = PARTNER_ACCOUNTS[1]; // Sebastián (+584264181643)
-  } else {
-    toPartner = PARTNER_ACCOUNTS[0]; // Anthony (+584142005801)
-  }
-
-  let sent = false;
-  let lastErr = null;
-  for (const jid of toPartner.jids) {
-    try {
+  const resolved = resolveTargetPartnerTelegramChatIds(tg, fromPartnerName, toTarget);
+  if (resolved.chatIds.length > 0) {
+    for (const cid of resolved.chatIds) {
       if (pdfAttachment && pdfAttachment.buffer) {
-        await waSend(jid, {
-          document: pdfAttachment.buffer,
-          mimetype: 'application/pdf',
-          fileName: pdfAttachment.fileName || 'Reporte_Doomlater.pdf',
-          caption: text
-        });
+        await sendTelegramDocument(cid, pdfAttachment.buffer, pdfAttachment.fileName, text);
       } else {
-        await waSend(jid, { text });
+        await sendTelegramAlert(text, undefined, cid);
       }
-      sent = true;
-      break;
-    } catch (err) {
-      lastErr = err;
-      logger.warn({ target: toPartner.name, jid, err: err.message }, 'No se pudo enviar mensaje directo al socio');
     }
+    return { success: true, via: 'Telegram', targetName: resolved.expectedName, targetPhone: 'Telegram' };
   }
-  return { success: sent, targetName: toPartner.name, targetPhone: toPartner.phone, error: lastErr?.message };
+  return {
+    success: false,
+    notLinkedYet: true,
+    targetName: resolved.expectedName,
+    error: `${resolved.expectedName} aún no ha pulsado /start en @Doomlater_Alertas_bot desde su celular.`
+  };
 }
 
 /**
@@ -1299,7 +1282,8 @@ function buildAdminSystemPrompt(adminCtx, partnerName) {
 ${adminCtx.botConfig.customAiRules}
 ` : '';
 
-  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater, interactuando en vivo por WhatsApp con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+  return `Eres "Doom Bot", el Asistente Ejecutivo Inteligente y Asesor de Operaciones Privado de Doomlater, interactuando en vivo por Telegram Privado Oficial (@Doomlater_Alertas_bot) con uno de los dueños fundadores: ${partnerName} (Anthony = @doom1, Sebastián = @doom2).
+NOTA DE ARQUITECTURA: Todo el mando ejecutivo/admin (notas de voz, fotos, reportes PDF, balances, avisos entre socios y aprobación de pagos) opera 100% por Telegram, mientras el WhatsApp comercial de Doomlater está dedicado exclusivamente a atender clientes reales.
 
 REGLA DE IGUALDAD EJECUTIVA: Trata siempre a ambos socios (Anthony y Sebastián) con el mismo respeto, igualdad de condiciones, transparencia y acceso total a todas las herramientas, balances, stock y servicios de la empresa.
 
@@ -1335,9 +1319,9 @@ REGLAS DE FORMATO Y ESTILO:
 - Tono: Colega ejecutivo, proactivo, rápido, gamer, de absoluta confianza.
 
 CAPACIDAD REAL PARA DISPARAR MENSAJES Y ENVIAR REPORTES PDF A LOS SOCIOS:
-¡TÚ SÍ TIENES LA CAPACIDAD DE ENVIAR MENSAJES DIRECTOS Y REPORTES PDF POR WHATSAPP AL OTRO SOCIO! NUNCA digas que no puedes enviar mensajes o que no puedes disparar mensajes a otros chats.
+¡TÚ SÍ TIENES LA CAPACIDAD DE ENVIAR MENSAJES DIRECTOS Y REPORTES PDF POR TELEGRAM AL OTRO SOCIO! NUNCA digas que no puedes enviar mensajes o que no puedes disparar mensajes a otros chats.
 
-Cuando ${partnerName} te pida en lenguaje natural que le envíes algo a su socio (@Sebastián o @Anthony):
+Cuando ${partnerName} te pida en lenguaje natural (por texto o nota de voz) que le envíes algo a su socio (@Sebastián o @Anthony):
 1. Si te pide avisarle, recordarle o enviarle un mensaje al socio (ej: "avísale a sebastián que...", "envíale un mensaje a mi socio que revise tal cosa"):
    Inserta en tu respuesta la orden:
    [ACCION_ENVIAR: sebastian | texto exacto que quieres que reciba el socio]
@@ -1353,7 +1337,7 @@ Cuando ${partnerName} te pida en lenguaje natural que le envíes algo a su socio
 5. Si te pide generar un Contrato o Acuerdo (Diseño oficial con cláusulas, recuadro de exclusión estricta y firmas):
    [ACCION_PDF_CONTRATO: <nombre> | <cédula> | <título o servicio>]
 
-El servidor interceptará estas órdenes automáticamente, generará el PDF y/o enviará el mensaje al WhatsApp del socio (+584264181643 para Sebastián o +584142005801 para Anthony), y le confirmará a ${partnerName}.
+El servidor interceptará estas órdenes automáticamente, generará el PDF y/o enviará el mensaje directo al Telegram del socio (@Sebastián o @Anthony), y le confirmará a ${partnerName}.
 
 REGISTRO DE TRANSACCIONES DIRECTO AL DASHBOARD EN TIEMPO REAL:
 Tanto Anthony (@doom1) como Sebastián (@doom2) pueden agregar transacciones directamente al dashboard contable mediante notas de voz (audio) o mensajes de texto.
@@ -2063,7 +2047,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
   }
 
   // 0.00. CONSULTA DIRECTA DE CHATS CON ALERTAS O ATENCIÓN PENDIENTE EN LA WEB
-  if (/(?:chat(?:s)?\s*(?:con|en)?\s*alerta|alerta(?:s)?|atenci[oó]n\s*pendiente|clientes?\s*esperando|duda(?:s)?|pagos?\s*por\s*verificar)/i.test(lower)) {
+  if (!/(?:sebasti|anthony|socio|doom1|doom2)/i.test(lower) && /(?:chat(?:s)?\s*(?:con|en)?\s*alerta|(?:hay|ver|cu[aá]les|mostrar|revisar|dame|lista(?:r)?)\s*(?:las?\s*)?alerta(?:s)?|^alertas?\??$|atenci[oó]n\s*pendiente|clientes?\s*esperando|pagos?\s*por\s*verificar)/i.test(lower)) {
     const alertList = (adminCtx.alertConvs || []).filter(c => !c.deleted);
     if (alertList.length === 0) {
       return `✅ *¡Bandeja al día!* No hay ningún chat con alertas ni clientes esperando atención en la Web.`;
@@ -2139,7 +2123,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       [`botConversations/${targetConv.id}/updatedAt`]: now,
       'meta/updatedAt': now,
       'meta/rev': now,
-      'meta/lastLabel': `Pago de ${targetConv.customerName || 'Cliente'} verificado por @${profileUser} vía WhatsApp`,
+      'meta/lastLabel': `Pago de ${targetConv.customerName || 'Cliente'} verificado por @${profileUser} vía Telegram`,
       'meta/lastClientId': 'bot_bridge',
       'meta/updatedBy': profileUser
     };
@@ -2155,7 +2139,7 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
         type: 'income',
         walletId: targetWallet,
         category: 'cat_ventas',
-        description: `Pago verificado vía WhatsApp por @${partnerName}. Ref: ${targetConv.pendingPaymentRef || 'S/N'}. Cliente: ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})`,
+        description: `Pago verificado vía Telegram por @${partnerName}. Ref: ${targetConv.pendingPaymentRef || 'S/N'}. Cliente: ${targetConv.customerName || 'Cliente'} (${targetConv.customerPhone || 'N/A'})`,
         date: new Date(now).toISOString().slice(0, 10),
         time: new Date(now).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false }),
         createdAt: now,
@@ -2284,6 +2268,49 @@ async function handlePartnerCommands(userText, adminCtx, partnerName, apiKey = n
       `• *Tarifa de Delivery:* *$${deliveryFee.toFixed(2)} USD*\n` +
       `• *Total Calculado:* *$${totalUsdt.toFixed(2)} USD* (Bs. ${totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })})\n\n` +
       `👉 _Se le envió el mensaje al cliente solicitando confirmación de día y hora. En cuanto confirme te avisaré con la alerta DOOM ALERT ENTREGA._`;
+  }
+
+  // 0.00015. RESPUESTA DIRECTA A UN CLIENTE DE WHATSAPP DESDE TELEGRAM (TEXTO O VOZ)
+  // Sintaxis: "04141234567 dile que..." | "responde a 04141234567: ..." | "escríbele al cliente 04141234567 que..."
+  const replyClientMatch = text.match(/^(?:(?:responde(?:r|le)?|escr[ií]be(?:le)?|dile|cont[eé]stale)\s+(?:al?\s+cliente\s+|a\s+)?(\+?58\d{10}|0?4\d{9,10})(?:\s+que\b|\s*[:\-]\s*|\s+)(.+)|(\+?58\d{10}|0?4\d{9,10})\s+(?:dile|responde(?:le)?|escr[ií]bele|cont[eé]stale)(?:\s+que\b|\s*[:\-]\s*|\s+)(.+))$/is);
+  if (replyClientMatch) {
+    const rawPhone = replyClientMatch[1] || replyClientMatch[3] || '';
+    const msgToSend = String(replyClientMatch[2] || replyClientMatch[4] || '').trim();
+    const cleanDigits = rawPhone.replace(/\D/g, '');
+    if (cleanDigits && msgToSend) {
+      const convsRaw = await fb('GET', ws('botConversations'));
+      const allConvs = convsRaw ? Object.values(convsRaw).filter(c => c && !c.deleted) : [];
+      const last10 = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+      const targetConv = allConvs.find(c => {
+        const cPhone = String(c.customerPhone || '').replace(/\D/g, '');
+        const cJid = String(c.customerJid || '').replace(/\D/g, '');
+        return (cPhone && (cPhone.endsWith(last10) || last10.endsWith(cPhone))) || cJid.includes(last10) || String(c.id || '').includes(last10);
+      });
+
+      if (!targetConv || !targetConv.customerJid) {
+        return `⚠️ No encontré un chat activo de WhatsApp con el número *${cleanDigits}*.`;
+      }
+      if (!waSock || waState !== 'connected') {
+        return `⚠️ WhatsApp no está conectado en este instante para enviar la respuesta.`;
+      }
+
+      await waPresence('composing', targetConv.customerJid);
+      await new Promise(r => setTimeout(r, Math.min(1800, Math.max(700, msgToSend.length * 14))));
+      await waSend(targetConv.customerJid, { text: msgToSend });
+      await waPresence('paused', targetConv.customerJid);
+
+      pushHistory(targetConv.id, 'bot', msgToSend);
+      alertedConvsTrack.delete(`alert_${targetConv.id}`);
+      alertedConvsTrack.delete(`human_${targetConv.id}`);
+      await recordOutgoing(targetConv.id, {
+        id: `bmsg_wa_tg_reply_${Date.now()}`,
+        text: msgToSend,
+        sentBy: `${partnerName} (vía Telegram)`,
+        createdAt: Date.now()
+      }, { needsAttention: false, attentionReason: null });
+
+      return `✅ *Respuesta enviada por WhatsApp a ${targetConv.customerName || `+${cleanDigits}`}:*\n\n💬 "${msgToSend}"`;
+    }
   }
 
   // 0.0002. FACTURAS DIGITALES EN PDF PARA SOCIOS (DISEÑO OFICIAL ITSDOOMLATER)
@@ -3091,9 +3118,7 @@ async function checkPartnerReminders() {
   if (!isOwner) return;
   try {
     const tg = await getTelegramAndAntiBanConfig();
-    const canSendTg = Boolean(tg.token && tg.chatIds.length > 0);
-    const canSendWa = Boolean(!tg.antiBanStrictMode && waSock && waState === 'connected');
-    if (!canSendTg && !canSendWa) return;
+    if (!tg.token || tg.chatIds.length === 0) return;
 
     const raw = await fb('GET', ws('partnerReminders'));
     if (!raw || typeof raw !== 'object') return;
@@ -3106,18 +3131,13 @@ async function checkPartnerReminders() {
         await fb('PATCH', ws(`partnerReminders/${key}`), { sent: true, sentAt: now });
 
         const msgText = `🔔 *RECORDATORIO DE TU SOCIO @${rem.from} PARA @${rem.to === 'Socio' ? 'Sebastián' : rem.to}:*\n\n"${rem.text}"\n\n_Enviado automáticamente por el Asistente Doomlater._`;
-        if (canSendTg) {
-          const resolved = resolveTargetPartnerTelegramChatIds(tg, rem.from || 'Anthony', rem.to || '');
-          if (resolved.chatIds.length > 0) {
-            for (const cid of resolved.chatIds) await sendTelegramAlert(msgText, undefined, cid);
-          } else {
-            await sendTelegramAlert(msgText);
-          }
-        } else if (canSendWa) {
-          const destJid = rem.toJid || `${rem.toPhone}@s.whatsapp.net`;
-          await waSend(destJid, { text: msgText });
-          const confirmSender = `✅ *Recordatorio entregado:* Ya le envié el mensaje a tu socio @${rem.to}:\n"${rem.text}"`;
-          notifySinglePartner(rem.from, confirmSender).catch(() => {});
+        const resolved = resolveTargetPartnerTelegramChatIds(tg, rem.from || 'Anthony', rem.to || '');
+        if (resolved.chatIds.length > 0) {
+          for (const cid of resolved.chatIds) await sendTelegramAlert(msgText, undefined, cid);
+          const confirmSender = `✅ *Recordatorio entregado por Telegram a @${resolved.expectedName}:*\n"${rem.text}"`;
+          notifySinglePartner(rem.from || 'Anthony', confirmSender).catch(() => {});
+        } else {
+          await sendTelegramAlert(msgText);
         }
         await touchMeta(`Recordatorio entregado a @${rem.to}`);
       }
@@ -3855,7 +3875,7 @@ async function transcribeAndProcessAudio(audioBuffer, mimeType, apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(12000),
         body: JSON.stringify({
           contents: [{
             role: 'user',
@@ -4830,11 +4850,12 @@ async function handleWaMessage(msg, type) {
 
   const pnJid = jid.endsWith('@s.whatsapp.net') ? jid : (msg.key.senderPn || '');
   const phone = pnJid ? pnJid.split('@')[0].split(':')[0] : '';
-  const partner = isAuthorizedPartner(jid) || isAuthorizedPartner(phone);
+  // WhatsApp es 100% exclusivo para clientes (Anthony y Sebastián también son atendidos como clientes normales para pruebas limpias; todo lo de Admin va por Telegram)
+  const partner = null;
 
   const rawConvId = `conv_wa_${phone || `lid_${jid.split('@')[0].split(':')[0]}`}`;
-  let targetConvId = partner ? `conv_wa_${partner.phone}` : rawConvId;
-  let targetPhone = partner ? partner.phone : phone;
+  let targetConvId = rawConvId;
+  let targetPhone = phone;
 
   // Resolver conversación correspondiente existente (incluso si fue borrada previamente)
   const existingConvs = (await fb('GET', ws('botConversations'))) || {};
@@ -5753,15 +5774,19 @@ async function pollTelegramUpdates() {
       const msg = upd.message;
       if (!msg || !msg.chat) continue;
       const chatId = String(msg.chat.id);
-      const text = String(msg.text || msg.caption || '').trim();
-      if (!text) continue;
+      const rawText = String(msg.text || msg.caption || '').trim();
+      const voiceObj = msg.voice || msg.audio || null;
+      const photoArr = Array.isArray(msg.photo) && msg.photo.length > 0 ? msg.photo : null;
+      const imgDocObj = (msg.document && String(msg.document.mime_type || '').startsWith('image/')) ? msg.document : null;
+
+      if (!rawText && !voiceObj && !photoArr && !imgDocObj) continue;
 
       const fromFirst = msg.from?.first_name || '';
       const fromUser = msg.from?.username || '';
       const chatTitle = msg.chat.title || `${fromFirst} ${msg.from?.last_name || ''}`.trim() || fromUser || 'Socio';
 
       // Auto-vinculación inmediata con /start o /vincular
-      if (/^\/(?:start|vincular)\b/i.test(text)) {
+      if (/^\/(?:start|vincular)\b/i.test(rawText)) {
         const subEntry = {
           chatId,
           name: chatTitle,
@@ -5780,14 +5805,14 @@ async function pollTelegramUpdates() {
         });
 
         await sendTelegramAlert(
-          `✅ *¡Dispositivo vinculado a Doomlater con éxito!*\n\n` +
+          `✅ *¡Oficina Ejecutiva de Doomlater vinculada con éxito!*\n\n` +
           `👤 *Socio / Chat:* ${chatTitle}\n` +
-          `🛡️ *Blindaje Anti-Baneo:* Activo (Tu WhatsApp ya NO enviará alertas automáticas salientes).\n\n` +
-          `*¿Qué puedes hacer aquí mismo en Telegram?*\n` +
-          `• Recibirás al instante pagos, entregas coordinadas y dudas con *botones de 1 toque*.\n` +
-          `• Consultar cualquier servicio (con o sin memoria), stock o saldos.\n` +
-          `• Escribir *0414... pago verificado* o *0414... delivery 4*.\n` +
-          `• Pedir *facturas* y *contratos* en PDF directo aquí.`,
+          `🛡️ *WhatsApp 100% Limpio (Solo Clientes):* Activo. Todo el panel Admin opera exclusivamente aquí en Telegram.\n\n` +
+          `*¿Qué puedes hacer aquí (por texto, nota de voz o foto)?*\n` +
+          `• 🎤 Mandar *notas de voz* pidiendo balances, stock, facturas PDF, contratos o avisos a tu socio.\n` +
+          `• 📷 Enviar *fotos / comprobantes* para que la IA los analice al instante.\n` +
+          `• 💳 Aprobar pagos y coordinar entregas con *botones de 1 toque*.\n` +
+          `• 💬 Responder a un cliente desde aquí: *0414... dile que...* o *0414... delivery 4*.`,
           undefined,
           chatId
         );
@@ -5801,9 +5826,53 @@ async function pollTelegramUpdates() {
         continue;
       }
 
+      await sendTelegramChatAction(tg.token, chatId, 'typing');
+
       const partnerName = /seba/i.test(`${fromFirst} ${fromUser}`) ? 'Sebastián' : 'Anthony';
       const adminCtx = await loadAdminExecutiveContext();
-      const aiRes = await queryAdminAI(`conv_tg_${safeId(chatId)}`, text, adminCtx, partnerName);
+      const apiKey = adminCtx?.botConfig?.geminiApiKey || GEMINI_API_KEY_ENV;
+      const tgConvId = `conv_tg_${safeId(chatId)}`;
+
+      let effectiveText = rawText;
+      let mediaAttachment = null;
+
+      // 1. Notas de voz o archivos de audio en Telegram -> Transcripción de alta fidelidad con Gemini
+      if (voiceObj && voiceObj.file_id) {
+        const audioBuf = await downloadTelegramFileBuffer(tg.token, voiceObj.file_id);
+        if (audioBuf && apiKey) {
+          const audioMime = voiceObj.mime_type || 'audio/ogg';
+          const transcript = await transcribeAndProcessAudio(audioBuf, audioMime, apiKey);
+          if (transcript) {
+            effectiveText = effectiveText ? `${effectiveText}\n${transcript}` : transcript;
+            logger.info({ partnerName, transcript }, 'Nota de voz de socio transcrita en Telegram');
+          } else if (!effectiveText) {
+            await sendTelegramAlert(`🎤 No logré escuchar con claridad la nota de voz, ${partnerName}. ¿Me la repites o me escribes por aquí?`, undefined, chatId);
+            continue;
+          }
+        }
+      }
+
+      // 2. Fotos o capturas enviadas en Telegram -> Visión Multimodal de Gemini
+      const photoFileId = photoArr ? photoArr[photoArr.length - 1].file_id : (imgDocObj ? imgDocObj.file_id : null);
+      if (photoFileId) {
+        const imgBuf = await downloadTelegramFileBuffer(tg.token, photoFileId);
+        if (imgBuf) {
+          const imgMime = imgDocObj?.mime_type || 'image/jpeg';
+          mediaAttachment = { buffer: imgBuf, mimeType: imgMime };
+          if (!effectiveText) {
+            effectiveText = 'Analiza detalladamente esta imagen. Si es un comprobante de pago o captura bancaria, extrae banco, referencia, monto exacto, moneda, fecha y verifica si los datos destino coinciden con las cuentas oficiales de Doomlater. Si es un equipo, consola o repuesto, descríbelo técnicamente.';
+          }
+        }
+      }
+
+      if (!effectiveText && !mediaAttachment) continue;
+
+      pushHistory(tgConvId, 'user', effectiveText);
+      const aiRes = await queryAdminAI(tgConvId, effectiveText, adminCtx, partnerName, mediaAttachment);
+      if (aiRes?.reply) {
+        pushHistory(tgConvId, 'bot', aiRes.reply);
+      }
+
       if (aiRes?.pdfAttachment?.buffer) {
         await sendTelegramDocument(chatId, aiRes.pdfAttachment.buffer, aiRes.pdfAttachment.fileName, aiRes.reply || '');
       } else if (aiRes?.reply) {
@@ -5935,10 +6004,6 @@ async function checkAttentionAlertsAndNotify() {
       }
 
       if (c.needsAttention || c.pendingPayment) {
-        // Excluir chats directos entre socios a menos que sea una simulación
-        const isPartnerPhone = c.customerPhone === '584142005801' || c.customerPhone === '584264181643';
-        if (isPartnerPhone && !String(c.attentionReason || '').includes('Simulación')) continue;
-
         // Evitar duplicar alertas que ya fueron enviadas de forma inmediata por DOOM ALERT ENTREGA o Reporte de Pago
         if (alertedConvsTrack.has(`coord_${c.id}`) || alertedConvsTrack.has(`pay_${c.id}`) || alertedConvsTrack.has(`alert_${c.id}`)) {
           continue;

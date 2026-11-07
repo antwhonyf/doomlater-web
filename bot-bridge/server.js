@@ -559,15 +559,18 @@ async function downloadTelegramFileBuffer(token, fileId) {
   }
 }
 
-async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId = null) {
+const convTgAlertState = new Map(); // convId -> { alertKey, refs: [{ chatId, messageId }], alertParams, cleanPhone, updatedAt }
+
+async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId = null, returnRefs = false) {
   try {
     const tg = await getTelegramAndAntiBanConfig();
-    if (!tg.token) return false;
+    if (!tg.token) return returnRefs ? { ok: false, refs: [] } : false;
     const targets = specificChatId ? [String(specificChatId)] : tg.chatIds;
-    if (!targets || targets.length === 0) return false;
+    if (!targets || targets.length === 0) return returnRefs ? { ok: false, refs: [] } : false;
 
     const msgStr = String(text || '');
     let anySent = false;
+    const sentRefs = [];
     for (const chatId of targets) {
       const basePayload = {
         chat_id: chatId,
@@ -591,15 +594,96 @@ async function sendTelegramAlert(text, replyMarkup = undefined, specificChatId =
           body: JSON.stringify(basePayload)
         });
       }
-      if (res.ok) anySent = true;
-      else {
+      if (res.ok) {
+        anySent = true;
+        const json = await res.json().catch(() => null);
+        if (json?.ok && json?.result?.message_id) {
+          sentRefs.push({ chatId: String(chatId), messageId: json.result.message_id });
+        }
+      } else {
         const errBody = await res.text().catch(() => '');
         logger.warn({ chatId, status: res.status, errBody: errBody.slice(0, 160) }, 'Telegram sendMessage rechazado');
       }
     }
-    return anySent;
+    return returnRefs ? { ok: anySent, refs: sentRefs } : anySent;
   } catch (e) {
     logger.warn({ err: e.message }, 'No se pudo enviar alerta por Telegram');
+    return returnRefs ? { ok: false, refs: [] } : false;
+  }
+}
+
+async function editTelegramAlert(refs, newText, replyMarkup = undefined) {
+  try {
+    if (!Array.isArray(refs) || refs.length === 0) return false;
+    const tg = await getTelegramAndAntiBanConfig();
+    if (!tg.token) return false;
+
+    const msgStr = String(newText || '');
+    let anyEdited = false;
+    for (const ref of refs) {
+      if (!ref || !ref.chatId || !ref.messageId) continue;
+      const basePayload = {
+        chat_id: String(ref.chatId),
+        message_id: Number(ref.messageId),
+        text: msgStr,
+        disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
+      };
+      let res = await fetch(`https://api.telegram.org/bot${tg.token}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify({ ...basePayload, parse_mode: 'Markdown' })
+      });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => '');
+        if (/message is not modified/i.test(errTxt)) {
+          anyEdited = true;
+          continue;
+        }
+        res = await fetch(`https://api.telegram.org/bot${tg.token}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify(basePayload)
+        });
+        if (!res.ok) {
+          const errTxt2 = await res.text().catch(() => '');
+          if (/message is not modified/i.test(errTxt2)) {
+            anyEdited = true;
+            continue;
+          }
+          logger.warn({ chatId: ref.chatId, messageId: ref.messageId, errTxt2: errTxt2.slice(0, 140) }, 'No se pudo editar mensaje de alerta en Telegram');
+          continue;
+        }
+      }
+      anyEdited = true;
+    }
+    return anyEdited;
+  } catch (e) {
+    logger.warn({ err: e.message }, 'Error editando alerta de Telegram');
+    return false;
+  }
+}
+
+async function deleteTelegramAlert(refs) {
+  try {
+    if (!Array.isArray(refs) || refs.length === 0) return false;
+    const tg = await getTelegramAndAntiBanConfig();
+    if (!tg.token) return false;
+    let anyDeleted = false;
+    for (const ref of refs) {
+      if (!ref || !ref.chatId || !ref.messageId) continue;
+      const res = await fetch(`https://api.telegram.org/bot${tg.token}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(6000),
+        body: JSON.stringify({ chat_id: String(ref.chatId), message_id: Number(ref.messageId) })
+      }).catch(() => null);
+      if (res && res.ok) anyDeleted = true;
+    }
+    return anyDeleted;
+  } catch (e) {
     return false;
   }
 }
@@ -635,16 +719,28 @@ async function sendTelegramDocument(chatId, pdfBuffer, fileName, caption = '') {
 }
 
 async function notifyPartners(text, alertKey = null, options = {}) {
-  if (alertKey) {
+  if (alertKey && !options.bypassCooldown) {
     const tgCooldownMs = 25 * 1000; // Evita duplicados idénticos en menos de 25s
     const last = partnerAlertCooldown.get(`tg_${alertKey}`) || 0;
-    if (Date.now() - last < tgCooldownMs) return;
+    if (Date.now() - last < tgCooldownMs) return null;
+    partnerAlertCooldown.set(`tg_${alertKey}`, Date.now());
+  } else if (alertKey) {
     partnerAlertCooldown.set(`tg_${alertKey}`, Date.now());
   }
 
   const replyMarkup = buildTelegramInlineButtons(alertKey, options);
   // 100% EXCLUSIVO POR TELEGRAM: WhatsApp queda limpio solo para clientes reales (cero riesgo de baneo)
-  await sendTelegramAlert(text, replyMarkup);
+  const sendRes = await sendTelegramAlert(text, replyMarkup, null, true);
+  if (options.convId && sendRes.ok && sendRes.refs.length > 0) {
+    convTgAlertState.set(options.convId, {
+      alertKey,
+      refs: sendRes.refs,
+      alertParams: options.alertParams || null,
+      cleanPhone: options.cleanPhone || '',
+      updatedAt: Date.now()
+    });
+  }
+  return sendRes.refs || [];
 }
 
 async function notifySinglePartner(target, text) {
@@ -2252,10 +2348,13 @@ async function executeDeliveryQuoteAction({ convId = '', rawPhone = '', delivery
     histTexts.push(targetConv.lastCustomerMessage);
   }
 
-  // Si antes ya se había sumado un delivery previo en este mismo pedido, descontarlo para recalcular sobre la base limpia
+  // Si tiene carrito activo estructurado, usar su subtotal exacto como base limpia
+  const cartSubtotal = getCartSubtotalUsdt(targetConv.cartItems);
   const prevDelivery = Number(targetConv.deliveryQuotedFee || 0);
   const rawExpected = Number(targetConv.expectedOrderUsdt || 0);
-  let baseUsdt = rawExpected > prevDelivery ? +(rawExpected - prevDelivery).toFixed(2) : rawExpected;
+  let baseUsdt = cartSubtotal > 0
+    ? cartSubtotal
+    : (rawExpected > prevDelivery ? +(rawExpected - prevDelivery).toFixed(2) : rawExpected);
 
   const orderItemRaw = detectWhatCustomerBought(
     { ...targetConv, expectedOrderUsdt: baseUsdt, deliveryQuotedFee: 0 },
@@ -2266,12 +2365,15 @@ async function executeDeliveryQuoteAction({ convId = '', rawPhone = '', delivery
   );
 
   if (baseUsdt <= 0 && orderItemRaw) {
-    const priceMatch = orderItemRaw.match(/\$(\d+(?:\.\d+)?)/);
-    if (priceMatch) baseUsdt = parseFloat(priceMatch[1]);
+    const totalMatch = orderItemRaw.match(/Total:\s*\$(\d+(?:\.\d+)?)/i) || orderItemRaw.match(/\$(\d+(?:\.\d+)?)\s*USD\)?$/i) || orderItemRaw.match(/\$(\d+(?:\.\d+)?)/);
+    if (totalMatch) baseUsdt = parseFloat(totalMatch[1]);
   }
 
   const cleanItemName = orderItemRaw
-    ? orderItemRaw.replace(/\s*\(\$[\d.,]+\s*USD\)\s*$/i, '').trim()
+    ? orderItemRaw
+        .replace(/\s*—\s*Total:\s*\$[\d.,]+\s*USD\s*$/i, '')
+        .replace(/\s*\(\$[\d.,]+\s*USD\)\s*$/i, '')
+        .trim()
     : null;
 
   const totalUsdt = +((baseUsdt > 0 ? baseUsdt : 0) + fee).toFixed(2);
@@ -3510,12 +3612,23 @@ ${botConfig.customAiRules}
   const rateBcv = Number(rates?.bcv || 890);
 
   const hasQuotedDelivery = activeConv && Number(activeConv.deliveryQuotedFee) > 0 && activeConv.deliveryStatus === 'quoted';
+  const activeCartItems = Array.isArray(activeConv?.cartItems) ? activeConv.cartItems : [];
+  const activeCartSub = getCartSubtotalUsdt(activeCartItems);
+  const activeDeliveryFee = hasQuotedDelivery ? Number(activeConv.deliveryQuotedFee) : 0;
+  const activeGrandTotal = +(activeCartSub + activeDeliveryFee).toFixed(2);
+
+  const activeCartContext = (activeCartItems.length > 0 || activeConv?.awaitingOrderConfirmation || activeConv?.orderConfirmed || activeConv?.deliveryMapsUrl) ? `
+=== ESTADO ACTUAL DEL CARRITO Y PEDIDO DE ESTE CLIENTE ===
+• Carrito actual: ${activeCartItems.length > 0 ? formatCartForAlert(activeCartItems) : '(Aún por definir)'}
+${activeCartSub > 0 ? `• Subtotal productos/servicios: $${activeCartSub.toFixed(2)} USDT\n` : ''}${hasQuotedDelivery ? `• Tarifa de Delivery ya cotizada: $${activeDeliveryFee.toFixed(2)} USDT (Gran Total Carrito + Delivery = $${activeGrandTotal.toFixed(2)} USDT)\n` : ''}${activeConv?.deliveryLugar ? `• Punto / Zona indicada: ${activeConv.deliveryLugar}${activeConv.deliveryFechaHora ? ` — ${activeConv.deliveryFechaHora}` : ''}\n` : ''}${activeConv?.deliveryMapsUrl ? `• Ubicación GPS ya recibida: ${activeConv.deliveryMapsUrl}\n` : ''}• Estado de confirmación del pedido: ${activeConv?.awaitingOrderConfirmation ? 'ESPERANDO QUE EL CLIENTE CONFIRME EL RESUMEN DE SU PEDIDO/CARRITO' : (activeConv?.orderConfirmed ? 'PEDIDO YA CONFIRMADO (Si el cliente pide agregar, quitar o corregir algo, actualiza el carrito y vuelve a pedirle que confirme el nuevo resumen)' : 'En armado / cotización')}
+` : '';
+
   const activeDeliveryContext = hasQuotedDelivery ? `
 === PRESUPUESTO CON DELIVERY YA COTIZADO EN ESTE CHAT ===
 • Destino / Zona acordada: ${activeConv.deliveryLugar || activeConv.deliveryZoneRequested || 'Delivery'}
 • Costo de Delivery aprobado: $${Number(activeConv.deliveryQuotedFee).toFixed(2)} USDT
-• Gran Total a cancelar (Pedido + Delivery): $${Number(activeConv.expectedOrderUsdt || activeConv.deliveryQuotedTotalUsdt || 0).toFixed(2)} USDT (Bs. ${Number(activeConv.expectedOrderBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })})
-• REGLA DE CONTINUIDAD: NO vuelvas a usar [FLAG_DELIVERY_EXTERNO] para esta misma zona porque la tarifa YA FUE ENVIADA. Si el cliente pide datos de pago o cuánto transferir, usa el total completo [MONTO_ORDEN_USDT: ${Number(activeConv.expectedOrderUsdt || 0).toFixed(2)}]. Si confirma día/hora y dirección/referencia para recibir su envío, confírmale la cita con cordialidad y coloca [FLAG_COORDINACION_ENTREGA].
+• Gran Total a cancelar (Pedido + Delivery): $${(activeCartSub > 0 ? activeGrandTotal : Number(activeConv.expectedOrderUsdt || activeConv.deliveryQuotedTotalUsdt || 0)).toFixed(2)} USDT
+• REGLA DE CONTINUIDAD: NO vuelvas a usar [FLAG_DELIVERY_EXTERNO] para esta misma zona porque la tarifa YA FUE ENVIADA. Si el cliente pide datos de pago o cuánto transferir, usa el total completo (Subtotal Carrito + Delivery) en [MONTO_ORDEN_USDT: ...]. Si define día/hora o modifica su carrito, muéstrale primero el Resumen Final y pídele confirmar con [FLAG_PEDIDO_POR_CONFIRMAR]; cuando confirme coloca [FLAG_PEDIDO_CONFIRMADO].
 ` : '';
 
   return `Eres el asistente oficial de ventas y atención al cliente de Doomlater.
@@ -3523,7 +3636,7 @@ Nos especializamos en consolas de videojuegos (PlayStation, Nintendo Switch, Xbo
 Responde siempre en español, con tono amable, cálido, ágil, profesional y resolutivo, enfocado en cerrar la venta o agendar el servicio de principio a fin sin necesitar intervención humana salvo en los casos estrictos indicados abajo.
 REGLA CRÍTICA DE CONCLUSIÓN: NUNCA dejes oraciones, frases o explicaciones a la mitad. Toda respuesta debe estar 100% terminada y concluir con punto final o emoji apropiado.
 No digas que eres una IA salvo que te lo pregunten directamente.
-${customRules}${activeDeliveryContext}=== INFORMACIÓN Y PREGUNTAS FRECUENTES ===
+${customRules}${activeCartContext}${activeDeliveryContext}=== INFORMACIÓN Y PREGUNTAS FRECUENTES ===
 ${faq}
 
 === MÉTODOS DE PAGO Y CUENTAS OFICIALES ===
@@ -3549,23 +3662,34 @@ Instrucciones de cierre autónomo y comportamiento:
    - Saludos, agradecimientos ("gracias", "dale", "ok", "perfecto", "entendido") y despedidas NUNCA llevan [FLAG_REQUIERE_HUMANO].
 2. PROHIBICIÓN ESTRICTA DE LA PALABRA "ALERTA":
    - ¡BAJO NINGUNA CIRCUNSTANCIA escribas la palabra "Alerta" ni "Doom Alert" en tus mensajes al cliente!
-3. FLUJO AUTÓNOMO DE CIERRE DE VENTA (DE PRINCIPIO A FIN):
+3. FLUJO AUTÓNOMO DE CIERRE DE VENTA Y GESTIÓN DINÁMICA DEL CARRITO:
    - Paso A (Cotización): Al informar el precio de un producto en stock o servicio técnico oficial, invita cordialmente al cliente a concretar preguntándole si desea adquirirlo/agendarlo y qué método de pago prefiere (Pago Móvil, Binance USDT o Efectivo $) o si prefiere entrega gratuita en *La Previsora* / *CC El Líder*.
    - Paso B (Si elige Efectivo $):
      • NO pidas comprobante ni captura cuando el pago sea en efectivo.
      • Si es para un SERVICIO TÉCNICO o revisión de consola: indícale amablemente que aceptamos efectivo en divisas en buen estado y pregúntale para coordinar la recepción o búsqueda del equipo: en qué punto gratuito (*La Previsora* o *CC El Líder*, o si prefiere *delivery*), qué día y hora le conviene vernos, y confirma qué modelo exacto de consola llevará (si aún no lo indicó).
      • Si es para un PRODUCTO físico: indícale que aceptamos efectivo en divisas en buen estado al momento de la entrega gratuita en *La Previsora* o *CC El Líder* (o con *delivery*) y pregúntale qué punto, día y hora le conviene para agendarlo enseguida.
-     • NO uses ninguna etiqueta de alerta todavía mientras solo estés preguntando lugar/día/hora.
+     • NO uses etiquetas de cierre todavía mientras solo estés preguntando lugar/día/hora.
    - Paso C (Si pide datos de pago / elige Pago Móvil o Binance):
      • REGLA CONDICIONAL ESTRICTA: Si el cliente SOLO preguntó de forma genérica qué métodos de pago aceptamos y AÚN NO ha elegido ni cotizado un producto o servicio concreto, envía ÚNICAMENTE los métodos de pago oficiales SIN [SEPARADOR_MENSAJE] ni monto.
-     • Si el cliente SÍ tiene un producto o servicio concreto cotizado o confirmado en la conversación y pide pagar o saber cuánto es en Bolívares / BCV:
+     • Si el cliente SÍ tiene productos o servicios concretos en su carrito/cotización y pide pagar o saber cuánto es en Bolívares / BCV:
        1. En la primera parte escribe los datos oficiales de pago (Pago Móvil y/o Binance según solicitó).
-       2. Escribe exactamente la etiqueta [SEPARADOR_MENSAJE] y al final incluye [MONTO_ORDEN_USDT: <numero_total_en_usdt>] (ejemplo: [MONTO_ORDEN_USDT: 5] o [MONTO_ORDEN_USDT: 10]; si lleva varias unidades multiplica cantidad por precio unitario).
+       2. Escribe exactamente la etiqueta [SEPARADOR_MENSAJE] y al final incluye [MONTO_ORDEN_USDT: <numero_total_en_usdt>] sumando todo su carrito actual (más el delivery si ya fue cotizado).
        3. Después de [SEPARADOR_MENSAJE], nuestro sistema formateará automáticamente al centavo el desglose exacto en Bs (multiplicado por ${rateParalelo.toFixed(2)}), en $ a tasa BCV (dividido entre ${rateBcv.toFixed(2)}) y en USDT.
-4. COORDINACIÓN DE ENTREGA O BÚSQUEDA DEL EQUIPO:
+   - Paso D (Gestión de Carrito — Agregar, Quitar o Corregir Errores):
+     • El cliente puede llevar 1 o varios productos/servicios, **agregar** más artículos ("agrégale...", "también dame..."), **quitar** artículos ("quita...", "saca...", "elimina...", "sin...") o **corregir** un error ("te equivocaste", "eran 3 no 2", "cámbialo por...").
+     • SIEMPRE que el cliente elija, agregue, quite o corrija productos o servicios de su pedido, actualiza el carrito completo con los nombres y precios exactos del catálogo e incluye AL FINAL de tu respuesta la etiqueta oculta:
+       [CARRITO: Nombre Exacto Producto 1 xCantidad = Subtotal | Nombre Exacto Producto 2 xCantidad = Subtotal]
+       Ejemplo: [CARRITO: Cargadores 3DS / DSI / DS x2 = 10 | Slot Lector Para Memoria Micro Sd Nintendo Switch x1 = 5]
+       Si el cliente vacía o cancela todo su carrito, incluye [CARRITO: VACIO].
+4. COORDINACIÓN DE ENTREGA Y CONFIRMACIÓN OBLIGATORIA DEL PEDIDO (ANTI-SPAM DE ALERTAS):
    - Puntos de encuentro gratuitos: *La Previsora* (Sabana Grande) y *CC El Líder* (La California). También realizamos envíos nacionales cobro en destino por MRW, Zoom y Tealca.
-   - Si el cliente confirma lugar + día/hora en La Previsora o CC El Líder (ej: "En La Previsora mañana a las 2pm"): confirma cordialmente que nuestro equipo queda agendado para ese punto, día y hora, y coloca al final [FLAG_COORDINACION_ENTREGA].
-   - Si el cliente solicita delivery a domicilio o búsqueda en otra zona fuera de La Previsora / CC El Líder: indícale amablemente que con gusto coordinamos el delivery y que nuestro equipo calculará la tarifa exacta para su zona enseguida 🙌, y coloca al final [FLAG_DELIVERY_EXTERNO: <zona indicada>].
+   - REGLA DE ORO DE CONFIRMACIÓN PREVIA ([FLAG_PEDIDO_POR_CONFIRMAR] -> [FLAG_PEDIDO_CONFIRMADO]):
+     • Paso 1 (Pedir Confirmación): Cuando el cliente indique lugar + día/hora de entrega/recepción, O cada vez que modifique/agregue/quite/corrija productos de un carrito ya hecho, NO des el pedido por cerrado de golpe. Muéstrale primero un claro *📌 Resumen de tu Pedido* (productos y cantidades exactas del carrito, total a pagar, método de pago y punto/horario o delivery) y pregúntale explícitamente:
+       "¿Me confirmas que tu pedido y carrito quedan así para procesarlo y agendarlo con nuestro equipo, o deseas agregar/quitar algo más? 🙌"
+       Finaliza ese mensaje con [FLAG_PEDIDO_POR_CONFIRMAR] (junto con [CARRITO: ...]).
+     • Paso 2 (Cliente Confirma): ÚNICAMENTE cuando ya le mostraste el resumen y el cliente responda confirmando ("sí", "confirmo", "dale así", "está perfecto", "correcto", "así mismo"), confírmale con calidez que su pedido ha quedado oficialmente agendado con nuestro equipo y coloca al final [FLAG_PEDIDO_CONFIRMADO].
+   - Solicitud de Delivery Externo: Si el cliente solicita delivery a domicilio o búsqueda en otra zona fuera de La Previsora / CC El Líder (y aún no se le ha cotizado tarifa de delivery en este chat): indícale amablemente que con gusto coordinamos el delivery, que nuestro equipo calculará la tarifa exacta para su zona enseguida y que si gusta puede enviarnos su ubicación GPS por aquí 📍, colocando al final [FLAG_DELIVERY_EXTERNO: <zona indicada>] (junto con [CARRITO: ...]).
+   - Ubicación GPS: Si el cliente envía su ubicación GPS de WhatsApp o enlace de Google Maps, confírmale con calidez que recibimos su ubicación GPS perfectamente para la entrega 📍 (NUNCA uses [FLAG_REQUIERE_HUMANO] por enviar ubicación GPS).
 5. REPORTE DE PAGO / COMPROBANTE (REGLA ESTRICTA):
    - Si el cliente SOLO escribe por texto que ya pagó ("ya hice el pago", "ya pagué", "ya transferí", "listo el pago") PERO NO ADJUNTÓ FOTO/IMAGEN del comprobante (para Pago Móvil, transferencia o Binance USDT):
      • NUNCA digas que recibiste el comprobante ni uses [FLAG_PAGO_REPORTADO].
@@ -3586,7 +3710,7 @@ Instrucciones de cierre autónomo y comportamiento:
      • Si el servicio tiene un "Mensaje oficial personalizado para responder", úsalo respetando íntegramente sus precios y condiciones.
      • NUNCA uses [FLAG_REQUIERE_HUMANO] para servicios que están en la lista oficial o en las FAQs.
 9. CUÁNDO LLAMAR A UN HUMANO ([FLAG_REQUIERE_HUMANO]):
-   - NUNCA uses [FLAG_REQUIERE_HUMANO] para dudas ya cubiertas en Stock, Servicios, FAQs, garantía, horarios, puntos de entrega, envíos nacionales o métodos de pago.
+   - NUNCA uses [FLAG_REQUIERE_HUMANO] para dudas ya cubiertas en Stock, Servicios, FAQs, garantía, horarios, puntos de entrega, envíos nacionales, ubicación GPS, carrito o métodos de pago.
    - ÚNICAMENTE usa [FLAG_REQUIERE_HUMANO] cuando el cliente pregunte por un producto agotado/inexistente en el catálogo o una falla técnica muy específica que NO esté en Servicios ni FAQs, indicando amablemente que consultarás con nuestro equipo técnico para confirmarle enseguida.
 10. PRECIOS FIJOS Y CONFIDENCIALIDAD:
    - NUNCA ofrezcas ni aceptes descuentos o rebajas; todos los precios son fijos.
@@ -3598,9 +3722,13 @@ function parseAIResponseFlags(text) {
   const isPayment = clean.includes('[FLAG_PAGO_REPORTADO]');
   const needsHuman = clean.includes('[FLAG_REQUIERE_HUMANO]');
   const isCoordination = clean.includes('[FLAG_COORDINACION_ENTREGA]');
+  const isAwaitingConfirmation = clean.includes('[FLAG_PEDIDO_POR_CONFIRMAR]');
+  const isOrderConfirmed = clean.includes('[FLAG_PEDIDO_CONFIRMADO]');
   const isEquipmentSale = clean.includes('[FLAG_VENTA_EQUIPO]');
   const deliveryExternMatch = clean.match(/\[FLAG_DELIVERY_EXTERNO:\s*([^\]]+)\]/i);
   const deliveryExternalZone = deliveryExternMatch ? deliveryExternMatch[1].trim() : null;
+  const cartTagMatches = [...clean.matchAll(/\[CARRITO:\s*([^\]]+)\]/gi)];
+  const rawCartTag = cartTagMatches.length > 0 ? cartTagMatches[cartTagMatches.length - 1][1].trim() : null;
 
   let orderAmountUsdt = null;
   const montoTagMatch = clean.match(/\[MONTO_ORDEN_USDT:\s*\$?([\d.,]+)\]/i);
@@ -3616,18 +3744,32 @@ function parseAIResponseFlags(text) {
   }
 
   clean = clean
-    .replace(/\[FLAG_PAGO_REPORTADO\]/g, '')
-    .replace(/\[FLAG_REQUIERE_HUMANO\]/g, '')
-    .replace(/\[FLAG_COORDINACION_ENTREGA\]/g, '')
-    .replace(/\[FLAG_VENTA_EQUIPO\]/g, '')
-    .replace(/\[FLAG_DELIVERY_EXTERNO:[^\]]+\]/g, '')
+    .replace(/\[FLAG_PAGO_REPORTADO\]/gi, '')
+    .replace(/\[FLAG_REQUIERE_HUMANO\]/gi, '')
+    .replace(/\[FLAG_COORDINACION_ENTREGA\]/gi, '')
+    .replace(/\[FLAG_PEDIDO_POR_CONFIRMAR\]/gi, '')
+    .replace(/\[FLAG_PEDIDO_CONFIRMADO\]/gi, '')
+    .replace(/\[FLAG_VENTA_EQUIPO\]/gi, '')
+    .replace(/\[FLAG_DELIVERY_EXTERNO:[^\]]+\]/gi, '')
     .replace(/\[MONTO_ORDEN_USDT:[^\]]+\]/gi, '')
+    .replace(/\[CARRITO:[^\]]*\]/gi, '')
     .trim();
 
   // Limpieza estricta: retirar cualquier residuo de palabra "Alerta", ". Alerta", "Alerta.", etc.
   clean = clean.replace(/(?:[\.\s,]+|\b)(?:Alerta|Doom Alert|ALERTA)[\.\s]*$/i, '.').trim();
   clean = clean.replace(/\.\s*\.$/, '.');
-  return { reply: clean, isPayment, needsHuman, isCoordination, isEquipmentSale, deliveryExternalZone, orderAmountUsdt };
+  return {
+    reply: clean,
+    isPayment,
+    needsHuman,
+    isCoordination,
+    isAwaitingConfirmation,
+    isOrderConfirmed,
+    isEquipmentSale,
+    deliveryExternalZone,
+    orderAmountUsdt,
+    rawCartTag
+  };
 }
 
 /**
@@ -3789,8 +3931,9 @@ function isClientOfferingEquipmentForSale(text) {
 }
 
 async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
+  const isAwaitingConfirmation = Boolean(ctx?.activeConv?.awaitingOrderConfirmation || ctx?.awaitingOrderConfirmation);
   // Respuesta inmediata para saludos simples (sin necesidad de llamar a la API ni alertar)
-  if (!mediaAttachment && isGreetingOrSmallTalk(userMessage)) {
+  if (!mediaAttachment && !isAwaitingConfirmation && isGreetingOrSmallTalk(userMessage)) {
     const isThanks = /^(?:gracias|muchas gracias|vale|ok|okay|dale|listo|perfecto|entendido|graciass?)/i.test(String(userMessage || '').trim());
     if (isThanks) {
       return {
@@ -3907,12 +4050,23 @@ async function queryAI(convId, userMessage, ctx, mediaAttachment = null) {
   return fallbackRuleBasedBot(userMessage, ctx);
 }
 
-function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [], botConfig = {} }) {
+function fallbackRuleBasedBot(userMessage, ctx = {}) {
+  const { stockItems = [], paymentMethods = [], knowledgeBaseFaq = [], botConfig = {} } = ctx;
+  const isAwaitingConfirmation = Boolean(ctx?.activeConv?.awaitingOrderConfirmation || ctx?.awaitingOrderConfirmation);
   const msg = String(userMessage || '').toLowerCase();
   const cleanMsg = msg.replace(/[¡!¿?,.;:]/g, ' ').trim();
 
+  if (isAwaitingConfirmation && isExplicitCustomerConfirmation(userMessage)) {
+    return {
+      reply: '¡Excelente! Tu pedido ha quedado oficialmente confirmado y agendado con nuestro equipo 🙌 En breve estaremos coordinando los detalles para la entrega.',
+      isPayment: false,
+      needsHuman: false,
+      isOrderConfirmed: true
+    };
+  }
+
   // 1. Saludos y confirmaciones de cortesía (NUNCA requieren humano ni alertan)
-  if (isGreetingOrSmallTalk(userMessage)) {
+  if (!isAwaitingConfirmation && isGreetingOrSmallTalk(userMessage)) {
     const isThanks = /^(?:gracias|muchas gracias|vale|ok|okay|dale|listo|perfecto|entendido|graciass?)/i.test(cleanMsg);
     if (isThanks) {
       return {
@@ -4256,6 +4410,8 @@ function scheduleAiReply(convId, text, ctx) {
     previousExpectedUsdt: prevCtx.previousExpectedUsdt || ctx.previousExpectedUsdt || 0,
     imageBuffer: ctx.imageBuffer || prevCtx.imageBuffer || null,
     imageMime: ctx.imageBuffer ? ctx.imageMime : (prevCtx.imageMime || ctx.imageMime || 'image/jpeg'),
+    gpsLocation: ctx.gpsLocation || prevCtx.gpsLocation || null,
+    deliveryMapsUrl: ctx.deliveryMapsUrl || prevCtx.deliveryMapsUrl || null,
     paymentAnalysis: incomingIsPay
       ? ctx.paymentAnalysis
       : (prevIsPay ? prevCtx.paymentAnalysis : (ctx.paymentAnalysis || prevCtx.paymentAnalysis || null)),
@@ -4290,6 +4446,95 @@ function validateReceiptTargetAccount(pa) {
     return { matched: true, name: 'Banco Mercantil (0105)' };
   }
   return { matched: false, name: null };
+}
+
+function getCartSubtotalUsdt(cartItems) {
+  if (!Array.isArray(cartItems) || cartItems.length === 0) return 0;
+  return +(cartItems.reduce((acc, it) => acc + (Number(it.subtotal) || (Number(it.qty || 1) * Number(it.unitPrice || 0))), 0)).toFixed(2);
+}
+
+function formatCartForAlert(cartItems) {
+  if (!Array.isArray(cartItems) || cartItems.length === 0) return null;
+  const parts = cartItems.map(it => {
+    const qty = Number(it.qty) || 1;
+    const name = it.name || 'Producto';
+    const sub = (Number(it.subtotal) || (qty * Number(it.unitPrice || 0))).toFixed(2);
+    return `${qty}x ${name} ($${sub})`;
+  });
+  const total = getCartSubtotalUsdt(cartItems).toFixed(2);
+  if (cartItems.length === 1) {
+    const it = cartItems[0];
+    const qty = Number(it.qty) || 1;
+    return `${qty > 1 ? `${qty} unidades — ` : '1 unidad — '}${it.name} ($${total} USD)`;
+  }
+  return `${parts.join(' + ')} — Total: $${total} USD`;
+}
+
+function parseCartTagAndSync(rawCartTag, stockItems = [], services = []) {
+  if (!rawCartTag || typeof rawCartTag !== 'string') return null;
+  const tagTrimmed = rawCartTag.trim();
+  if (/^vacio$/i.test(tagTrimmed) || /^vac[ií]o$/i.test(tagTrimmed) || /^ninguno$/i.test(tagTrimmed)) {
+    return [];
+  }
+
+  const entries = tagTrimmed.split('|').map(s => s.trim()).filter(Boolean);
+  if (entries.length === 0) return null;
+
+  const retailItems = (stockItems || []).filter(it => it && !it.deleted && it.kind === 'para_vender');
+  const servicesList = services || [];
+
+  const parsedItems = [];
+  for (const entry of entries) {
+    const m = entry.match(/^(.+?)(?:\s*[xX*]\s*(\d+))?(?:\s*=\s*\$?([\d.,]+)|\s*\(\$?([\d.,]+)\))?$/);
+    if (!m) continue;
+    let rawName = m[1].trim();
+    let qty = parseInt(m[2], 10) || 1;
+    let explicitPrice = m[3] || m[4] ? parseFloat((m[3] || m[4]).replace(',', '.')) : null;
+
+    const startQty = rawName.match(/^(\d+)\s*[xX]?\s+(.+)$/);
+    if (startQty && (!m[2] || m[2] === '1')) {
+      qty = parseInt(startQty[1], 10) || 1;
+      rawName = startQty[2].trim();
+    }
+
+    const normName = rawName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let matchedItem = retailItems.find(it => {
+      const itNorm = it.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return itNorm === normName || itNorm.includes(normName) || normName.includes(itNorm);
+    });
+
+    let officialName = rawName;
+    let unitPrice = 0;
+
+    if (matchedItem) {
+      officialName = matchedItem.name;
+      unitPrice = Number(matchedItem.salePrice || 0);
+    } else {
+      const matchedSrv = findServiceMatch(rawName, servicesList);
+      if (matchedSrv) {
+        officialName = matchedSrv.serviceName;
+        unitPrice = Number(matchedSrv.totalCost !== undefined ? matchedSrv.totalCost : (matchedSrv.laborPrice !== undefined ? matchedSrv.laborPrice : 0));
+      } else if (normName.includes('cargador')) {
+        officialName = 'Cargadores 3DS / DSI / DS';
+        unitPrice = 5.0;
+      } else if (explicitPrice && qty > 0) {
+        unitPrice = +(explicitPrice / qty).toFixed(2);
+      }
+    }
+
+    if (explicitPrice && explicitPrice > 0 && unitPrice <= 0) {
+      unitPrice = +(explicitPrice / qty).toFixed(2);
+    }
+    const subtotal = +((Number(unitPrice) || 0) * qty).toFixed(2);
+    parsedItems.push({
+      name: officialName,
+      qty,
+      unitPrice: Number(unitPrice) || 0,
+      subtotal
+    });
+  }
+
+  return parsedItems.length > 0 ? parsedItems : null;
 }
 
 function extractOrderQuantity(conv, historyTexts, unitPrice = 0, currentOrderUsdt = 0) {
@@ -4338,6 +4583,10 @@ function extractOrderQuantity(conv, historyTexts, unitPrice = 0, currentOrderUsd
 }
 
 function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services = [], currentOrderUsdt = 0) {
+  if (Array.isArray(conv?.cartItems) && conv.cartItems.length > 0) {
+    const formatted = formatCartForAlert(conv.cartItems);
+    if (formatted) return formatted;
+  }
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const fullList = (historyTexts || []).map(norm).filter(Boolean);
   const recentText = fullList.slice(-6).join(' ');
@@ -4523,6 +4772,47 @@ function escapeTgMdValue(val) {
   return String(val || '').replace(/([_*`\[])/g, '\\$1');
 }
 
+function extractLocationFromWaOrText(content, rawText = '') {
+  let lat = null;
+  let lng = null;
+  let label = null;
+
+  if (content?.locationMessage || content?.liveLocationMessage) {
+    const loc = content.locationMessage || content.liveLocationMessage;
+    lat = Number(loc.degreesLatitude);
+    lng = Number(loc.degreesLongitude);
+    label = loc.name || loc.address || loc.comment || null;
+  }
+
+  if (Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) {
+    const mapsUrl = `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
+    return { lat, lng, label, mapsUrl };
+  }
+
+  const textStr = String(rawText || '');
+  const match = textStr.match(/https?:\/\/(?:maps\.app\.goo\.gl\/[^\s]+|(?:www\.)?google\.[a-z.]+\/maps[^\s]*|maps\.google\.[a-z.]+\/[^\s]+)/i);
+  if (match) {
+    const cleanUrl = match[0].replace(/[)\]>,;.]+$/, '');
+    return { lat: null, lng: null, label: 'Ubicación Google Maps', mapsUrl: cleanUrl };
+  }
+
+  return null;
+}
+
+function isModificationIntent(userText) {
+  if (!userText || typeof userText !== 'string') return false;
+  const clean = userText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return /(?:agrega(?:r|me|le)?|anade|anadir|mete(?:r|le)?|sumale|tambien\s*quiero|tambien\s*dame|quita(?:r|me|le)?|saca(?:r|me|le)?|elimina(?:r|me|le)?|borra(?:r)?|sin\s+(?:el|la|los|las|cargador|dock|control|memoria)|ya\s*no\s*quiero|mejor\s*no|mejor\s*ponme|mejor\s*dame|cambia(?:r|me|le)?|te\s*equivocaste|no\s*eran|eran\s+\d+|en\s*vez\s*de|por\s*favor\s*corrige)/i.test(clean);
+}
+
+function isExplicitCustomerConfirmation(userText) {
+  if (!userText || typeof userText !== 'string') return false;
+  if (isModificationIntent(userText)) return false;
+  const clean = userText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  return /^(?:s[ií]|si\s*confirmo|confirmo|confirmado|dale|dale\s*as[ií]|as[ií]\s*mismo|as[ií]\s*est[aá]\s*bien|perfecto|listo|correcto|de\s*acuerdo|est[aá]\s*perfecto|est[aá]\s*bien\s*as[ií]|as[ií]\s*queda|procede|ag[eé]ndalo|agendalo)$/i.test(clean)
+    || /(?:(?:si|dale|perfecto|listo|confirmo)\s*[,.]?\s*(?:confirmo|as[ií]|procede|agendalo|esta\s*bien))/i.test(clean);
+}
+
 function buildCleanDoomAlert({
   headerEmoji = '🚨',
   title = 'Atención Requerida',
@@ -4534,7 +4824,8 @@ function buildCleanDoomAlert({
   queCompro = null,
   datosDestino = null,
   dondeYCuando = null,
-  consola = null
+  consola = null,
+  ubicacionGps = null
 }) {
   const phonePart = cleanPhone ? ` (+${cleanPhone})` : '';
   const lines = [
@@ -4548,6 +4839,7 @@ function buildCleanDoomAlert({
   if (queCompro) lines.push(`• *Qué compró:* ${escapeTgMdValue(queCompro)}`);
   if (datosDestino) lines.push(`• *Datos Destino:* ${escapeTgMdValue(datosDestino)}`);
   if (dondeYCuando) lines.push(`• *Dónde se verán y cuándo:* ${escapeTgMdValue(dondeYCuando)}`);
+  if (ubicacionGps) lines.push(`• *Ubicación GPS:* ${ubicacionGps}`);
   if (consola) lines.push(`• *Qué consola llevará:* ${escapeTgMdValue(consola)}`);
   return lines.join('\n');
 }
@@ -4727,6 +5019,38 @@ async function runAiReply(convId, q) {
               : '¡Perfecto! Aceptamos efectivo en divisas en buen estado 🙌 Para coordinar la búsqueda o recepción de tu equipo, ¿en cuál punto te queda mejor vernos (*La Previsora*, *CC El Líder* o prefieres *delivery*), qué día/hora te conviene y qué consola llevarás?')
           : '¡Perfecto! Aceptamos efectivo en divisas en buen estado al momento de la entrega 🙌 Para coordinar dónde y cuándo vernos, ¿en cuál punto gratuito te queda mejor (*La Previsora* o *CC El Líder*, o prefieres *delivery*) y qué día y hora te conviene?';
       }
+    }
+  }
+
+  // 1. Sincronización del carrito estructurado del cliente
+  let currentCartItems = Array.isArray(conv.cartItems) ? [...conv.cartItems] : [];
+  if (result.rawCartTag) {
+    const syncedCart = parseCartTagAndSync(result.rawCartTag, aiCtx?.stockItems, aiCtx?.botConfig?.serviceInsumosMap);
+    if (syncedCart !== null) {
+      currentCartItems = syncedCart;
+    }
+  }
+
+  // 2. Detección de modificación y confirmación del pedido
+  const clientWantsMod = isModificationIntent(userText);
+  const clientExplicitConfirm = isExplicitCustomerConfirmation(userText);
+  const wasAwaitingConf = Boolean(conv.awaitingOrderConfirmation);
+
+  let isOrderConfirmed = Boolean(conv.orderConfirmed);
+  if (clientWantsMod) {
+    isOrderConfirmed = false;
+  } else if (result.isOrderConfirmed || (wasAwaitingConf && clientExplicitConfirm)) {
+    isOrderConfirmed = true;
+  } else if (result.isAwaitingConfirmation) {
+    isOrderConfirmed = false;
+  }
+
+  // 3. Captura y actualización de ubicación GPS
+  const incomingGps = q.ctx.gpsLocation || extractLocationFromWaOrText(null, userText);
+  const currentMapsUrl = incomingGps?.mapsUrl || conv.deliveryMapsUrl || null;
+  if (incomingGps && (!userText || userText.startsWith('📍 Ubicación'))) {
+    if (!result.reply || isGreetingOrPolite) {
+      result.reply = '¡Ubicación GPS recibida perfectamente! 📍 Ya registramos tus coordenadas de Google Maps para tu entrega 🙌';
     }
   }
 
@@ -4918,10 +5242,11 @@ async function runAiReply(convId, q) {
         motivo: `Solicita delivery hacia ${result.deliveryExternalZone}`,
         queCompro,
         dondeYCuando: `Delivery en ${result.deliveryExternalZone}`,
+        ubicacionGps: currentMapsUrl,
         consola: consolaDetectada
       });
       alertedConvsTrack.add(`alert_${convId}`);
-      notifyPartners(deliveryAlertMsg, `delivery_${convId}`, { convId, cleanPhone }).catch(() => {});
+      notifyPartners(deliveryAlertMsg, `delivery_${convId}`, { convId, cleanPhone, alertParams: { monto: baseMonto, queCompro, dondeYCuando: `Delivery en ${result.deliveryExternalZone}`, consola: consolaDetectada, ubicacionGps: currentMapsUrl } }).catch(() => {});
       result.needsHuman = true;
     } else {
       // Detección precisa de coordinación de entrega o búsqueda de equipo (Lugar + Fecha/Hora escogida)
@@ -4948,26 +5273,68 @@ async function runAiReply(convId, q) {
           if (m) coordMonto = `$${Number(m[1]).toFixed(2)} USD`;
         }
 
-        const coordAlertMsg = buildCleanDoomAlert({
-          headerEmoji: '📦',
-          title: 'Entrega / Recepción Coordinada',
-          customerName: conv.customerName || 'Cliente',
-          cleanPhone,
-          platform: platformName,
-          monto: coordMonto,
-          motivo: consolaDetectada ? 'Recepción / búsqueda de equipo coordinada' : 'Entrega personal coordinada',
-          queCompro,
-          dondeYCuando: `${lugar} — ${fechaHora}`,
-          consola: consolaDetectada
-        });
+        // COMPORTAMIENTO ANTI-SPAM: NO enviar alerta de entrega hasta que el cliente confirme explícitamente su pedido/carrito
+        if (!isOrderConfirmed) {
+          // El cliente aún está decidiendo o modificando: NO se envía alerta todavía
+          result.isCoordination = false;
+          result.needsHuman = false;
+          patch.deliveryLugar = lugar;
+          patch.deliveryFechaHora = fechaHora;
+          patch.awaitingOrderConfirmation = true;
+          patch.orderConfirmed = false;
+          if (!/(?:confirmas|confirmar|deseas\s*agregar|queda\s*as[ií]|deseas\s*quitar)/i.test(result.reply)) {
+            result.reply = `${result.reply.trim()}\n\n¿Me confirmas que tu pedido y datos quedan así para agendarlo formalmente con nuestro equipo, o deseas agregar o quitar algo más? 🙌`;
+          }
+        } else {
+          // El cliente YA confirmó el pedido/carrito finalizado: ENVIAR O ACTUALIZAR LA ÚNICA ALERTA FINAL
+          const coordAlertMsg = buildCleanDoomAlert({
+            headerEmoji: '📦',
+            title: 'Entrega / Recepción Coordinada',
+            customerName: conv.customerName || 'Cliente',
+            cleanPhone,
+            platform: platformName,
+            monto: coordMonto,
+            motivo: consolaDetectada ? 'Recepción / búsqueda de equipo coordinada' : 'Entrega personal coordinada',
+            queCompro,
+            dondeYCuando: `${lugar} — ${fechaHora}`,
+            ubicacionGps: currentMapsUrl,
+            consola: consolaDetectada
+          });
 
-        alertedConvsTrack.add(`coord_${convId}`);
-        alertedConvsTrack.add(`alert_${convId}`);
-        notifyPartners(coordAlertMsg, `coord_${convId}`, { convId, cleanPhone }).catch(() => {});
-        result.needsHuman = true;
-        result.isCoordination = true;
-        result.deliveryLugar = lugar;
-        result.deliveryFechaHora = fechaHora;
+          const existingAlert = convTgAlertState.get(convId) || (conv.lastTgAlertRefs ? { refs: conv.lastTgAlertRefs, alertKey: conv.lastTgAlertKey } : null);
+          const alertKey = `coord_${convId}`;
+          const alertOptions = {
+            convId,
+            cleanPhone,
+            bypassCooldown: true,
+            alertParams: { queCompro, monto: coordMonto, dondeYCuando: `${lugar} — ${fechaHora}`, consola: consolaDetectada, ubicacionGps: currentMapsUrl }
+          };
+          const replyMarkup = buildTelegramInlineButtons(alertKey, alertOptions);
+
+          let updatedInPlace = false;
+          if (existingAlert && existingAlert.refs && existingAlert.refs.length > 0) {
+            updatedInPlace = await editTelegramAlert(existingAlert.refs, coordAlertMsg, replyMarkup);
+          }
+          if (!updatedInPlace) {
+            const refs = await notifyPartners(coordAlertMsg, alertKey, alertOptions);
+            if (refs && refs.length > 0) {
+              patch.lastTgAlertRefs = refs;
+              patch.lastTgAlertKey = alertKey;
+              patch.lastTgAlertParams = alertOptions.alertParams;
+            }
+          } else {
+            patch.lastTgAlertRefs = existingAlert.refs;
+            patch.lastTgAlertKey = alertKey;
+            patch.lastTgAlertParams = alertOptions.alertParams;
+          }
+
+          alertedConvsTrack.add(`coord_${convId}`);
+          alertedConvsTrack.add(`alert_${convId}`);
+          result.needsHuman = true;
+          result.isCoordination = true;
+          result.deliveryLugar = lugar;
+          result.deliveryFechaHora = fechaHora;
+        }
       } else if (result.needsHuman && !isGreetingOrPolite) {
         const alertMsg = buildCleanDoomAlert({
           headerEmoji: '⚠️',
@@ -4978,11 +5345,35 @@ async function runAiReply(convId, q) {
           motivo: `"${userText.slice(0, 140)}"`,
           queCompro,
           dondeYCuando,
-          consola: consolaDetectada
+          consola: consolaDetectada,
+          ubicacionGps: currentMapsUrl
         });
         alertedConvsTrack.add(`human_${convId}`);
         alertedConvsTrack.add(`alert_${convId}`);
         notifyPartners(alertMsg, `human_${convId}`, { convId, cleanPhone }).catch(() => {});
+      }
+    }
+
+    // Actualización en vivo del mensaje de alerta existente en Telegram si el cliente manda su ubicación GPS
+    if (incomingGps?.mapsUrl) {
+      const activeAlert = convTgAlertState.get(convId) || (conv.lastTgAlertRefs ? { refs: conv.lastTgAlertRefs, alertKey: conv.lastTgAlertKey, alertParams: conv.lastTgAlertParams } : null);
+      if (activeAlert && activeAlert.refs && activeAlert.refs.length > 0) {
+        const isDeliv = activeAlert.alertKey?.startsWith('delivery_');
+        const updatedGpsMsg = buildCleanDoomAlert({
+          headerEmoji: isDeliv ? '🚚' : '📦',
+          title: isDeliv ? 'Cotizar Delivery' : 'Entrega / Recepción Coordinada',
+          customerName: conv.customerName || 'Cliente',
+          cleanPhone,
+          platform: platformName,
+          monto: activeAlert.alertParams?.monto || (activeExpectedUsdt > 0 ? `$${activeExpectedUsdt.toFixed(2)} USDT` : null),
+          motivo: isDeliv ? `Delivery solicitado hacia ${conv.deliveryZoneRequested || 'dirección cliente'}` : (consolaDetectada ? 'Recepción / búsqueda de equipo coordinada' : 'Entrega personal coordinada'),
+          queCompro: queCompro || activeAlert.alertParams?.queCompro,
+          dondeYCuando: dondeYCuando || conv.deliveryLugar || 'Entrega coordinada',
+          ubicacionGps: incomingGps.mapsUrl,
+          consola: consolaDetectada
+        });
+        const markup = buildTelegramInlineButtons(activeAlert.alertKey || `coord_${convId}`, { convId, cleanPhone });
+        await editTelegramAlert(activeAlert.refs, updatedGpsMsg, markup);
       }
     }
   }
@@ -4990,6 +5381,10 @@ async function runAiReply(convId, q) {
   const patch = {};
   if (!q.ctx.isPartner) {
     patch.lastCustomerMessage = userText;
+    patch.cartItems = currentCartItems;
+    patch.awaitingOrderConfirmation = Boolean(patch.awaitingOrderConfirmation !== undefined ? patch.awaitingOrderConfirmation : (!isOrderConfirmed && (Boolean(coordDetectedNow || result.isCoordination || result.deliveryExternalZone || result.isAwaitingConfirmation || clientWantsMod))));
+    patch.orderConfirmed = Boolean(isOrderConfirmed);
+    if (currentMapsUrl) patch.deliveryMapsUrl = currentMapsUrl;
     if (result.isPayment || (result.needsHuman && !isGreetingOrPolite)) {
       patch.needsAttention = true;
       patch.attentionReason = result.isPayment
@@ -5447,9 +5842,13 @@ async function handleWaMessage(msg, type) {
   }
 
   const pushName = msg.pushName || '';
+  const gpsLocation = extractLocationFromWaOrText(content, caption);
   if (voiceTranscription) {
     caption = voiceTranscription;
     text = `🎤 Nota de voz: "${voiceTranscription}"`;
+  } else if (gpsLocation && (!caption || ctype === 'locationMessage' || ctype === 'liveLocationMessage')) {
+    caption = `📍 Ubicación GPS${gpsLocation.label ? ` (${gpsLocation.label})` : ''}: ${gpsLocation.mapsUrl}`;
+    text = caption;
   } else if (caption) {
     text = (label && ctype !== 'extendedTextMessage' && ctype !== 'conversation' ? `${label}: ${caption}` : caption);
   } else {
@@ -5472,6 +5871,10 @@ async function handleWaMessage(msg, type) {
     customerPhone: targetPhone ? `+${targetPhone}` : '',
     customerJid: jid
   };
+  if (gpsLocation) {
+    incomingBase.deliveryMapsUrl = gpsLocation.mapsUrl;
+    if (gpsLocation.label) incomingBase.deliveryGpsLabel = gpsLocation.label;
+  }
 
   if (paymentAnalysis && paymentAnalysis.isPayment) {
     incomingBase.pendingPayment = true;
@@ -5596,7 +5999,9 @@ async function handleWaMessage(msg, type) {
       previousExpectedUsdt,
       delayMs: partner ? 100 : typingDelayMs(botConfig),
       isPartner: Boolean(partner),
-      partnerName: partner ? partner.name : null
+      partnerName: partner ? partner.name : null,
+      gpsLocation: gpsLocation || null,
+      deliveryMapsUrl: gpsLocation?.mapsUrl || null
     });
   }
 }
@@ -6148,6 +6553,17 @@ async function handleTelegramCallbackAction(tg, cq) {
       [`botConversations/${conv.id}/botActive`]: true,
       [`botConversations/${conv.id}/deliveryStatus`]: 'delivered',
       [`botConversations/${conv.id}/deliveredAt`]: now,
+      [`botConversations/${conv.id}/cartItems`]: null,
+      [`botConversations/${conv.id}/awaitingOrderConfirmation`]: false,
+      [`botConversations/${conv.id}/orderConfirmed`]: false,
+      [`botConversations/${conv.id}/deliveryMapsUrl`]: null,
+      [`botConversations/${conv.id}/deliveryGpsLabel`]: null,
+      [`botConversations/${conv.id}/deliveryQuotedFee`]: null,
+      [`botConversations/${conv.id}/deliveryQuotedTotalUsdt`]: null,
+      [`botConversations/${conv.id}/deliveryZoneRequested`]: null,
+      [`botConversations/${conv.id}/lastTgAlertRefs`]: null,
+      [`botConversations/${conv.id}/lastTgAlertKey`]: null,
+      [`botConversations/${conv.id}/lastTgAlertParams`]: null,
       [`botConversations/${conv.id}/needsAttention`]: false,
       [`botConversations/${conv.id}/attentionReason`]: null,
       [`botConversations/${conv.id}/updatedAt`]: now,
@@ -6155,6 +6571,7 @@ async function handleTelegramCallbackAction(tg, cq) {
       'meta/rev': now,
       'meta/lastLabel': `Pedido de ${conv.customerName || 'Cliente'} marcado entregado desde Telegram`
     }, 'Entrega completada');
+    convTgAlertState.delete(conv.id);
     alertedConvsTrack.delete(`coord_${conv.id}`);
     alertedConvsTrack.delete(`alert_${conv.id}`);
     if (chatId) {

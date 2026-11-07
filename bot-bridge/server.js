@@ -27,6 +27,7 @@ import makeWASocketImport, {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   getContentType,
@@ -100,6 +101,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Private-Network', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -4628,7 +4630,15 @@ async function startWhatsApp() {
 
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   let version;
-  try { ({ version } = await fetchLatestBaileysVersion()); } catch (e) {}
+  try {
+    if (typeof fetchLatestWaWebVersion === 'function') {
+      const wv = await fetchLatestWaWebVersion({});
+      if (wv && Array.isArray(wv.version)) version = wv.version;
+    }
+  } catch (e) {}
+  if (!version) {
+    try { ({ version } = await fetchLatestBaileysVersion()); } catch (e) {}
+  }
 
   waState = 'connecting';
   await setWaStatus({ state: 'connecting', connected: false });
@@ -4637,11 +4647,10 @@ async function startWhatsApp() {
     ...(version ? { version } : {}),
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, silentLogger) },
     logger: silentLogger,
-    browser: Browsers.windows('Desktop'),
+    browser: Browsers.ubuntu('Chrome'),
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
-    shouldIgnoreJid: (jid) => Boolean(!jid || jid === 'status@broadcast' || isJidGroup(jid) || isJidBroadcast(jid) || (isJidNewsletter && isJidNewsletter(jid))),
     getMessage: async (key) => {
       const found = sentMessagesStore.get(key.id);
       return found || undefined;
@@ -5064,16 +5073,24 @@ async function handleWaMessage(msg, type) {
   }
 }
 
+let lastPairingReq = { phone: '', code: '', at: 0, gen: -1 };
 async function requestPairingCode(phoneRaw) {
   const phone = String(phoneRaw || '').replace(/\D/g, '');
   if (phone.length < 10) throw new Error('Escribe el número completo con código de país, sin + ni espacios (ej: 584245323796).');
   if (!isOwner) throw new Error('Esta copia del servidor está en espera (otra copia controla WhatsApp).');
   if (waState === 'connected') throw new Error('WhatsApp ya está conectado.');
+  // Evitar doble solicitud simultánea (HTTP localhost + Firebase pollCommands) que invalida el primer código
+  if (lastPairingReq.gen === waGeneration && lastPairingReq.phone === phone && lastPairingReq.code && (Date.now() - lastPairingReq.at) < 45000) {
+    logger.info({ phone, code: lastPairingReq.code }, 'Reutilizando código de vinculación activo (evitando doble generación)');
+    return lastPairingReq.code;
+  }
+  await fb('PATCH', ws('meta/botConfig'), { requestPairingPhone: null }).catch(() => {});
   // Espera a que el socket esté listo (estado "qr") hasta 20 s
   for (let i = 0; i < 40 && waState !== 'qr'; i++) await new Promise(r => setTimeout(r, 500));
   if (!waSock || waState !== 'qr') throw new Error('WhatsApp aún está iniciando. Intenta de nuevo en unos segundos.');
   const raw = await waSock.requestPairingCode(phone);
   const code = String(raw || '').toUpperCase().match(/.{1,4}/g)?.join('-') || raw;
+  lastPairingReq = { phone, code, at: Date.now(), gen: waGeneration };
   await setWaStatus({ pairingCode: code, pairingPhone: phone, pairingAt: Date.now(), pairingError: null });
   logger.info({ phone, code }, 'Código de vinculación generado');
   return code;

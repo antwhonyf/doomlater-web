@@ -3414,19 +3414,27 @@ Instrucciones de cierre autónomo y comportamiento:
    - ¡BAJO NINGUNA CIRCUNSTANCIA escribas la palabra "Alerta" ni "Doom Alert" en tus mensajes al cliente!
 3. FLUJO AUTÓNOMO DE CIERRE DE VENTA (DE PRINCIPIO A FIN):
    - Paso A (Cotización): Al informar el precio de un producto en stock o servicio técnico oficial, invita cordialmente al cliente a concretar preguntándole si desea adquirirlo/agendarlo y qué método de pago prefiere (Pago Móvil, Binance USDT o Efectivo $) o si prefiere entrega gratuita en *La Previsora* / *CC El Líder*.
-   - Paso B (Si elige Efectivo $): Indícale amablemente que aceptamos efectivo en divisas en buen estado al momento de la entrega personal gratuita en *La Previsora* o *CC El Líder*, y pregúntale qué punto, día y hora le conviene para agendarlo enseguida (NO uses ninguna etiqueta de alerta todavía mientras solo estés preguntando día/hora).
+   - Paso B (Si elige Efectivo $):
+     • NO pidas comprobante ni captura cuando el pago sea en efectivo.
+     • Si es para un SERVICIO TÉCNICO o revisión de consola: indícale amablemente que aceptamos efectivo en divisas en buen estado y pregúntale para coordinar la recepción o búsqueda del equipo: en qué punto gratuito (*La Previsora* o *CC El Líder*, o si prefiere *delivery*), qué día y hora le conviene vernos, y confirma qué modelo exacto de consola llevará (si aún no lo indicó).
+     • Si es para un PRODUCTO físico: indícale que aceptamos efectivo en divisas en buen estado al momento de la entrega gratuita en *La Previsora* o *CC El Líder* (o con *delivery*) y pregúntale qué punto, día y hora le conviene para agendarlo enseguida.
+     • NO uses ninguna etiqueta de alerta todavía mientras solo estés preguntando lugar/día/hora.
    - Paso C (Si pide datos de pago / elige Pago Móvil o Binance):
      • REGLA CONDICIONAL ESTRICTA: Si el cliente SOLO preguntó de forma genérica qué métodos de pago aceptamos y AÚN NO ha elegido ni cotizado un producto o servicio concreto, envía ÚNICAMENTE los métodos de pago oficiales SIN [SEPARADOR_MENSAJE] ni monto.
      • Si el cliente SÍ tiene un producto o servicio concreto cotizado o confirmado en la conversación y pide pagar o saber cuánto es en Bolívares / BCV:
        1. En la primera parte escribe los datos oficiales de pago (Pago Móvil y/o Binance según solicitó).
-       2. Escribe exactamente la etiqueta [SEPARADOR_MENSAJE] y al final incluye [MONTO_ORDEN_USDT: <numero_total_en_usdt>] (ejemplo: [MONTO_ORDEN_USDT: 5] o [MONTO_ORDEN_USDT: 100]; si lleva varias unidades multiplica cantidad por precio unitario).
+       2. Escribe exactamente la etiqueta [SEPARADOR_MENSAJE] y al final incluye [MONTO_ORDEN_USDT: <numero_total_en_usdt>] (ejemplo: [MONTO_ORDEN_USDT: 5] o [MONTO_ORDEN_USDT: 10]; si lleva varias unidades multiplica cantidad por precio unitario).
        3. Después de [SEPARADOR_MENSAJE], nuestro sistema formateará automáticamente al centavo el desglose exacto en Bs (multiplicado por ${rateParalelo.toFixed(2)}), en $ a tasa BCV (dividido entre ${rateBcv.toFixed(2)}) y en USDT.
-4. COORDINACIÓN DE ENTREGA EN PERSONA O DELIVERY:
+4. COORDINACIÓN DE ENTREGA O BÚSQUEDA DEL EQUIPO:
    - Puntos de encuentro gratuitos: *La Previsora* (Sabana Grande) y *CC El Líder* (La California). También realizamos envíos nacionales cobro en destino por MRW, Zoom y Tealca.
    - Si el cliente confirma lugar + día/hora en La Previsora o CC El Líder (ej: "En La Previsora mañana a las 2pm"): confirma cordialmente que nuestro equipo queda agendado para ese punto, día y hora, y coloca al final [FLAG_COORDINACION_ENTREGA].
-   - Si el cliente solicita delivery a domicilio o en otra zona fuera de La Previsora / CC El Líder: indícale amablemente que con gusto coordinamos el delivery y que nuestro equipo calculará la tarifa exacta para su zona enseguida 🙌, y coloca al final [FLAG_DELIVERY_EXTERNO: <zona indicada>].
-5. REPORTE DE PAGO / COMPROBANTE:
-   - Si el cliente envía comprobante o avisa que ya realizó el pago, responde:
+   - Si el cliente solicita delivery a domicilio o búsqueda en otra zona fuera de La Previsora / CC El Líder: indícale amablemente que con gusto coordinamos el delivery y que nuestro equipo calculará la tarifa exacta para su zona enseguida 🙌, y coloca al final [FLAG_DELIVERY_EXTERNO: <zona indicada>].
+5. REPORTE DE PAGO / COMPROBANTE (REGLA ESTRICTA):
+   - Si el cliente SOLO escribe por texto que ya pagó ("ya hice el pago", "ya pagué", "ya transferí", "listo el pago") PERO NO ADJUNTÓ FOTO/IMAGEN del comprobante (para Pago Móvil, transferencia o Binance USDT):
+     • NUNCA digas que recibiste el comprobante ni uses [FLAG_PAGO_REPORTADO].
+     • Agradécele con calidez y pídele que por favor envíe por aquí la *captura o foto del comprobante de pago* para verificarlo enseguida y coordinar su entrega 🙌.
+   - Si el cliente dice que pagará en *efectivo*, NO le pidas comprobante: coordina directamente dónde y cuándo se verán o la búsqueda/recepción del equipo.
+   - ÚNICAMENTE cuando el cliente envíe la IMAGEN/CAPTURA real del comprobante de pago, responde:
      "¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌"
      y coloca al final [FLAG_PAGO_REPORTADO].
 6. OFERTAS DE VENTA DE CONSOLAS O EQUIPOS USADOS POR PARTE DEL CLIENTE:
@@ -3802,9 +3810,12 @@ function fallbackRuleBasedBot(userMessage, { stockItems = [], paymentMethods = [
     };
   }
 
-  // 3. Comprobantes de pago
-  if (/(ya pagu|ya pagué|transfer|comprobante|capture|pago realizado)/.test(msg)) {
-    return { reply: '¡Muchas gracias! 📄 Hemos recibido tu comprobante de pago. Nuestro equipo estará revisando la transacción y te confirmamos en breve 🙌', isPayment: true, needsHuman: true };
+  // 3. Aviso de pago por texto sin imagen -> solicitar captura/comprobante (o coordinar si es efectivo)
+  if (/(ya pagu|ya pagué|ya hice el pago|transfer|pago realizado)/.test(msg)) {
+    if (/efectivo|divisa/.test(msg)) {
+      return { reply: '¡Perfecto! Aceptamos efectivo en divisas en buen estado 🙌 ¿En cuál punto te queda mejor vernos (*La Previsora* o *CC El Líder*, o prefieres *delivery*) y qué día y hora te conviene para coordinar?', isPayment: false, needsHuman: false };
+    }
+    return { reply: '¡Excelente, muchas gracias! 🙌 Por favor envíanos por aquí la captura o foto del comprobante de pago para verificarlo enseguida y coordinar tu entrega.', isPayment: false, needsHuman: false };
   }
 
   // 4. Métodos de pago
@@ -4144,51 +4155,258 @@ function validateReceiptTargetAccount(pa) {
   return { matched: false, name: null };
 }
 
-function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services = []) {
-  const allText = (historyTexts || []).join(' ').toLowerCase();
-
-  // Priorizar estrictamente productos comerciales para la venta (nunca insumos internos de taller)
-  const retailItems = (stockItems || []).filter(it => it && !it.deleted && it.kind === 'para_vender');
-  for (const it of retailItems) {
-    const nameLow = String(it.name || '').toLowerCase();
-    const cleanName = nameLow.replace(/[^a-z0-9]/g, ' ');
-    const words = cleanName.split(/\s+/).filter(w => w.length >= 4);
-    if (words.some(w => allText.includes(w)) || (nameLow && allText.includes(nameLow))) {
-      const price = Number(it.salePrice || 0).toFixed(2);
-      const stock = it.stock !== undefined ? it.stock : 'N/A';
-      return `${it.name} (Precio: $${price} USD c/u | Stock disponible: ${stock})`;
+function extractOrderQuantity(conv, historyTexts, unitPrice = 0, currentOrderUsdt = 0) {
+  // 1. Cálculo exacto por monto cotizado (ej: $10.00 total / $5.00 c/u = 2 unidades)
+  const expectedUsdt = Number(currentOrderUsdt || conv?.expectedOrderUsdt || 0);
+  const deliveryFee = Number(conv?.deliveryQuotedFee || 0);
+  const netUsdt = expectedUsdt > deliveryFee ? +(expectedUsdt - deliveryFee).toFixed(2) : expectedUsdt;
+  if (unitPrice > 0 && netUsdt > 0) {
+    const ratio = netUsdt / unitPrice;
+    const rounded = Math.round(ratio);
+    if (rounded >= 1 && rounded <= 50 && Math.abs(ratio - rounded) < 0.04) {
+      return rounded;
     }
   }
 
-  if (allText.includes('cargador')) {
-    return 'Cargador (Precio: $5.00 USD c/u)';
+  // 2. Búsqueda en lenguaje natural del más reciente al más antiguo (ignorando modelos como 3DS, PS4, 128GB, teléfonos)
+  const wordNums = {
+    un: 1, uno: 1, una: 1,
+    dos: 2, par: 2,
+    tres: 3, cuatro: 4, cinco: 5, seis: 6,
+    siete: 7, ocho: 8, nueve: 9, diez: 10, docena: 12
+  };
+  const recent = [...(historyTexts || [])].reverse().slice(0, 8);
+  for (const rawLine of recent) {
+    const cleaned = String(rawLine || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/\b(?:[23]ds|ps[12345]|v[12]|xbox\s*360|switch\s*2|\d+\s*(?:gb|tb|mb|bs|usd|usdt|pm|am|min|horas?)|0?4\d{8,10}|58\d{9,11})\b/g, ' ');
+
+    const verbQty = cleaned.match(/\b(?:quiero|dame|deme|necesito|llevo|me\s*llevo|serian|mandame|apartame|comprar|adquirir)\s+(?:un\s+par|(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|un|uno|una|\d{1,2}))\b/);
+    if (verbQty) {
+      if (verbQty[0].includes('un par')) return 2;
+      const tok = verbQty[1];
+      const n = wordNums[tok] || parseInt(tok, 10);
+      if (n >= 1 && n <= 30) return n;
+    }
+
+    const nounQty = cleaned.match(/\b(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|\d{1,2})\s+(?:unidades?|cargadores?|controles?|mandos?|cables?|memorias?|juegos?|adaptadores?|estuches?|protectores?|audifonos?|auriculares?|consolas?)\b/);
+    if (nounQty) {
+      const tok = nounQty[1];
+      const n = wordNums[tok] || parseInt(tok, 10);
+      if (n >= 1 && n <= 30) return n;
+    }
+  }
+  return 1;
+}
+
+function detectWhatCustomerBought(conv, historyTexts, stockItems = [], services = [], currentOrderUsdt = 0) {
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const fullList = (historyTexts || []).map(norm).filter(Boolean);
+  const recentText = fullList.slice(-6).join(' ');
+  const allText = fullList.join(' ');
+
+  // 1. Si el mensaje reciente habla explícitamente de magia/chipeo/mantenimiento, priorizar servicio técnico oficial
+  const serviceIntentRx = /(?:magia|chipeo|chipear|chip|flasheo|mantenimiento|pasta\s*termica|instalacion\s*magia)/i;
+  if (serviceIntentRx.test(recentText)) {
+    const matchedRecentSrv = findServiceMatch(recentText, services || []) || findServiceMatch(allText, services || []);
+    if (matchedRecentSrv) {
+      const srvPrice = Number(matchedRecentSrv.totalCost !== undefined ? matchedRecentSrv.totalCost : (matchedRecentSrv.laborPrice !== undefined ? matchedRecentSrv.laborPrice : (matchedRecentSrv.defaultLaborPrice || 0))).toFixed(2);
+      return `${matchedRecentSrv.serviceName} ($${srvPrice} USD)`;
+    }
   }
 
-  // Buscar primero con findServiceMatch para respetar variantes con/sin memoria (SOLO)
-  const matchedSrv = findServiceMatch(allText, services || []);
+  // 2. Productos comerciales para la venta (nunca insumos internos de taller), filtrando palabras genéricas de consola
+  const genericProductWords = new Set([
+    'nintendo', 'switch', 'oled', 'lite', 'sony', 'play', 'playstation', 'xbox', 'consola', 'consolas',
+    'para', 'repuesto', 'repuestos', 'original', 'originales', 'plus', 'interno', 'interna', 'juegos',
+    'juego', 'memoria', 'micro', 'con', 'del', 'las', 'los', 'una', 'uno', 'par'
+  ]);
+  const retailItems = (stockItems || []).filter(it => it && !it.deleted && it.kind === 'para_vender');
+
+  const findMatchingRetail = (haystack) => {
+    if (!haystack) return null;
+    let bestItem = null;
+    let bestScore = 0;
+
+    for (const it of retailItems) {
+      const cleanName = norm(it.name).replace(/[^a-z0-9]/g, ' ');
+      const allTokens = cleanName.split(/\s+/).filter(Boolean);
+      const distinctive = allTokens.filter(w => w.length >= 3 && !genericProductWords.has(w) && !/^(?:[23]?ds|dsi|ps[1-5]|v[12]|hac|\d+)$/.test(w));
+      if (distinctive.length === 0) continue;
+
+      let matchedDistinctive = 0;
+      for (const w of distinctive) {
+        const stemEs = w.length >= 6 && w.endsWith('es') ? w.slice(0, -2) : null;
+        const stemS = w.length >= 5 && w.endsWith('s') ? w.slice(0, -1) : null;
+        const hit = haystack.includes(w)
+          || (stemEs && haystack.includes(stemEs))
+          || (stemS && haystack.includes(stemS));
+        if (hit) matchedDistinctive++;
+      }
+      if (matchedDistinctive === 0) continue;
+
+      // Desempatar variantes por consola (ej: PS5 vs PS4, OLED vs V1/V2)
+      let modelBonus = 0;
+      for (const tok of allTokens) {
+        if (/^(?:[23]ds|dsi|ps[1-5]|oled|lite|v1|v2)$/.test(tok) && haystack.includes(tok)) {
+          modelBonus += 0.5;
+        }
+      }
+      const score = matchedDistinctive * 2 + modelBonus;
+      if (score > bestScore) {
+        bestScore = score;
+        bestItem = it;
+      }
+    }
+    return bestItem;
+  };
+
+  const matchedRetail = findMatchingRetail(recentText) || (!serviceIntentRx.test(allText) ? findMatchingRetail(allText) : null);
+  if (matchedRetail) {
+    const unitPrice = Number(matchedRetail.salePrice || 0);
+    const qty = extractOrderQuantity(conv, historyTexts, unitPrice, currentOrderUsdt);
+    const totalPrice = (unitPrice * qty).toFixed(2);
+    const qtyLabel = qty > 1 ? `${qty} unidades — ${matchedRetail.name}` : `1 unidad — ${matchedRetail.name}`;
+    return `${qtyLabel} ($${totalPrice} USD)`;
+  }
+
+  if (recentText.includes('cargador') || allText.includes('cargador')) {
+    const qty = extractOrderQuantity(conv, historyTexts, 5, currentOrderUsdt);
+    return `${qty > 1 ? `${qty} cargadores` : '1 cargador'} ($${(5 * qty).toFixed(2)} USD)`;
+  }
+
+  // 3. Servicios técnicos oficiales (con variantes con/sin memoria SOLO)
+  const matchedSrv = findServiceMatch(recentText, services || []) || findServiceMatch(allText, services || []);
   if (matchedSrv) {
     const srvPrice = Number(matchedSrv.totalCost !== undefined ? matchedSrv.totalCost : (matchedSrv.laborPrice !== undefined ? matchedSrv.laborPrice : (matchedSrv.defaultLaborPrice || 0))).toFixed(2);
-    return `Servicio Técnico: ${matchedSrv.serviceName} ($${srvPrice} USD)`;
+    return `${matchedSrv.serviceName} ($${srvPrice} USD)`;
   }
 
   for (const s of services || []) {
     if (!s) continue;
-    const sName = String(s.serviceName || '').toLowerCase();
-    const words = sName.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length >= 4);
-    if (words.some(w => allText.includes(w))) {
+    const sName = norm(s.serviceName);
+    const words = sName.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length >= 4 && !genericProductWords.has(w));
+    if (words.length >= 2 && words.filter(w => allText.includes(w)).length >= 2) {
       const srvPrice = Number(s.totalCost !== undefined ? s.totalCost : (s.laborPrice !== undefined ? s.laborPrice : (s.defaultLaborPrice || 0))).toFixed(2);
-      return `Servicio Técnico: ${s.serviceName} ($${srvPrice} USD)`;
+      return `${s.serviceName} ($${srvPrice} USD)`;
     }
   }
-  if (/(magia|chipeo|instalaci[oó]n|mantenimiento)/i.test(allText)) {
-    return 'Servicio Técnico / Chipeo Magia';
+  if (/(magia|chipeo|instalacion|mantenimiento|reparacion|pasta\s*termica)/i.test(allText)) {
+    return 'Servicio Técnico / Taller';
   }
 
-  if (/(env[ií]o\s*(?:de|desde)?\s*usa|casillero|paquete\s*usa)/i.test(allText)) {
+  if (/(envio\s*(?:de|desde)?\s*usa|casillero|paquete\s*usa)/i.test(allText)) {
     return 'Envío de USA / Casillero';
   }
 
-  return 'Producto o Servicio general (ver chat en Web)';
+  return null;
+}
+
+function extractConsoleForAlert(historyTexts = [], queCompro = '', isEquipmentSale = false) {
+  const joined = [...(historyTexts || []), queCompro || ''].join(' ');
+  const clean = joined.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  // Solo aplica cuando es servicio técnico / taller / reparación / venta de equipo o el cliente menciona llevar su consola
+  const consoleApplies = isEquipmentSale
+    || /(?:magia|chipeo|instalacion|mantenimiento|reparacion|revision|pasta\s*termica|limpieza|drift|joystick|puerto\s*hdmi|lector|servicio\s*tecnico|taller|llevar(?:e)?\s*(?:mi|la)\s*(?:consola|switch|ps|play|xbox)|buscar\s*(?:mi|la)\s*(?:consola|switch|ps|play|xbox))/i.test(clean);
+
+  if (!consoleApplies) return null;
+
+  const patterns = [
+    [/switch\s*oled|oled\s*switch|\boled\b/, 'Nintendo Switch OLED'],
+    [/switch\s*lite|lite\s*switch|\blite\b/, 'Nintendo Switch Lite'],
+    [/switch\s*v1|\bv1\b/, 'Nintendo Switch V1'],
+    [/switch\s*v2|\bv2\b/, 'Nintendo Switch V2'],
+    [/nintendo\s*switch|\bswitch\b/, 'Nintendo Switch'],
+    [/ps5\s*slim|play\s*5\s*slim/, 'PS5 Slim'],
+    [/ps5\s*pro|play\s*5\s*pro/, 'PS5 Pro'],
+    [/\bps5\b|play\s*(?:station\s*)?5/, 'PS5'],
+    [/ps4\s*pro|play\s*4\s*pro/, 'PS4 Pro'],
+    [/ps4\s*slim|play\s*4\s*slim/, 'PS4 Slim'],
+    [/ps4\s*fat|play\s*4\s*fat/, 'PS4 Fat'],
+    [/\bps4\b|play\s*(?:station\s*)?4/, 'PS4'],
+    [/\bps3\b|play\s*(?:station\s*)?3/, 'PS3'],
+    [/\bps2\b|play\s*(?:station\s*)?2/, 'PS2'],
+    [/ps\s*vita|\bvita\b/, 'PS Vita'],
+    [/\bpsp\b/, 'PSP'],
+    [/xbox\s*series\s*x/, 'Xbox Series X'],
+    [/xbox\s*series\s*s/, 'Xbox Series S'],
+    [/xbox\s*one\s*x/, 'Xbox One X'],
+    [/xbox\s*one\s*s/, 'Xbox One S'],
+    [/xbox\s*one/, 'Xbox One'],
+    [/xbox\s*360/, 'Xbox 360'],
+    [/new\s*(?:nintendo\s*)?3ds(?:\s*xl)?/, 'New Nintendo 3DS'],
+    [/3ds\s*xl/, 'Nintendo 3DS XL'],
+    [/\b3ds\b/, 'Nintendo 3DS'],
+    [/\b2ds\b/, 'Nintendo 2DS'],
+    [/\bwii\s*u\b/, 'Nintendo Wii U'],
+    [/\bwii\b/, 'Nintendo Wii'],
+    [/steam\s*deck/, 'Steam Deck']
+  ];
+
+  // Buscar desde el mensaje más reciente hacia atrás para tomar el modelo exacto confirmado
+  const linesRev = [...(historyTexts || []), queCompro || ''].reverse();
+  for (const line of linesRev) {
+    const l = String(line || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    for (const [rx, label] of patterns) {
+      if (rx.test(l)) return label;
+    }
+  }
+  return null;
+}
+
+function extractMeetingForAlert(conv, userHistoryTexts = [], currentCoord = null, externalZone = null) {
+  if (currentCoord && currentCoord.lugar) {
+    return `${currentCoord.lugar} — ${currentCoord.fechaHora || 'Horario por confirmar'}`;
+  }
+  if (externalZone) {
+    return `Delivery en ${externalZone} (horario por confirmar)`;
+  }
+  if (conv?.deliveryLugar) {
+    return `${conv.deliveryLugar}${conv.deliveryFechaHora ? ` — ${conv.deliveryFechaHora}` : ''}`;
+  }
+  const rev = [...(userHistoryTexts || [])].reverse().slice(0, 6);
+  for (const msg of rev) {
+    const c = parseCoordinationDetails(msg);
+    if (c && c.lugar) {
+      return `${c.lugar} — ${c.fechaHora || 'Horario por confirmar'}`;
+    }
+  }
+  return null;
+}
+
+function escapeTgMdValue(val) {
+  return String(val || '').replace(/([_*`\[])/g, '\\$1');
+}
+
+function buildCleanDoomAlert({
+  headerEmoji = '🚨',
+  title = 'Atención Requerida',
+  customerName = 'Cliente',
+  cleanPhone = '',
+  platform = 'WHATSAPP',
+  monto = null,
+  motivo = null,
+  queCompro = null,
+  datosDestino = null,
+  dondeYCuando = null,
+  consola = null
+}) {
+  const phonePart = cleanPhone ? ` (+${cleanPhone})` : '';
+  const lines = [
+    `${headerEmoji} *DOOMLATER ALERT: ${escapeTgMdValue(title)}*`,
+    ``,
+    `• *Cliente:* ${escapeTgMdValue(customerName || 'Cliente')}${phonePart}`,
+    `• *Plataforma:* ${escapeTgMdValue(String(platform || 'WHATSAPP').toUpperCase())}`
+  ];
+  if (monto) lines.push(`• *Monto:* ${escapeTgMdValue(monto)}`);
+  if (motivo) lines.push(`• *Motivo:* ${escapeTgMdValue(motivo)}`);
+  if (queCompro) lines.push(`• *Qué compró:* ${escapeTgMdValue(queCompro)}`);
+  if (datosDestino) lines.push(`• *Datos Destino:* ${escapeTgMdValue(datosDestino)}`);
+  if (dondeYCuando) lines.push(`• *Dónde se verán y cuándo:* ${escapeTgMdValue(dondeYCuando)}`);
+  if (consola) lines.push(`• *Qué consola llevará:* ${escapeTgMdValue(consola)}`);
+  return lines.join('\n');
 }
 
 async function runAiReply(convId, q) {
@@ -4333,11 +4551,39 @@ async function runAiReply(convId, q) {
     result.reply = result.reply.replace(/\.\s*\.$/, '.');
   }
 
-  // Si el cliente indica explícitamente que ya pagó o adjuntó pago por texto
-  const paymentTextRegex = /(?:ya\s*(?:hice\s*el\s*pago|realic[eé]\s*el\s*pago|pagu[eé]|transfer[ií]|te\s*pagu[eé]|te\s*transfer[ií]|cancel[eé]|le\s*di)|pago\s*(?:listo|realizado|hecho|enviado)|listo\s*(?:amigo\s*)?(?:ya\s*)?(?:pagu[eé]|transfer[ií])|acabo\s*de\s*(?:pagar|transferir)|comprobante\s*(?:de\s*pago)?|capture\s*(?:del?\s*pago)?)/i;
-  if (!q.ctx.isPartner && paymentTextRegex.test(userText)) {
-    result.isPayment = true;
-    result.needsHuman = true;
+  // REGLA ESTRICTA DE COMPROBANTES VS EFECTIVO:
+  // Si NO adjuntó imagen, NUNCA marcar pago recibido ni disparar alerta falsa de "Pago por verificar".
+  const paymentTextRegex = /(?:ya\s*(?:hice\s*el\s*pago|realic[eé]\s*el\s*pago|pagu[eé]|transfer[ií]|te\s*pagu[eé]|te\s*transfer[ií]|cancel[eé])|pago\s*(?:listo|realizado|hecho|enviado)|listo\s*(?:amigo\s*)?(?:ya\s*)?(?:pagu[eé]|transfer[ií]|hice\s*el\s*pago)|acabo\s*de\s*(?:pagar|transferir))/i;
+  const mentionsCashPayment = /(?:en\s*efectivo|con\s*efectivo|pagar(?:[eé]|ia)?\s*(?:en\s*)?efectivo|tengo\s*efectivo|divisas\s*en\s*efectivo)/i.test(userText);
+
+  if (!q.ctx.isPartner && !q.hasImage) {
+    // Sin foto adjunta jamás hay comprobante verificado pendiente
+    if (result.isPayment) {
+      result.isPayment = false;
+      result.needsHuman = false;
+    }
+    if (paymentTextRegex.test(userText) && !mentionsCashPayment) {
+      result.isPayment = false;
+      result.needsHuman = false;
+      // Si la IA dijo por error que ya recibió el comprobante o no lo pidió, pedir amablemente la captura
+      if (!result.reply || /hemos\s+recibido\s+tu\s+comprobante|revisando\s+la\s+transacci[oó]n/i.test(result.reply) || !/(?:comprobante|captura|capture|foto)/i.test(result.reply)) {
+        result.reply = '¡Excelente, muchas gracias! 🙌 Por favor envíanos por aquí la captura o comprobante del pago para verificarlo enseguida y coordinar tu entrega.';
+      }
+    } else if (mentionsCashPayment && !result.isCoordination && !result.deliveryExternalZone && !parseCoordinationDetails(userText)) {
+      result.isPayment = false;
+      result.needsHuman = false;
+      if (!result.reply || /comprobante|captura/i.test(result.reply)) {
+        const histTextsForCash = (convHistory.get(convId) || []).map(h => h.text).concat(userText ? [userText] : []);
+        const boughtForCash = detectWhatCustomerBought(conv, histTextsForCash, aiCtx?.stockItems, aiCtx?.botConfig?.serviceInsumosMap, quotedOrderUsdtToSave || 0) || '';
+        const isTechSrv = /(?:magia|chipeo|instalaci[oó]n|mantenimiento|reparaci[oó]n|servicio|taller)/i.test(boughtForCash + ' ' + histTextsForCash.join(' '));
+        const consolaForCash = isTechSrv ? extractConsoleForAlert(histTextsForCash, boughtForCash) : null;
+        result.reply = isTechSrv
+          ? (consolaForCash
+              ? `¡Perfecto! Aceptamos efectivo en divisas en buen estado 🙌 Para coordinar la búsqueda o recepción de tu *${consolaForCash}*, ¿en cuál punto te queda mejor vernos (*La Previsora*, *CC El Líder* o prefieres *delivery*) y qué día y hora te conviene?`
+              : '¡Perfecto! Aceptamos efectivo en divisas en buen estado 🙌 Para coordinar la búsqueda o recepción de tu equipo, ¿en cuál punto te queda mejor vernos (*La Previsora*, *CC El Líder* o prefieres *delivery*), qué día/hora te conviene y qué consola llevarás?')
+          : '¡Perfecto! Aceptamos efectivo en divisas en buen estado al momento de la entrega 🙌 Para coordinar dónde y cuándo vernos, ¿en cuál punto gratuito te queda mejor (*La Previsora* o *CC El Líder*, o prefieres *delivery*) y qué día y hora te conviene?';
+      }
+    }
   }
 
   // Desglosar mensajes si contiene [SEPARADOR_MENSAJE] para enviar datos y presupuesto por separado
@@ -4409,127 +4655,164 @@ async function runAiReply(convId, q) {
     pushHistory(convId, 'bot', result.reply);
   }
 
-  // Alertas proactivas a los socios cuando un cliente reporta pago o solicita atención / coordina entrega
+  // Alertas proactivas a los socios cuando un cliente envía comprobante real, coordina encuentro/delivery o requiere humano
+  let detectedItemSummary = null;
   if (!q.ctx.isPartner) {
     const cleanPhone = String(conv.customerPhone || q.ctx.phone || '').replace(/\D/g, '');
     const platformName = (conv.platform || q.ctx.platform || 'WhatsApp').toUpperCase();
+    const fullHistoryEntries = convHistory.get(convId) || [];
+    const historyArr = fullHistoryEntries.map(h => h.text);
+    const userOnlyHistory = fullHistoryEntries.filter(h => h.role === 'user').map(h => h.text);
+    if (userText && !historyArr.includes(userText)) {
+      historyArr.push(userText);
+      userOnlyHistory.push(userText);
+    }
+
+    const activeExpectedUsdt = Number(quotedOrderUsdtToSave || q.ctx.previousExpectedUsdt || conv.expectedOrderUsdt || 0);
+    const activeExpectedBs = Number(quotedOrderBsToSave || q.ctx.previousExpectedBs || conv.expectedOrderBs || 0);
+    const queCompro = detectWhatCustomerBought(conv, historyArr, aiCtx?.stockItems, aiCtx?.botConfig?.serviceInsumosMap, activeExpectedUsdt);
+    detectedItemSummary = queCompro || null;
+    const consolaDetectada = extractConsoleForAlert(historyArr, queCompro || '', Boolean(result.isEquipmentSale));
+    const coordDetectedNow = parseCoordinationDetails(userText);
+    const dondeYCuando = extractMeetingForAlert(conv, userOnlyHistory, coordDetectedNow, result.deliveryExternalZone);
+    const talkedAboutCash = /(?:en\s*efectivo|con\s*efectivo|pagar(?:[eé])?\s*(?:en\s*)?efectivo|divisas\s*en\s*efectivo)/i.test(historyArr.slice(-6).join(' '));
 
     if (result.isBrandNewPhotoNotice) {
-      const brandNewAlert =
-        `🚨 *DOOMLATER ALERT: Cliente nuevo envió fotos* 📷\n\n` +
-        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-        `• *Plataforma:* ${platformName}\n` +
-        `• *Detalle:* Chat totalmente nuevo que envió imágenes sin texto. Se le envió bienvenida y espera por un asesor.\n` +
-        `💡 _El bot continúa 100% activo y responderá con normalidad a cualquier texto que el cliente envíe._`;
+      const brandNewAlert = buildCleanDoomAlert({
+        headerEmoji: '📷',
+        title: 'Cliente nuevo envió fotos',
+        customerName: conv.customerName || 'Cliente',
+        cleanPhone,
+        platform: platformName,
+        motivo: 'Envió fotos sin texto al iniciar el chat',
+        consola: consolaDetectada
+      });
       alertedConvsTrack.add(`alert_${convId}`);
       notifyPartners(brandNewAlert, `brandnew_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isUncorrelatedImage) {
-      const uncorrAlert =
-        `🚨 *DOOMLATER ALERT: Imagen no correlacionada* 🖼️\n\n` +
-        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-        `• *Plataforma:* ${platformName}\n` +
-        `• *Detalle:* El cliente envió una imagen sin correlación con pagos, lugares ni equipos: "${result.imageDescription}". No se envió respuesta automática.\n\n` +
-        `👉 _El chat está marcado con alerta en la Web para revisar qué sucede._`;
+      const uncorrAlert = buildCleanDoomAlert({
+        headerEmoji: '🖼️',
+        title: 'Imagen por revisar',
+        customerName: conv.customerName || 'Cliente',
+        cleanPhone,
+        platform: platformName,
+        motivo: `Imagen recibida: ${result.imageDescription}`
+      });
       alertedConvsTrack.add(`alert_${convId}`);
       notifyPartners(uncorrAlert, `uncorr_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isPayment) {
       const pa = q.ctx.paymentAnalysis || {};
-      const amt = Number(pa.amount || conv.pendingPaymentAmount || 0);
-      const cur = (pa.currency === 'VED' || pa.currency === 'VES') ? 'VES' : (pa.currency || 'USD');
-      let montoStr = '';
-      if (cur === 'VES') {
-        montoStr = `Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`;
-      } else if (cur === 'USDT') {
-        montoStr = `${amt.toFixed(2)} USDT`;
-      } else {
-        montoStr = `Efectivo $${amt.toFixed(2)}`;
-      }
+      const amt = Number(pa.amount || 0);
+      const cur = (pa.currency === 'VED' || pa.currency === 'VES') ? 'VES' : (pa.currency || 'VES');
+      let montoStr = amt > 0
+        ? (cur === 'VES'
+            ? `Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`
+            : (cur === 'USDT' ? `${amt.toFixed(2)} USDT` : `$${amt.toFixed(2)} USD`))
+        : (activeExpectedUsdt > 0 ? `$${activeExpectedUsdt.toFixed(2)} USDT (ver captura)` : 'Ver captura en chat');
 
-      let montoVerifStr = '';
-      const expectedBsToCheck = Number(q.ctx.previousExpectedBs || conv.expectedOrderBs || 0);
-      const expectedUsdtToCheck = Number(q.ctx.previousExpectedUsdt || conv.expectedOrderUsdt || 0);
-      if (cur === 'VES' && expectedBsToCheck > 0) {
-        const diff = Math.abs(amt - expectedBsToCheck);
-        if (diff <= 1.50) {
-          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (Esperado: Bs. ${expectedBsToCheck.toFixed(2)} | Dif: Bs. ${diff.toFixed(2)} dentro de ±1.50 Bs)`;
-        } else {
-          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó Bs. ${amt.toFixed(2)} vs esperado Bs. ${expectedBsToCheck.toFixed(2)} (Diferencia: Bs. ${diff.toFixed(2)})`;
-        }
-      } else if (cur === 'USDT' && expectedUsdtToCheck > 0) {
-        const diffUsdt = Math.abs(amt - expectedUsdtToCheck);
-        if (diffUsdt <= 0.05) {
-          montoVerifStr = `\n• *Verificación de Monto:* ✅ Coincide con la orden (${expectedUsdtToCheck.toFixed(2)} USDT)`;
-        } else {
-          montoVerifStr = `\n• *Verificación de Monto:* ⚠️ Revisar: Pagó ${amt.toFixed(2)} USDT vs esperado ${expectedUsdtToCheck.toFixed(2)} USDT`;
-        }
+      if (pa.reference) {
+        montoStr += ` (Ref: ${pa.reference})`;
       }
-
-      const historyArr = (convHistory.get(convId) || []).map(h => h.text);
-      if (userText) historyArr.push(userText);
-      const queCompro = detectWhatCustomerBought(conv, historyArr, aiCtx?.stockItems, aiCtx?.botConfig?.serviceInsumosMap);
+      if (amt > 0 && cur === 'VES' && activeExpectedBs > 0) {
+        const diff = Math.abs(amt - activeExpectedBs);
+        montoStr += diff <= 1.50
+          ? ` — ✅ Exacto ($${activeExpectedUsdt.toFixed(2)} USDT)`
+          : ` — ⚠️ Esperado: Bs. ${activeExpectedBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`;
+      } else if (amt > 0 && cur === 'USDT' && activeExpectedUsdt > 0) {
+        const diffUsdt = Math.abs(amt - activeExpectedUsdt);
+        montoStr += diffUsdt <= 0.05
+          ? ` — ✅ Exacto`
+          : ` — ⚠️ Esperado: ${activeExpectedUsdt.toFixed(2)} USDT`;
+      }
 
       const acctCheck = validateReceiptTargetAccount(pa);
-      const cuentaValStr = acctCheck.matched
-        ? `• *Datos Destino:* ✅ Coinciden con cuenta oficial (${acctCheck.name})`
-        : `• *Datos Destino:* ⚠️ Revisar: Destino no coincide con cuentas oficiales`;
+      const destinoStr = acctCheck.matched
+        ? `✅ ${acctCheck.name}`
+        : `⚠️ No coincide con cuentas oficiales`;
 
-      const refStr = pa.reference ? ` (Ref: ${pa.reference})` : (conv.pendingPaymentRef ? ` (Ref: ${conv.pendingPaymentRef})` : '');
-
-      const alertMsg =
-        `🚨 *DOOMLATER ALERT: Pago por verificar* 🧾\n\n` +
-        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-        `• *Plataforma:* ${platformName}\n` +
-        `• *Monto:* *${montoStr}*${refStr}${montoVerifStr}\n` +
-        `• *Motivo:* El cliente reportó un pago o envió un comprobante. Verifícalo\n` +
-        `• *Qué compró:* ${queCompro}\n` +
-        `${cuentaValStr}\n\n` +
-        `💡 _Toca el botón *✅ Verificar Pago* aquí abajo (o escribe *${cleanPhone} pago verificado*) para aprobarlo, registrar el ingreso y avisar al cliente automáticamente._`;
+      const alertMsg = buildCleanDoomAlert({
+        headerEmoji: '🧾',
+        title: 'Pago por verificar',
+        customerName: conv.customerName || 'Cliente',
+        cleanPhone,
+        platform: platformName,
+        monto: montoStr,
+        motivo: 'Comprobante de pago recibido',
+        queCompro,
+        datosDestino: destinoStr,
+        dondeYCuando,
+        consola: consolaDetectada
+      });
 
       alertedConvsTrack.add(`pay_${convId}`);
       alertedConvsTrack.add(`alert_${convId}`);
       notifyPartners(alertMsg, `pay_${convId}`, { convId, cleanPhone }).catch(() => {});
     } else if (result.isEquipmentSale) {
-      const saleAlertMsg =
-        `🎮 *DOOMLATER ALERT: Cliente ofrece vender equipo/consola* 🕹️\n\n` +
-        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-        `• *Plataforma:* ${platformName}\n` +
-        `• *Mensaje del Cliente:* "${userText.slice(0, 150)}"\n\n` +
-        `💡 _El bot le indicó que nuestro equipo estará evaluándolo para darle una cotización._`;
+      const saleAlertMsg = buildCleanDoomAlert({
+        headerEmoji: '🎮',
+        title: 'Oferta de Consola / Equipo',
+        customerName: conv.customerName || 'Cliente',
+        cleanPhone,
+        platform: platformName,
+        motivo: `Ofrece vender o entregar en parte de pago: "${userText.slice(0, 120)}"`,
+        consola: consolaDetectada
+      });
       alertedConvsTrack.add(`alert_${convId}`);
       notifyPartners(saleAlertMsg, `sale_${convId}`, { convId, cleanPhone }).catch(() => {});
       result.needsHuman = true;
     } else if (result.deliveryExternalZone) {
-      const deliveryAlertMsg =
-        `🚚 *DOOMLATER ALERT: Solicitud de Delivery Externo* 📦\n\n` +
-        `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-        `• *Plataforma:* ${platformName}\n` +
-        `• *Zona Solicitada:* *${result.deliveryExternalZone}*\n` +
-        `• *Mensaje:* "${userText.slice(0, 120)}"\n\n` +
-        `💡 _Toca un monto rápido abajo o escribe aquí mismo:_\n` +
-        `*${cleanPhone} delivery <precio>*  (ej: *${cleanPhone} delivery 3*)`;
+      const baseMonto = activeExpectedUsdt > 0
+        ? `${talkedAboutCash ? 'Efectivo ' : ''}$${activeExpectedUsdt.toFixed(2)} USD + Delivery por cotizar`
+        : 'Delivery por cotizar';
+      const deliveryAlertMsg = buildCleanDoomAlert({
+        headerEmoji: '🚚',
+        title: 'Cotizar Delivery',
+        customerName: conv.customerName || 'Cliente',
+        cleanPhone,
+        platform: platformName,
+        monto: baseMonto,
+        motivo: `Solicita delivery hacia ${result.deliveryExternalZone}`,
+        queCompro,
+        dondeYCuando: `Delivery en ${result.deliveryExternalZone}`,
+        consola: consolaDetectada
+      });
       alertedConvsTrack.add(`alert_${convId}`);
       notifyPartners(deliveryAlertMsg, `delivery_${convId}`, { convId, cleanPhone }).catch(() => {});
       result.needsHuman = true;
     } else {
-      // Detección precisa de coordinación de entrega (Lugar + Fecha/Hora escogida)
-      const coord = parseCoordinationDetails(userText);
-      const isCoordination = Boolean(coord || result.isCoordination);
+      // Detección precisa de coordinación de entrega o búsqueda de equipo (Lugar + Fecha/Hora escogida)
+      const isCoordination = Boolean(coordDetectedNow || result.isCoordination);
 
       if (isCoordination) {
-        const lugar = coord?.lugar || result.deliveryLugar || 'La Previsora / CC El Líder';
-        const modalidad = coord?.modalidad || 'Entrega Gratuita en punto de encuentro';
-        const fechaHora = coord?.fechaHora || result.deliveryFechaHora || 'Por confirmar con cliente';
+        const lugar = coordDetectedNow?.lugar || result.deliveryLugar || 'La Previsora / CC El Líder';
+        const fechaHora = coordDetectedNow?.fechaHora || result.deliveryFechaHora || 'Por confirmar con cliente';
 
-        const coordAlertMsg =
-          `📦 *DOOM ALERT ENTREGA* 🚚\n\n` +
-          `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-          `• *Plataforma:* ${platformName}\n` +
-          `• *IMPORTANTE:* Coordiné con la persona para:\n` +
-          `  - *Lugar:* *${lugar}*\n` +
-          `  - *Modalidad:* ${modalidad}\n` +
-          `  - *Fecha y Hora:* *${fechaHora}*\n` +
-          `• *Último mensaje del Cliente:* "${userText.slice(0, 160)}"\n\n` +
-          `⚠️ _El chat queda marcado con alerta de Entrega hasta tocar "Marcar Pedido como Entregado"._`;
+        let coordMonto = null;
+        if (conv.paymentVerified) {
+          coordMonto = activeExpectedUsdt > 0 ? `$${activeExpectedUsdt.toFixed(2)} USD (Pago ya verificado ✅)` : 'Pago ya verificado ✅';
+        } else if (talkedAboutCash) {
+          const priceFromItem = (!activeExpectedUsdt && queCompro) ? (queCompro.match(/\$(\d+(?:\.\d+)?)/)?.[1] || 0) : 0;
+          const cashAmt = activeExpectedUsdt || Number(priceFromItem) || 0;
+          coordMonto = cashAmt > 0 ? `Efectivo $${cashAmt.toFixed(2)} USD` : 'Efectivo en divisas';
+        } else if (activeExpectedUsdt > 0) {
+          coordMonto = `$${activeExpectedUsdt.toFixed(2)} USDT`;
+        } else if (queCompro) {
+          const m = queCompro.match(/\$(\d+(?:\.\d+)?)/);
+          if (m) coordMonto = `$${Number(m[1]).toFixed(2)} USD`;
+        }
+
+        const coordAlertMsg = buildCleanDoomAlert({
+          headerEmoji: '📦',
+          title: 'Entrega / Recepción Coordinada',
+          customerName: conv.customerName || 'Cliente',
+          cleanPhone,
+          platform: platformName,
+          monto: coordMonto,
+          motivo: consolaDetectada ? 'Recepción / búsqueda de equipo coordinada' : 'Entrega personal coordinada',
+          queCompro,
+          dondeYCuando: `${lugar} — ${fechaHora}`,
+          consola: consolaDetectada
+        });
 
         alertedConvsTrack.add(`coord_${convId}`);
         alertedConvsTrack.add(`alert_${convId}`);
@@ -4539,11 +4822,17 @@ async function runAiReply(convId, q) {
         result.deliveryLugar = lugar;
         result.deliveryFechaHora = fechaHora;
       } else if (result.needsHuman && !isGreetingOrPolite) {
-        const alertMsg = `⚠️ *DOOMLATER ALERT: Atención Requerida*\n\n` +
-          `• *Cliente:* *${conv.customerName || 'Cliente'}* (+${cleanPhone})\n` +
-          `• *Plataforma:* ${platformName}\n` +
-          `• *Último mensaje del Cliente:* "${userText.slice(0, 140)}"\n\n` +
-          `👉 _Consulta fuera del catálogo o requiere respuesta directa de un socio._`;
+        const alertMsg = buildCleanDoomAlert({
+          headerEmoji: '⚠️',
+          title: 'Duda de Cliente',
+          customerName: conv.customerName || 'Cliente',
+          cleanPhone,
+          platform: platformName,
+          motivo: `"${userText.slice(0, 140)}"`,
+          queCompro,
+          dondeYCuando,
+          consola: consolaDetectada
+        });
         alertedConvsTrack.add(`human_${convId}`);
         alertedConvsTrack.add(`alert_${convId}`);
         notifyPartners(alertMsg, `human_${convId}`, { convId, cleanPhone }).catch(() => {});
@@ -4557,15 +4846,17 @@ async function runAiReply(convId, q) {
     if (result.isPayment || (result.needsHuman && !isGreetingOrPolite)) {
       patch.needsAttention = true;
       patch.attentionReason = result.isPayment
-        ? 'El cliente reportó un pago o envió un comprobante. Verifícalo.'
-        : (result.isCoordination ? `🚚 Entrega coordinada pendiente: ${result.deliveryLugar || 'Punto oficial'} (${result.deliveryFechaHora || 'Por confirmar'})`
-        : (result.deliveryExternalZone ? `Solicitud de delivery en zona: ${result.deliveryExternalZone}`
-        : (result.isEquipmentSale ? 'Cliente ofrece equipo o consola en venta.'
-        : (result.isUncorrelatedImage ? `Imagen sin correlación recibida: ${result.imageDescription}`
-        : (result.isBrandNewPhotoNotice ? 'Cliente nuevo envió fotos sin texto. Espera asesor.' : 'Consulta fuera del catálogo o caso especial.')))));
+        ? 'Comprobante de pago recibido'
+        : (result.isCoordination ? `Encuentro coordinado: ${result.deliveryLugar || 'Punto oficial'} — ${result.deliveryFechaHora || 'Por confirmar'}`
+        : (result.deliveryExternalZone ? `Delivery solicitado: ${result.deliveryExternalZone}`
+        : (result.isEquipmentSale ? 'Cliente ofrece consola/equipo en venta'
+        : (result.isUncorrelatedImage ? `Imagen por revisar: ${result.imageDescription}`
+        : (result.isBrandNewPhotoNotice ? 'Cliente nuevo envió fotos sin texto' : 'Consulta fuera del catálogo')))));
     }
     if (result.isCoordination) {
       patch.deliveryStatus = 'pending_delivery';
+      if (result.deliveryLugar) patch.deliveryLugar = result.deliveryLugar;
+      if (result.deliveryFechaHora) patch.deliveryFechaHora = result.deliveryFechaHora;
     }
     if (result.isBrandNewPhotoNotice) {
       patch.botActive = true; // El bot nunca se desactiva en este caso
@@ -4573,18 +4864,31 @@ async function runAiReply(convId, q) {
     if (quotedOrderUsdtToSave !== null && quotedOrderBsToSave !== null) {
       patch.expectedOrderUsdt = quotedOrderUsdtToSave;
       patch.expectedOrderBs = quotedOrderBsToSave;
+      // Al cotizar una nueva orden, limpiar cualquier residuo de pagos viejos anteriores
+      if (!result.isPayment) {
+        patch.pendingPayment = false;
+        patch.pendingPaymentAmount = null;
+        patch.pendingPaymentCurrency = null;
+        patch.pendingPaymentRef = null;
+        patch.pendingPaymentPhone = null;
+        patch.pendingPaymentDate = null;
+        patch.pendingPaymentBank = null;
+        patch.pendingPaymentItem = null;
+        patch.paymentVerified = false;
+      }
     }
     if (result.isPayment) {
       patch.pendingPayment = true;
+      patch.pendingPaymentItem = detectedItemSummary || null;
       if (q.ctx.paymentAnalysis) {
         const pa = q.ctx.paymentAnalysis;
-        patch.pendingPaymentAmount = Number(pa.amount) || conv.pendingPaymentAmount || 0;
-        patch.pendingPaymentCurrency = pa.currency || 'USD';
-        patch.pendingPaymentRef = pa.reference || conv.pendingPaymentRef || '';
-        patch.pendingPaymentPhone = pa.targetPhoneOrId || conv.pendingPaymentPhone || '';
-        patch.pendingPaymentDate = pa.paymentDate || conv.pendingPaymentDate || null;
-        patch.pendingPaymentWalletId = q.ctx.destWalletId || conv.pendingPaymentWalletId || 'w_banco';
-        patch.pendingPaymentWalletName = q.ctx.destWalletName || conv.pendingPaymentWalletName || '';
+        patch.pendingPaymentAmount = Number(pa.amount) || 0;
+        patch.pendingPaymentCurrency = pa.currency || 'VES';
+        patch.pendingPaymentRef = pa.reference || '';
+        patch.pendingPaymentPhone = pa.targetPhoneOrId || '';
+        patch.pendingPaymentDate = pa.paymentDate || null;
+        patch.pendingPaymentWalletId = q.ctx.destWalletId || 'w_banco';
+        patch.pendingPaymentWalletName = q.ctx.destWalletName || '';
         patch.pendingPaymentBank = pa.bank || '';
       }
     }
@@ -6008,7 +6312,8 @@ async function checkAttentionAlertsAndNotify() {
         if (alertedConvsTrack.has(`coord_${c.id}`) || alertedConvsTrack.has(`pay_${c.id}`) || alertedConvsTrack.has(`alert_${c.id}`)) {
           continue;
         }
-        if (c.deliveryStatus === 'pending_delivery' || String(c.attentionReason || '').includes('Entrega coordinada')) {
+        const reasonStr = String(c.attentionReason || '');
+        if (c.deliveryStatus === 'pending_delivery' || reasonStr.includes('Entrega coordinada') || reasonStr.includes('Encuentro coordinado')) {
           continue;
         }
 
@@ -6018,27 +6323,42 @@ async function checkAttentionAlertsAndNotify() {
         alertedConvsTrack.add(`alert_${c.id}`);
 
         const isPayment = Boolean(c.pendingPayment);
-        const alertTag = isPayment ? 'Pago por verificar' : 'Atención Requerida (Chat en Alerta)';
+        const alertTag = isPayment ? 'Pago por verificar' : 'Atención Requerida';
         const custName = c.customerName || 'Cliente';
         const cleanCustPhone = String(c.customerPhone || '').replace(/\D/g, '');
-        const custPhone = cleanCustPhone ? ` (+${cleanCustPhone})` : '';
         const cur = (c.pendingPaymentCurrency === 'VED' || c.pendingPaymentCurrency === 'VES') ? 'VES' : (c.pendingPaymentCurrency || 'USD');
-        let amtStr = '';
+        let amtVal = null;
         if (isPayment && c.pendingPaymentAmount) {
           const amt = Number(c.pendingPaymentAmount) || 0;
-          amtStr = cur === 'VES'
-            ? `\n• *Monto:* Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`
-            : (cur === 'USDT' ? `\n• *Monto:* ${amt.toFixed(2)} USDT` : `\n• *Monto:* Efectivo $${amt.toFixed(2)}`);
+          amtVal = cur === 'VES'
+            ? `Bs. ${amt.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`
+            : (cur === 'USDT' ? `${amt.toFixed(2)} USDT` : `$${amt.toFixed(2)} USD`);
+          if (c.pendingPaymentRef) amtVal += ` (Ref: ${c.pendingPaymentRef})`;
         }
-        const reason = c.attentionReason ? `\n• *Motivo:* ${c.attentionReason}` : '';
         const custMsgText = c.lastCustomerMessage || (c.lastMessage && c.updatedBy !== 'bot' ? c.lastMessage : '');
-        const lastMsg = custMsgText ? `\n• *Último mensaje del Cliente:* "${String(custMsgText).slice(0, 140)}"` : '';
+        await ensureConvHistoryLoaded(c.id).catch(() => {});
+        const histTexts = (convHistory.get(c.id) || []).map(h => h.text);
+        const aiCtxSnap = await loadAiContext().catch(() => null);
+        const boughtVal = detectWhatCustomerBought(c, histTexts, aiCtxSnap?.stockItems, aiCtxSnap?.botConfig?.serviceInsumosMap, c.expectedOrderUsdt || 0);
+        const dondeVal = extractMeetingForAlert(c, histTexts);
+        const consolaVal = extractConsoleForAlert(histTexts, boughtVal || '');
+        const destinoVal = isPayment
+          ? (c.pendingPaymentWalletName ? `✅ ${c.pendingPaymentWalletName}` : null)
+          : null;
 
-        const alertMsg = `🚨 *DOOMLATER ALERT: ${alertTag}* 🧾\n\n` +
-          `• *Cliente:* *${custName}*${custPhone}\n` +
-          `• *Plataforma:* ${(c.platform || 'WhatsApp').toUpperCase()}${amtStr}${reason}${lastMsg}\n\n` +
-          `⚠️ _El chat está marcado con alerta en la Web._` +
-          (isPayment ? `\n💡 _Toca *✅ Verificar Pago* abajo${cleanCustPhone ? ` o escribe *${cleanCustPhone} pago verificado*` : ''} para aprobarlo automáticamente._` : '');
+        const alertMsg = buildCleanDoomAlert({
+          headerEmoji: isPayment ? '🧾' : '⚠️',
+          title: alertTag,
+          customerName: custName,
+          cleanPhone: cleanCustPhone,
+          platform: (c.platform || 'WhatsApp').toUpperCase(),
+          monto: amtVal,
+          motivo: c.attentionReason || (custMsgText ? `"${String(custMsgText).slice(0, 120)}"` : 'Atención requerida'),
+          queCompro: boughtVal,
+          datosDestino: destinoVal,
+          dondeYCuando: dondeVal,
+          consola: consolaVal
+        });
 
         await notifyPartners(alertMsg, isPayment ? `pay_${c.id}` : `alert_${c.id}`, { convId: c.id, cleanPhone: cleanCustPhone });
       }

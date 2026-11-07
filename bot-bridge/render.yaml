@@ -1,18 +1,16 @@
 services:
   - type: web
-    name: doomlater-bot-bridge
-    env: node
+    name: doomlater-bot-v2
+    runtime: node
     plan: free
     buildCommand: npm install
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
       - key: FIREBASE_DB_URL
         value: https://ok-gogle-c018c-default-rtdb.firebaseio.com
+      - key: WA_AUTH_SECRET
+        generateValue: true
       - key: META_VERIFY_TOKEN
         value: doomlater_meta_secret_2026
-      - key: GEMINI_API_KEY
-        sync: false

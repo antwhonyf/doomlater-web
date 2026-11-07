@@ -21,6 +21,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
+import zlib from 'zlib';
 
 import makeWASocketImport, {
   DisconnectReason,
@@ -216,26 +217,31 @@ async function claimOwnership(reason) {
 const authFolder = path.resolve(process.env.WA_AUTH_DIR || 'baileys_auth');
 const syncMarker = path.join(authFolder, '.synced_at');
 let lastBackupHash = null;
+let lastBackupSavedAt = 0;
 
 function aesKey() {
   return crypto.createHash('sha256').update(WA_AUTH_SECRET).digest();
 }
 function encryptText(text) {
   const iv = crypto.randomBytes(12);
+  const compressedBuf = zlib.gzipSync(Buffer.from(text, 'utf8'));
   const cipher = crypto.createCipheriv('aes-256-gcm', aesKey(), iv);
-  const data = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-  return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') };
+  const data = Buffer.concat([cipher.update(compressedBuf), cipher.final()]);
+  return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64'), compressed: true };
 }
 function decryptText(blob) {
   const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey(), Buffer.from(blob.iv, 'base64'));
   decipher.setAuthTag(Buffer.from(blob.tag, 'base64'));
-  return Buffer.concat([decipher.update(Buffer.from(blob.data, 'base64')), decipher.final()]).toString('utf8');
+  const rawBuf = Buffer.concat([decipher.update(Buffer.from(blob.data, 'base64')), decipher.final()]);
+  return blob.compressed ? zlib.gunzipSync(rawBuf).toString('utf8') : rawBuf.toString('utf8');
 }
 function readAuthFiles() {
   if (!fs.existsSync(authFolder)) return {};
   const files = {};
   for (const f of fs.readdirSync(authFolder)) {
-    if (f.endsWith('.json')) files[f] = fs.readFileSync(path.join(authFolder, f), 'utf8');
+    // Excluir llaves efímeras de grupos (sender-key-*) que inflaban el ancho de banda a varios GB
+    if (!f.endsWith('.json') || f.startsWith('sender-key-')) continue;
+    files[f] = fs.readFileSync(path.join(authFolder, f), 'utf8');
   }
   return files;
 }
@@ -246,17 +252,23 @@ function wipeLocalAuth() {
   }
 }
 
-async function backupAuthNow() {
+async function backupAuthNow(force = false) {
   if (!WA_AUTH_SECRET || !isOwner) return;
+  // Limitar respaldos periódicos a 1 cada 90 min salvo conexión inicial o apagado (ahorro del 99.9% de ancho de banda)
+  if (!force && lastBackupSavedAt && Date.now() - lastBackupSavedAt < 90 * 60 * 1000) return;
   const files = readAuthFiles();
   if (!files['creds.json']) return;
   const json = JSON.stringify(files);
   const hash = crypto.createHash('sha256').update(json).digest('hex');
-  if (hash === lastBackupHash) return;
+  if (hash === lastBackupHash) {
+    lastBackupSavedAt = Date.now();
+    return;
+  }
   const savedAt = Date.now();
   const ok = await fb('PUT', AUTH_PATH, { ...encryptText(json), savedAt, by: INSTANCE_ID, files: Object.keys(files).length });
   if (ok) {
     lastBackupHash = hash;
+    lastBackupSavedAt = savedAt;
     fs.writeFileSync(syncMarker, String(savedAt));
   }
 }
@@ -4629,6 +4641,7 @@ async function startWhatsApp() {
     markOnlineOnConnect: false,
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
+    shouldIgnoreJid: (jid) => Boolean(!jid || jid === 'status@broadcast' || isJidGroup(jid) || isJidBroadcast(jid) || (isJidNewsletter && isJidNewsletter(jid))),
     getMessage: async (key) => {
       const found = sentMessagesStore.get(key.id);
       return found || undefined;
@@ -4638,7 +4651,6 @@ async function startWhatsApp() {
 
   sock.ev.on('creds.update', async () => {
     await saveCreds();
-    setTimeout(() => backupAuthNow().catch(() => {}), 1500);
   });
 
   sock.ev.on('connection.update', async (u) => {
@@ -4666,7 +4678,7 @@ async function startWhatsApp() {
         connectedAt: Date.now()
       });
       logger.info({ me: me.id }, '¡WhatsApp conectado!');
-      backupAuthNow().catch(() => {});
+      backupAuthNow(true).catch(() => {});
     }
 
     if (connection === 'close') {
@@ -5427,32 +5439,39 @@ async function processOutbox() {
 /* --------------------------------------------------------------------------
    ÓRDENES DESDE LA WEB (Firebase) + CONTROL DE INSTANCIAS
    -------------------------------------------------------------------------- */
+let lastPolledCmdRev = 0;
 async function pollCommands() {
   if (!isOwner) return;
   const cmds = await fb('GET', COMMANDS_PATH);
-  if (!cmds) return;
-  if (cmds.pair && cmds.pair.phone) {
-    await fb('DELETE', `${COMMANDS_PATH}/pair`);
-    try {
-      await requestPairingCode(cmds.pair.phone);
-    } catch (err) {
-      await setWaStatus({ pairingCode: null, pairingError: err.message, pairingAt: Date.now() });
+  if (cmds) {
+    if (cmds.pair && cmds.pair.phone) {
+      await fb('DELETE', `${COMMANDS_PATH}/pair`);
+      try {
+        await requestPairingCode(cmds.pair.phone);
+      } catch (err) {
+        await setWaStatus({ pairingCode: null, pairingError: err.message, pairingAt: Date.now() });
+      }
     }
-  }
-  if (cmds.newQr) {
-    await fb('DELETE', `${COMMANDS_PATH}/newQr`);
-    if (waState !== 'connected') {
-      stopWhatsApp('nuevo QR');
-      waStopped = false;
-      scheduleWaRestart(500);
+    if (cmds.newQr) {
+      await fb('DELETE', `${COMMANDS_PATH}/newQr`);
+      if (waState !== 'connected') {
+        stopWhatsApp('nuevo QR');
+        waStopped = false;
+        scheduleWaRestart(500);
+      }
     }
-  }
-  if (cmds.reset) {
-    await fb('DELETE', `${COMMANDS_PATH}/reset`);
-    await resetWhatsAppSession();
+    if (cmds.reset) {
+      await fb('DELETE', `${COMMANDS_PATH}/reset`);
+      await resetWhatsAppSession();
+    }
   }
 
-  // Also check meta/botConfig in case web app posted there
+  // Solo descargar botConfig si meta/rev (13 bytes) cambió desde la última revisión
+  const currentRev = Number(await fb('GET', ws('meta/rev'))) || 0;
+  if (currentRev && currentRev === lastPolledCmdRev) return;
+  lastPolledCmdRev = currentRev;
+  cachedTgConfig.fetchedAt = 0; // refrescar config cuando la Web guarda cambios
+
   const botCfg = await fb('GET', ws('meta/botConfig'));
   if (botCfg) {
     if (botCfg.requestPairingPhone && waState !== 'connected') {
@@ -5800,6 +5819,7 @@ app.post('/api/whatsapp/reset', async (_req, res) => {
    -------------------------------------------------------------------------- */
 const alertedConvsTrack = new Set();
 let initialAlertScanDone = false;
+let lastCheckedAlertRev = 0;
 
 async function checkAttentionAlertsAndNotify() {
   if (!isOwner) return;
@@ -5809,6 +5829,11 @@ async function checkAttentionAlertsAndNotify() {
   if (!canSendTg && !canSendWa) return;
 
   try {
+    // Ahorro extremo de ancho de banda: revisar primero meta/rev (13 bytes) antes de descargar conversaciones
+    const rev = Number(await fb('GET', ws('meta/rev'))) || 0;
+    if (initialAlertScanDone && rev && rev === lastCheckedAlertRev) return;
+    lastCheckedAlertRev = rev;
+
     const convsRaw = await fb('GET', ws('botConversations'));
     if (!convsRaw) return;
     const convs = Object.values(convsRaw).filter(c => c && !c.deleted);
@@ -5900,17 +5925,27 @@ app.listen(PORT, async () => {
   await setMetaStatus({ serverSeenAt: Date.now() });
   await decideOwnershipAtStartup().catch(err => logger.error({ err: err.message }, 'Error al iniciar WhatsApp'));
 
-  setInterval(() => heartbeat().catch(() => {}), 15000);
-  setInterval(() => pollCommands().catch(() => {}), 3000);
-  setInterval(() => processOutbox().catch(() => {}), 3000);
-  setInterval(() => pollTelegramUpdates().catch(() => {}), 2500);
-  setInterval(() => backupAuthNow().catch(() => {}), 30000);
-  setInterval(() => checkLowStockAndAlert().catch(() => {}), 5 * 60 * 1000);
-  setInterval(() => checkPartnerReminders().catch(() => {}), 20000);
-  setInterval(() => checkAttentionAlertsAndNotify().catch(() => {}), 5000);
+  setInterval(() => heartbeat().catch(() => {}), 30000);
+  setInterval(() => pollCommands().catch(() => {}), 5000);
+  setInterval(() => processOutbox().catch(() => {}), 3500);
+  setInterval(() => pollTelegramUpdates().catch(() => {}), 3000);
+  setInterval(() => backupAuthNow().catch(() => {}), 5 * 60 * 1000);
+  setInterval(() => checkLowStockAndAlert().catch(() => {}), 15 * 60 * 1000);
+  setInterval(() => checkPartnerReminders().catch(() => {}), 30000);
+  setInterval(() => checkAttentionAlertsAndNotify().catch(() => {}), 8000);
 
   // Render (plan gratis) se duerme tras 15 min sin tráfico: nos auto-visitamos cada 10 min.
   if (RENDER_URL) {
     setInterval(() => fetch(`${RENDER_URL}/healthz`).catch(() => {}), 10 * 60 * 1000);
   }
 });
+
+async function handleGracefulShutdown(signal) {
+  logger.info({ signal }, 'Apagado detectado: guardando sesión de WhatsApp antes de cerrar...');
+  try {
+    await backupAuthNow(true);
+  } catch (e) {}
+  process.exit(0);
+}
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));

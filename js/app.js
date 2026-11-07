@@ -7262,6 +7262,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestedAt: Date.now() })
       }).catch(() => {});
+      fetch('http://localhost:3000/api/whatsapp/reset', { method: 'POST' }).catch(() => {});
       fetch('https://doomlater-bot.onrender.com/api/whatsapp/reset', { method: 'POST' }).catch(() => {});
 
       // 2. Poll for fresh QR from status

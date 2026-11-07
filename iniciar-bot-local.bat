@@ -1,15 +1,19 @@
 @echo off
-title Doomlater.Corp - Bot Bridge Multicanal Local
+chcp 65001 >nul
+title Doomlater.Corp - Bot Activo en PC (WhatsApp + Telegram + IA)
 cd /d "%~dp0bot-bridge"
 echo =====================================================================
-echo       DOOMLATER.CORP - BOT BRIDGE MULTICANAL LOCAL (WHATSAPP + IA)
+echo     DOOMLATER.CORP - MOTOR DEL BOT ACTIVO EN TU PC (MODO LOCAL)
 echo =====================================================================
 echo.
-echo NOTA: Tu bot ya se encuentra desplegado y activo 24/7 en Render Cloud.
-echo Solo ejecuta esta ventana local si deseas realizar pruebas en tu PC o
-echo vincular un nuevo dispositivo si la nube esta detenida.
+echo  - WhatsApp + IA Gemini + Alertas Telegram (@Doomlater_Alertas_bot)
+echo  - Puedes minimizar esta ventana y seguir usando tu PC normalmente.
+echo  - NO cierres esta ventana mientras quieras que el bot responda.
 echo.
-echo Conectando con Firebase Realtime Database y WhatsApp...
-echo.
+:loop
+echo [%date% %time%] Conectando con Firebase, WhatsApp y Telegram...
 node server.js
-pause
+echo.
+echo [AVISO] El proceso se detuvo. Reiniciando automaticamente en 5 segundos...
+timeout /t 5 /nobreak >nul
+goto loop
